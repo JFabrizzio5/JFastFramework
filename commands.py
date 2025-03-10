@@ -70,7 +70,18 @@ def crear_controlador(proyecto, nombre_modulo, nombre_controlador):
 def crear_servicio(proyecto, nombre_modulo, nombre_servicio):
     nombre_servicio = formatear_nombre(nombre_servicio)
     ruta_servicio = os.path.join(proyecto, nombre_modulo, 'services', f'{nombre_servicio}.py')
-    crear_archivo_si_no_existe(ruta_servicio, f'# Servicio {nombre_servicio}\n')
+    contenido_servicio = f'''from {nombre_modulo}.repositories.{nombre_modulo}_repository import {nombre_modulo}Repository
+from config.dbs import get_database_url
+
+class {nombre_servicio}:
+    def __init__(self):
+        self.repository = {nombre_modulo}Repository()
+        self.database_url = get_database_url()
+
+    def get_{nombre_modulo.lower()}(self):
+        return self.repository.get_{nombre_modulo.lower()}()
+'''
+    crear_archivo_si_no_existe(ruta_servicio, contenido_servicio)
 
 def crear_modelo(proyecto, nombre_modulo, nombre_modelo):
     nombre_modelo = formatear_nombre(nombre_modelo)
@@ -312,7 +323,17 @@ class ExampleModel:
         pass
 ''')
     crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'repositories', 'example_repository.py'), 'class ExampleRepository:\n    def get_example(self):\n        return {"message": "Hello from the repository"}\n')
-    crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'services', 'example_service.py'), 'from example.repositories.example_repository import ExampleRepository\n\nclass ExampleService:\n    def __init__(self):\n        self.repository = ExampleRepository()\n\n    def get_example(self):\n        return self.repository.get_example()\n')
+    crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'services', 'example_service.py'), '''from example.repositories.example_repository import ExampleRepository
+from config.dbs import get_database_url
+
+class ExampleService:
+    def __init__(self):
+        self.repository = ExampleRepository()
+        self.database_url = get_database_url()
+
+    def get_example(self):
+        return self.repository.get_example()
+''')
     crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'controllers', 'example_controller.py'), 'from example.services.example_service import ExampleService\n\nclass ExampleController:\n    def __init__(self):\n        self.service = ExampleService()\n\n    def get_example(self):\n        return self.service.get_example()\n')
     crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'routes', 'example.py'), 'from fastapi import APIRouter\nfrom example.controllers.example_controller import ExampleController\n\nrouter = APIRouter()\n\ncontroller = ExampleController()\n\n@router.get("/")\ndef get_example():\n    return controller.get_example()\n')
 
