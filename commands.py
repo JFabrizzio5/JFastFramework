@@ -24,6 +24,17 @@ def crear_modulo(proyecto, nombre_modulo):
         crear_directorio_si_no_existe(ruta_directorio)
         crear_archivo_si_no_existe(os.path.join(ruta_directorio, '__init__.py'))
 
+    # Crear archivos del módulo
+    crear_archivo_si_no_existe(os.path.join(base_path, 'models', f'{nombre_modulo}_model.py'), f'class {nombre_modulo}Model:\n    pass\n')
+    crear_archivo_si_no_existe(os.path.join(base_path, 'repositories', f'{nombre_modulo}_repository.py'), f'class {nombre_modulo}Repository:\n    def get_{nombre_modulo.lower()}(self):\n        return {{"message": "Hello from the repository"}}\n')
+    crear_archivo_si_no_existe(os.path.join(base_path, 'services', f'{nombre_modulo}_service.py'), f'from {nombre_modulo}.repositories.{nombre_modulo}_repository import {nombre_modulo}Repository\n\nclass {nombre_modulo}Service:\n    def __init__(self):\n        self.repository = {nombre_modulo}Repository()\n\n    def get_{nombre_modulo.lower()}(self):\n        return self.repository.get_{nombre_modulo.lower()}()\n')
+    crear_archivo_si_no_existe(os.path.join(base_path, 'controllers', f'{nombre_modulo}_controller.py'), f'from {nombre_modulo}.services.{nombre_modulo}_service import {nombre_modulo}Service\n\nclass {nombre_modulo}Controller:\n    def __init__(self):\n        self.service = {nombre_modulo}Service()\n\n    def get_{nombre_modulo.lower()}(self):\n        return self.service.get_{nombre_modulo.lower()}()\n')
+    crear_archivo_si_no_existe(os.path.join(base_path, 'routes', f'{nombre_modulo}.py'), f'from fastapi import APIRouter\nfrom {nombre_modulo}.controllers.{nombre_modulo}_controller import {nombre_modulo}Controller\n\nrouter = APIRouter()\n\ncontroller = {nombre_modulo}Controller()\n\n@router.get("/")\ndef get_{nombre_modulo.lower()}():\n    return controller.get_{nombre_modulo.lower()}()\n')
+
+    # Crear README.md del módulo
+    readme_modulo_contenido = f'# {nombre_modulo} Module\n\n## Description\n\nThis module handles the {nombre_modulo.lower()} functionality.\n\n## Structure\n\n- **controllers**: Contains the controllers for the module.\n- **models**: Contains the models for the module.\n- **repositories**: Contains the repositories for the module.\n- **routes**: Contains the routes for the module.\n- **services**: Contains the services for the module.\n'
+    crear_archivo_si_no_existe(os.path.join(base_path, 'README.md'), readme_modulo_contenido)
+
 def crear_controlador(proyecto, nombre_modulo, nombre_controlador):
     nombre_controlador = formatear_nombre(nombre_controlador)
     ruta_controlador = os.path.join(proyecto, nombre_modulo, 'controllers', f'{nombre_controlador}.py')
@@ -132,6 +143,10 @@ redis
 pandas
 '''
     crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'requirements.txt'), requirements_contenido)
+
+    # Crear README.md del proyecto
+    readme_proyecto_contenido = f'# {nombre_proyecto} Project\n\n## Description\n\nThis project is a FastAPI application created with JFastBoot.\n\n## Structure\n\n- **main.py**: The main entry point of the application.\n- **example**: Example module to demonstrate the structure.\n- **requirements.txt**: List of dependencies.\n\n## Modules\n\nEach module contains the following directories:\n\n- **controllers**: Contains the controllers for the module.\n- **models**: Contains the models for the module.\n- **repositories**: Contains the repositories for the module.\n- **routes**: Contains the routes for the module.\n- **services**: Contains the services for the module.\n'
+    crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'README.md'), readme_proyecto_contenido)
 
     # Crear .venv
     subprocess.run(['python', '-m', 'venv', os.path.join(nombre_proyecto, '.venv')])
