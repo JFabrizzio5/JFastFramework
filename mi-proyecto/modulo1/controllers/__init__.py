@@ -1,1 +1,0 @@
-# Este archivo puede contener la definición de clases y funciones relacionadas con el manejo de las solicitudes para el módulo 1. Se pueden definir controladores que gestionen la lógica de negocio y respondan a las rutas.
