@@ -35,6 +35,13 @@ def crear_modulo(proyecto, nombre_modulo):
     readme_modulo_contenido = f'# {nombre_modulo} Module\n\n## Description\n\nThis module handles the {nombre_modulo.lower()} functionality.\n\n## Structure\n\n- **controllers**: Contains the controllers for the module.\n- **models**: Contains the models for the module.\n- **repositories**: Contains the repositories for the module.\n- **routes**: Contains the routes for the module.\n- **services**: Contains the services for the module.\n'
     crear_archivo_si_no_existe(os.path.join(base_path, 'README.md'), readme_modulo_contenido)
 
+    # Crear carpeta de configuración
+    ruta_config = os.path.join(base_path, 'config')
+    crear_directorio_si_no_existe(ruta_config)
+    # Crear archivos de configuración
+    crear_archivo_si_no_existe(os.path.join(ruta_config, 'dbs.py'), 'DATABASE_URL = "sqlite:///./test.db"\n')
+    crear_archivo_si_no_existe(os.path.join(ruta_config, 'mail.py'), 'MAIL_SERVER = "smtp.example.com"\nMAIL_PORT = 587\nMAIL_USERNAME = "user@example.com"\nMAIL_PASSWORD = "password"\n')
+
 def crear_controlador(proyecto, nombre_modulo, nombre_controlador):
     nombre_controlador = formatear_nombre(nombre_controlador)
     ruta_controlador = os.path.join(proyecto, nombre_modulo, 'controllers', f'{nombre_controlador}.py')
@@ -203,9 +210,11 @@ def crear_configuracion(nombre_proyecto, dbs, caches):
     config_path = os.path.join(nombre_proyecto, 'config')
     crear_directorio_si_no_existe(config_path)
     db_config_contenido = '\n'.join([f'DATABASE_URL_{db.upper()} = "{db}://user:password@localhost:5432/{nombre_proyecto}"' for db in dbs])
-    crear_archivo_si_no_existe(os.path.join(config_path, 'database.py'), db_config_contenido)
+    crear_archivo_si_no_existe(os.path.join(config_path, 'dbs.py'), db_config_contenido)
     cache_config_contenido = '\n'.join([f'CACHE_URL_{cache.upper()} = "{cache}://localhost:6379"' for cache in caches])
     crear_archivo_si_no_existe(os.path.join(config_path, 'cache.py'), cache_config_contenido)
+    mail_config_contenido = 'MAIL_SERVER = "smtp.example.com"\nMAIL_PORT = 587\nMAIL_USERNAME = "user@example.com"\nMAIL_PASSWORD = "password"\n'
+    crear_archivo_si_no_existe(os.path.join(config_path, 'mail.py'), mail_config_contenido)
 
 def crear_estructura_proyecto(nombre_proyecto):
     # Crear main.py
@@ -258,6 +267,9 @@ pandas
     archivos_separados = inquirer.prompt([inquirer.Confirm('archivos_separados', message="¿Deseas crear archivos Docker separados para cada servicio?", default=False)])['archivos_separados']
     crear_docker_compose(nombre_proyecto, dbs, caches, archivos_separados)
     crear_configuracion(nombre_proyecto, dbs, caches)
+
+    # Crear archivos de configuración
+    crear_configuracion(nombre_proyecto, ['sqlite'], [])
 
 def main():
     accion = menu_principal()
