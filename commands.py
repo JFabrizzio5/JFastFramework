@@ -110,6 +110,49 @@ def menu_archivos():
     respuestas = inquirer.prompt(preguntas)
     return respuestas['tipo_archivo']
 
+def crear_docker_compose(nombre_proyecto, db, cache):
+    docker_compose_contenido = f'''version: '3.8'
+
+services:
+  app:
+    build: .
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - {db}
+      - {cache}
+
+  {db}:
+    image: {db}
+    restart: always
+    ports:
+      - "5432:5432"  # Cambia el puerto según la base de datos seleccionada
+    environment:
+      POSTGRES_DB: {nombre_proyecto}
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+
+  {cache}:
+    image: {cache}
+    restart: always
+    ports:
+      - "6379:6379"  # Cambia el puerto según el sistema de colas o caché seleccionado
+'''
+    crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'docker-compose.yml'), docker_compose_contenido)
+
+def crear_configuracion(nombre_proyecto, db, cache):
+    config_path = os.path.join(nombre_proyecto, 'config')
+    crear_directorio_si_no_existe(config_path)
+    db_config_contenido = f'''DATABASE_URL = "{db}://user:password@localhost:5432/{nombre_proyecto}"
+'''
+    crear_archivo_si_no_existe(os.path.join(config_path, 'database.py'), db_config_contenido)
+    cache_config_contenido = f'''CACHE_URL = "{cache}://localhost:6379"
+'''
+    crear_archivo_si_no_existe(os.path.join(config_path, 'cache.py'), cache_config_contenido)
+
 def crear_estructura_proyecto(nombre_proyecto):
     # Crear main.py
     main_py_contenido = '''from fastapi import FastAPI
@@ -154,6 +197,12 @@ pandas
     # Actualizar pip e instalar dependencias
     subprocess.run([os.path.join(nombre_proyecto, '.venv', 'Scripts', 'pip'), 'install', '--upgrade', 'pip'])
     subprocess.run([os.path.join(nombre_proyecto, '.venv', 'Scripts', 'pip'), 'install', '-r', os.path.join(nombre_proyecto, 'requirements.txt')])
+
+    # Crear docker-compose.yml y configuración
+    db = input("Selecciona la base de datos (mongodb, postgres, mysql, sqlite): ")
+    cache = input("Selecciona el sistema de colas o caché (kafka, redis): ")
+    crear_docker_compose(nombre_proyecto, db, cache)
+    crear_configuracion(nombre_proyecto, db, cache)
 
 def main():
     accion = menu_principal()
