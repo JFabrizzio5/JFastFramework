@@ -1,6 +1,7 @@
 import os
 import subprocess
 import inquirer
+from dotenv import load_dotenv
 
 def crear_directorio_si_no_existe(ruta):
     if not os.path.exists(ruta):
@@ -39,8 +40,27 @@ def crear_modulo(proyecto, nombre_modulo):
     ruta_config = os.path.join(base_path, 'config')
     crear_directorio_si_no_existe(ruta_config)
     # Crear archivos de configuración
-    crear_archivo_si_no_existe(os.path.join(ruta_config, 'dbs.py'), 'DATABASE_URL = "sqlite:///./test.db"\n')
-    crear_archivo_si_no_existe(os.path.join(ruta_config, 'mail.py'), 'MAIL_SERVER = "smtp.example.com"\nMAIL_PORT = 587\nMAIL_USERNAME = "user@example.com"\nMAIL_PASSWORD = "password"\n')
+    crear_archivo_si_no_existe(os.path.join(ruta_config, 'dbs.py'), '''import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def get_database_url():
+    return os.getenv("DATABASE_URL")
+''')
+    crear_archivo_si_no_existe(os.path.join(ruta_config, 'mail.py'), '''import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def get_mail_config():
+    return {
+        "server": os.getenv("MAIL_SERVER"),
+        "port": os.getenv("MAIL_PORT"),
+        "username": os.getenv("MAIL_USERNAME"),
+        "password": os.getenv("MAIL_PASSWORD")
+    }
+''')
 
 def crear_controlador(proyecto, nombre_modulo, nombre_controlador):
     nombre_controlador = formatear_nombre(nombre_controlador)
@@ -55,7 +75,17 @@ def crear_servicio(proyecto, nombre_modulo, nombre_servicio):
 def crear_modelo(proyecto, nombre_modulo, nombre_modelo):
     nombre_modelo = formatear_nombre(nombre_modelo)
     ruta_modelo = os.path.join(proyecto, nombre_modulo, 'models', f'{nombre_modelo}.py')
-    crear_archivo_si_no_existe(ruta_modelo, f'# Modelo {nombre_modelo}\n')
+    contenido_modelo = f'''from config.dbs import get_database_url
+
+class {nombre_modelo}:
+    def __init__(self):
+        self.database_url = get_database_url()
+
+    def connect(self):
+        # Aquí iría la lógica para conectar a la base de datos usando self.database_url
+        pass
+'''
+    crear_archivo_si_no_existe(ruta_modelo, contenido_modelo)
 
 def crear_ruta(proyecto, nombre_modulo, nombre_ruta):
     nombre_ruta = formatear_nombre(nombre_ruta)
@@ -209,12 +239,48 @@ services:
 def crear_configuracion(nombre_proyecto, dbs, caches):
     config_path = os.path.join(nombre_proyecto, 'config')
     crear_directorio_si_no_existe(config_path)
-    db_config_contenido = '\n'.join([f'DATABASE_URL_{db.upper()} = "{db}://user:password@localhost:5432/{nombre_proyecto}"' for db in dbs])
+    db_config_contenido = '''import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def get_database_url():
+    return os.getenv("DATABASE_URL")
+'''
     crear_archivo_si_no_existe(os.path.join(config_path, 'dbs.py'), db_config_contenido)
-    cache_config_contenido = '\n'.join([f'CACHE_URL_{cache.upper()} = "{cache}://localhost:6379"' for cache in caches])
+    cache_config_contenido = '''import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def get_cache_url():
+    return os.getenv("CACHE_URL")
+'''
     crear_archivo_si_no_existe(os.path.join(config_path, 'cache.py'), cache_config_contenido)
-    mail_config_contenido = 'MAIL_SERVER = "smtp.example.com"\nMAIL_PORT = 587\nMAIL_USERNAME = "user@example.com"\nMAIL_PASSWORD = "password"\n'
+    mail_config_contenido = '''import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def get_mail_config():
+    return {
+        "server": os.getenv("MAIL_SERVER"),
+        "port": os.getenv("MAIL_PORT"),
+        "username": os.getenv("MAIL_USERNAME"),
+        "password": os.getenv("MAIL_PASSWORD")
+    }
+'''
     crear_archivo_si_no_existe(os.path.join(config_path, 'mail.py'), mail_config_contenido)
+
+    # Crear .env.example
+    env_example_contenido = '''DATABASE_URL=sqlite:///./test.db
+MAIL_SERVER=smtp.example.com
+MAIL_PORT=587
+MAIL_USERNAME=user@example.com
+MAIL_PASSWORD=password
+CACHE_URL=redis://localhost:6379
+'''
+    crear_archivo_si_no_existe(os.path.join(nombre_proyecto, '.env.example'), env_example_contenido)
 
 def crear_estructura_proyecto(nombre_proyecto):
     # Crear main.py
@@ -235,7 +301,16 @@ def read_root():
     crear_modulo(nombre_proyecto, 'example')
 
     # Crear archivos del módulo de ejemplo
-    crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'models', 'example_model.py'), 'class ExampleModel:\n    pass\n')
+    crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'models', 'example_model.py'), '''from config.dbs import get_database_url
+
+class ExampleModel:
+    def __init__(self):
+        self.database_url = get_database_url()
+
+    def connect(self):
+        # Aquí iría la lógica para conectar a la base de datos usando self.database_url
+        pass
+''')
     crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'repositories', 'example_repository.py'), 'class ExampleRepository:\n    def get_example(self):\n        return {"message": "Hello from the repository"}\n')
     crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'services', 'example_service.py'), 'from example.repositories.example_repository import ExampleRepository\n\nclass ExampleService:\n    def __init__(self):\n        self.repository = ExampleRepository()\n\n    def get_example(self):\n        return self.repository.get_example()\n')
     crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'example', 'controllers', 'example_controller.py'), 'from example.services.example_service import ExampleService\n\nclass ExampleController:\n    def __init__(self):\n        self.service = ExampleService()\n\n    def get_example(self):\n        return self.service.get_example()\n')
@@ -247,6 +322,7 @@ uvicorn
 motor
 redis
 pandas
+python-dotenv
 '''
     crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'requirements.txt'), requirements_contenido)
 
