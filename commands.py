@@ -110,8 +110,10 @@ def menu_archivos():
     respuestas = inquirer.prompt(preguntas)
     return respuestas['tipo_archivo']
 
-def crear_docker_compose(nombre_proyecto, db, cache):
-    docker_compose_contenido = f'''version: '3.8'
+def crear_docker_compose(nombre_proyecto, dbs, caches, archivos_separados):
+    if archivos_separados:
+        for db in dbs:
+            docker_compose_contenido = f'''version: '3.8'
 
 services:
   app:
@@ -123,7 +125,6 @@ services:
       - "8000:8000"
     depends_on:
       - {db}
-      - {cache}
 
   {db}:
     image: {db}
@@ -134,6 +135,22 @@ services:
       POSTGRES_DB: {nombre_proyecto}
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
+'''
+            crear_archivo_si_no_existe(os.path.join(nombre_proyecto, f'docker-compose-{db}.yml'), docker_compose_contenido)
+
+        for cache in caches:
+            docker_compose_contenido = f'''version: '3.8'
+
+services:
+  app:
+    build: .
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - {cache}
 
   {cache}:
     image: {cache}
@@ -141,16 +158,53 @@ services:
     ports:
       - "6379:6379"  # Cambia el puerto según el sistema de colas o caché seleccionado
 '''
-    crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'docker-compose.yml'), docker_compose_contenido)
+            crear_archivo_si_no_existe(os.path.join(nombre_proyecto, f'docker-compose-{cache}.yml'), docker_compose_contenido)
+    else:
+        docker_compose_contenido = f'''version: '3.8'
 
-def crear_configuracion(nombre_proyecto, db, cache):
+services:
+  app:
+    build: .
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+'''
+        for db in dbs:
+            docker_compose_contenido += f'      - {db}\n'
+        for cache in caches:
+            docker_compose_contenido += f'      - {cache}\n'
+
+        for db in dbs:
+            docker_compose_contenido += f'''
+  {db}:
+    image: {db}
+    restart: always
+    ports:
+      - "5432:5432"  # Cambia el puerto según la base de datos seleccionada
+    environment:
+      POSTGRES_DB: {nombre_proyecto}
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+'''
+        for cache in caches:
+            docker_compose_contenido += f'''
+  {cache}:
+    image: {cache}
+    restart: always
+    ports:
+      - "6379:6379"  # Cambia el puerto según el sistema de colas o caché seleccionado
+'''
+        crear_archivo_si_no_existe(os.path.join(nombre_proyecto, 'docker-compose.yml'), docker_compose_contenido)
+
+def crear_configuracion(nombre_proyecto, dbs, caches):
     config_path = os.path.join(nombre_proyecto, 'config')
     crear_directorio_si_no_existe(config_path)
-    db_config_contenido = f'''DATABASE_URL = "{db}://user:password@localhost:5432/{nombre_proyecto}"
-'''
+    db_config_contenido = '\n'.join([f'DATABASE_URL_{db.upper()} = "{db}://user:password@localhost:5432/{nombre_proyecto}"' for db in dbs])
     crear_archivo_si_no_existe(os.path.join(config_path, 'database.py'), db_config_contenido)
-    cache_config_contenido = f'''CACHE_URL = "{cache}://localhost:6379"
-'''
+    cache_config_contenido = '\n'.join([f'CACHE_URL_{cache.upper()} = "{cache}://localhost:6379"' for cache in caches])
     crear_archivo_si_no_existe(os.path.join(config_path, 'cache.py'), cache_config_contenido)
 
 def crear_estructura_proyecto(nombre_proyecto):
@@ -199,10 +253,11 @@ pandas
     subprocess.run([os.path.join(nombre_proyecto, '.venv', 'Scripts', 'pip'), 'install', '-r', os.path.join(nombre_proyecto, 'requirements.txt')])
 
     # Crear docker-compose.yml y configuración
-    db = input("Selecciona la base de datos (mongodb, postgres, mysql, sqlite): ")
-    cache = input("Selecciona el sistema de colas o caché (kafka, redis): ")
-    crear_docker_compose(nombre_proyecto, db, cache)
-    crear_configuracion(nombre_proyecto, db, cache)
+    dbs = inquirer.prompt([inquirer.Checkbox('dbs', message="Selecciona las bases de datos", choices=['mongodb', 'postgres', 'mysql', 'sqlite'])])['dbs']
+    caches = inquirer.prompt([inquirer.Checkbox('caches', message="Selecciona los sistemas de colas o caché", choices=['kafka', 'redis'])])['caches']
+    archivos_separados = inquirer.prompt([inquirer.Confirm('archivos_separados', message="¿Deseas crear archivos Docker separados para cada servicio?", default=False)])['archivos_separados']
+    crear_docker_compose(nombre_proyecto, dbs, caches, archivos_separados)
+    crear_configuracion(nombre_proyecto, dbs, caches)
 
 def main():
     accion = menu_principal()
