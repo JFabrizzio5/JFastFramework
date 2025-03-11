@@ -1,5 +1,5 @@
 # JFastFramework
-JFastFramework - Descripción body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; background-color: #f4f4f4; color: #333; } .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1); } h1, h2 { color: #007BFF; } img { max-width: 100%; height: auto; border-radius: 10px; }
+JFastFramework - Descripción
 
 JFastFramework
 ==============
