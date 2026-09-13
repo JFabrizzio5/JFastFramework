@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# A distribution of its own, not a directory inside the framework's wheel.
+#
+# An extra cannot remove files: `jfastframework[whatever]` only adds
+# dependencies, so anything listed under the framework's
+# `[tool.hatch.build.targets.wheel] packages` reaches every `pip install
+# jfastframework`, including the services generated for clients. The only way
+# to make these opt-in is for them to be a separate thing you install.
+#
+# It deliberately does not depend on jfastframework, and jfastframework has no
+# extra that pulls it in -- `[all]` and `[dev]` are what CI and contributors
+# install, and they stay free of it.
+[project]
+name = "jfastframework-eastereggs"
+version = "0.1.0a1"
+description = "Terminal easter eggs for JFastFramework. Opt-in: never installed with the framework."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shrek", "src/mcqueen", "src/pene", "src/vagina"]
+
+[tool.ruff]
+extend = "../pyproject.toml"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

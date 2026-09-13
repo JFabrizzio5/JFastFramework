@@ -26,6 +26,22 @@ before depending on any single part of this.
 ## [Unreleased]
 
 
+## [0.1.0a9] - 2026-09-13
+
+Opt-in means not in the wheel.
+
+### Added
+
+- **Community easter eggs, opt-in.** The terminal easter eggs contributed in
+  #3 and #4 live in `eastereggs/`, a separate distribution, instead of inside
+  the framework's wheel. Some are not professional; they are kept on purpose
+  and flagged as such. Separate because an extra cannot take files out of a
+  wheel: listed in the framework's `packages`, they would reach every `pip
+  install jfastframework`, including the services generated for clients. The
+  framework, `[all]` and `[dev]` install without them; `pip install
+  ./eastereggs` adds them. `scripts/smoke_eastereggs.sh` builds both wheels and
+  proves the split.
+
 ## [0.1.0a8] - 2026-09-03
 
 One process is not the shape this runs in.

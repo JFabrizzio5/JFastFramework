@@ -434,6 +434,23 @@ No grepping. Plus `.jfast/skills/` — one folder per task with a `SKILL.md`
 stating when to use it and the exact steps — and [AGENTS.md](AGENTS.md), the
 rules an agent must follow here.
 
+## With or without the easter eggs
+
+`pip install jfastframework` installs the framework and nothing else. A few
+terminal easter eggs live in a separate distribution, so neither the framework
+nor `[all]` ever carries them. To add them, from a checkout:
+
+```bash
+pip install ./eastereggs
+```
+
+> **Warning: unprofessional, community-made.** The easter eggs were contributed
+> by the community and some of them are not professional. They are kept on
+> purpose, in their own folder, and never installed by default.
+
+What they are, and the module-name collisions to know about before installing:
+[eastereggs/README.md](eastereggs/README.md).
+
 ---
 
 ## Documentation

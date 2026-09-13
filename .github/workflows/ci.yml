@@ -280,3 +280,28 @@ jobs:
       - run: pip install -e ".[all,dev]"
       - name: Generate, install and build the Vue and React frontends
         run: bash scripts/smoke_frontend.sh
+
+  # The easter eggs are their own distribution, so they get their own job:
+  # every job above installs `.[all,dev]`, which by design does not contain
+  # them, and `ruff check src tests` never reaches `eastereggs/`.
+  eastereggs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # Not editable: the tests import what the wheel installs, not src/.
+      - run: pip install ./eastereggs pytest ruff mypy
+      - name: Lint
+        run: |
+          ruff check eastereggs
+          ruff format --check eastereggs
+      - name: Types
+        run: mypy --strict eastereggs/src
+      - name: Tests
+        working-directory: eastereggs
+        run: pytest -q
+      - name: The framework wheel carries none of them
+        run: bash scripts/smoke_eastereggs.sh

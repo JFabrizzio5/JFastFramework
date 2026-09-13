@@ -135,6 +135,10 @@ bash scripts/smoke_go.sh           # go vet, test, build, run   (needs go)
 bash scripts/smoke_frontend.sh     # npm install + vite build   (needs node)
 ```
 
+If you touched `eastereggs/` or the framework's wheel `packages`, run
+`bash scripts/smoke_eastereggs.sh`: it proves `pip install jfastframework`
+still ships no easter eggs.
+
 Templates are the part that breaks silently: they render fine and produce code
 that does not import, or a Jinja environment eats the `{{ }}` a Vue file needed
 at runtime. `pytest` alone catches neither — that is not hypothetical, it is
