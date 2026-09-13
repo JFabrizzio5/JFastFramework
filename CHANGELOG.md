@@ -25,6 +25,11 @@ before depending on any single part of this.
 
 ## [Unreleased]
 
+
+## [0.1.0a9] - 2026-09-13
+
+Opt-in means not in the wheel.
+
 ### Added
 
 - **Community easter eggs, opt-in.** The terminal easter eggs contributed in
