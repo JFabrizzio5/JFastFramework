@@ -30,6 +30,9 @@ before depending on any single part of this.
 - Added the opt-in `pene` and `vagina` terminal novelty imports. They print
   bundled terminal art, and their combined helper opens a configured YouTube
   video in a new browser tab.
+- Added the opt-in `shrek` and `mcqueen` imports. They print bundled terminal
+  art, and `shrek.play_video(mcqueen)` opens a configured YouTube Short in a
+  new browser tab.
 
 ## [0.1.0a8] - 2026-09-03
 
