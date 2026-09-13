@@ -434,40 +434,22 @@ No grepping. Plus `.jfast/skills/` — one folder per task with a `SKILL.md`
 stating when to use it and the exact steps — and [AGENTS.md](AGENTS.md), the
 rules an agent must follow here.
 
----
+## With or without the easter eggs
 
-## Safe terminal novelty imports
+`pip install jfastframework` installs the framework and nothing else. A few
+terminal easter eggs live in a separate distribution, so neither the framework
+nor `[all]` ever carries them. To add them, from a checkout:
 
-The distribution also includes two opt-in, side-effect-free terminal helpers:
-
-```python
-def surprise() -> bool:
-    import pene
-    import vagina
-
-    pene.show()                # bundled terminal art
-    vagina.show()              # bundled terminal art
-    return pene.play_video(vagina)
+```bash
+pip install ./eastereggs
 ```
 
-The combined helper opens the configured YouTube video in a new browser tab.
-## Character terminal imports
+> **Warning: unprofessional, community-made.** The easter eggs were contributed
+> by the community and some of them are not professional. They are kept on
+> purpose, in their own folder, and never installed by default.
 
-The distribution includes two opt-in helpers with no import-time side effects:
-
-```python
-def surprise() -> bool:
-    import mcqueen
-    import shrek
-
-    shrek.show()
-    mcqueen.show()
-    return shrek.play_video(mcqueen)
-```
-
-The combined helper opens the configured YouTube Short in a new browser tab.
-Playback still follows the browser's autoplay policy. Importing either module
-alone prints nothing and does not open a browser.
+What they are, and the module-name collisions to know about before installing:
+[eastereggs/README.md](eastereggs/README.md).
 
 ---
 

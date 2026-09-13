@@ -27,12 +27,15 @@ before depending on any single part of this.
 
 ### Added
 
-- Added the opt-in `pene` and `vagina` terminal novelty imports. They print
-  bundled terminal art, and their combined helper opens a configured YouTube
-  video in a new browser tab.
-- Added the opt-in `shrek` and `mcqueen` imports. They print bundled terminal
-  art, and `shrek.play_video(mcqueen)` opens a configured YouTube Short in a
-  new browser tab.
+- **Community easter eggs, opt-in.** The terminal easter eggs contributed in
+  #3 and #4 live in `eastereggs/`, a separate distribution, instead of inside
+  the framework's wheel. Some are not professional; they are kept on purpose
+  and flagged as such. Separate because an extra cannot take files out of a
+  wheel: listed in the framework's `packages`, they would reach every `pip
+  install jfastframework`, including the services generated for clients. The
+  framework, `[all]` and `[dev]` install without them; `pip install
+  ./eastereggs` adds them. `scripts/smoke_eastereggs.sh` builds both wheels and
+  proves the split.
 
 ## [0.1.0a8] - 2026-09-03
 
