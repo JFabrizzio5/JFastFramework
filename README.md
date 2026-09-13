@@ -436,6 +436,26 @@ rules an agent must follow here.
 
 ---
 
+## Safe terminal novelty imports
+
+The distribution also includes two opt-in, side-effect-free terminal helpers:
+
+```python
+def surprise() -> bool:
+    import pene
+    import vagina
+
+    pene.show()                # bundled terminal art
+    vagina.show()              # bundled terminal art
+    return pene.play_video(vagina)
+```
+
+The combined helper opens the configured YouTube video in a new browser tab.
+Playback still follows the browser's autoplay policy. Importing either module
+alone prints nothing and does not open a browser.
+
+---
+
 ## Documentation
 
 The site is built from these same files: **<https://jfabrizzio5.github.io/JFastFramework/>**

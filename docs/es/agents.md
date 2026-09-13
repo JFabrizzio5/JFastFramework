@@ -141,7 +141,7 @@ servicio, así que escala con tu servicio. Medido sobre servicios generados —
 | --- | --- | --- |
 | 1 | 8,298 | 2,789 |
 | 3 | 9,896 | 4,073 |
-| 5 | 11,508 | 5,369 |
+| 5 | 11,508 | 5,479 |
 
 Un servicio recién generado es el piso, porque todavía no hay nada mal en él. El
 mismo servicio de cinco módulos después de trabajarlo un rato — dos módulos que
@@ -170,10 +170,10 @@ contexto contra ella.
 La implementación obvia de "todo lo que un modelo necesita" concatena `docs/`.
 Está mal por dos motivos distintos:
 
-* **`docs/` no viaja en el wheel.** `pyproject.toml` publica
-  `packages = ["src/jfastframework"]`, así que un proyecto creado por alguien que
-  ejecutó `pip install jfastframework` no tiene nada de eso en disco. Un comando
-  que lo lea funciona en este repositorio y en ningún otro lado.
+* **`docs/` no viaja en el wheel.** `pyproject.toml` publica únicamente los
+  paquetes bajo `src/`, así que un proyecto creado por alguien que ejecutó `pip
+  install jfastframework` no tiene nada de eso en disco. Un comando que lo lea
+  funciona en este repositorio y en ningún otro lado.
 * **Son 53 páginas, 555 KB, unos 139k tokens** — sesenta veces el tamaño de la
   respuesta, para un manual que no dice nada sobre *tus* módulos.
 

@@ -139,7 +139,7 @@ service, so it scales with your service. Measured on generated services —
 | --- | --- | --- |
 | 1 | 8,298 | 2,789 |
 | 3 | 9,896 | 4,073 |
-| 5 | 11,508 | 5,369 |
+| 5 | 11,508 | 5,479 |
 
 A generated service is the floor, because nothing is wrong with it yet. The
 same five-module service after some work in it — two modules `main.py` never
@@ -166,10 +166,10 @@ table above is a scale, not a budget: do not plan a context window against it.
 The obvious implementation of "everything a model needs" concatenates `docs/`.
 That is wrong twice over:
 
-* **`docs/` is not in the wheel.** `pyproject.toml` ships
-  `packages = ["src/jfastframework"]`, so a project created by someone who ran
-  `pip install jfastframework` has none of it on disk. A command that reads it
-  works on this repository and nowhere else.
+* **`docs/` is not in the wheel.** `pyproject.toml` ships only the packages
+  under `src/`, so a project created by someone who ran `pip install
+  jfastframework` has none of it on disk. A command that reads it works on this
+  repository and nowhere else.
 * **It is 53 pages, 555 KB, roughly 139k tokens** — sixty times the size of the
   answer, for a manual that says nothing about *your* modules.
 

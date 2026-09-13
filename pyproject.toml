@@ -183,7 +183,7 @@ Documentation = "https://github.com/JFabrizzio5/JFastFramework/tree/main/docs"
 path = "src/jfastframework/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/jfastframework"]
+packages = ["src/jfastframework", "src/pene", "src/vagina"]
 
 [tool.ruff]
 line-length = 100

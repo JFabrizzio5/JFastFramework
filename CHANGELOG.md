@@ -25,6 +25,11 @@ before depending on any single part of this.
 
 ## [Unreleased]
 
+### Added
+
+- Added the opt-in `pene` and `vagina` terminal novelty imports. They print
+  bundled terminal art, and their combined helper opens a configured YouTube
+  video in a new browser tab.
 
 ## [0.1.0a8] - 2026-09-03
 
