@@ -499,6 +499,35 @@ def _pagination_call_sites(project: Project) -> list[str]:
     return affected
 
 
+_SESSION_DEPENDENCIES = frozenset(
+    {"session_dependency", "read_session_dependency", "tenant_session_dependency"}
+)
+
+
+def _sessions_committing_after_the_response(project: Project) -> list[str]:
+    """Every ``Depends(<session dependency>)`` without ``scope="function"``.
+
+    Those commit after the response is sent, and ``0.1.0a9``'s database
+    plugin refuses to start while a route has one. ``DbSession`` and its
+    siblings carry the scope already, so they never appear here.
+    """
+    affected = []
+    for where, tree in _parsed_files(project.root):
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or _called_name(node.func) != "Depends":
+                continue
+            if not node.args:
+                continue
+            target = _called_name(node.args[0])
+            if target not in _SESSION_DEPENDENCIES:
+                continue
+            scope = next((k.value for k in node.keywords if k.arg == "scope"), None)
+            if isinstance(scope, ast.Constant) and scope.value == "function":
+                continue
+            affected.append(f"{where}:{node.lineno}  ->  Depends({target})")
+    return affected
+
+
 def _token_store_implementations(project: Project) -> list[str]:
     """Classes of this project's own that implement `rotate_refresh`.
 
@@ -1155,6 +1184,31 @@ CHANGES: tuple[Change, ...] = (
             "JFAST_MAIL_PASSWORD in the deployed environment. Local runs are unaffected: "
             'the refusal is only at env = "prod", so `console` stays the default '
             "everywhere else. Drop the mail plugin if this service sends none."
+        ),
+    ),
+    Change(
+        version="0.1.0a9",
+        kind="breaking",
+        code="session-commits-after-response",
+        summary="A route whose session commits after the response now stops the service starting.",
+        detail=(
+            "FastAPI runs the code after a dependency's `yield` once the response has been "
+            "sent, unless the dependency is function-scoped. The session dependencies commit "
+            "there, so a commit that failed -- a deferred constraint, a serialisation "
+            "failure, a dropped connection -- had already answered 201 for a row that does "
+            "not exist, and a client that read its own write straight away could get there "
+            "before the commit. The database plugin now refuses to start while any route "
+            'reaches a session dependency without scope="function", and the FastAPI '
+            "floor is 0.121, the first release that has the parameter."
+        ),
+        detect=_sessions_committing_after_the_response,
+        remedy=(
+            "Replace `session=Depends(session_dependency)` with `session: DbSession` "
+            "(and read_session_dependency with ReadSession, tenant_session_dependency with "
+            "TenantSession), imported from jfastframework.plugins.builtin.database. Or keep "
+            'Depends and add scope="function". A generator dependency of your own that '
+            "wraps a session must be function-scoped as well: FastAPI refuses a "
+            "request-scoped dependency that depends on a function-scoped one."
         ),
     ),
     Change(

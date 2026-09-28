@@ -8,8 +8,9 @@ jobs, a Vue frontend and a reverse proxy, wired together and running under
 Compose. What you write is the part only you know: the rules of your business.
 What keeps it coherent afterwards is a contract that CI enforces.
 
-Status: `0.1.0a5` — alpha, on PyPI. Maturity is tracked per subsystem rather
-than by one version number: [STATUS.md](STATUS.md) says what is tested against
+Status: alpha, on PyPI -- the current version is the one PyPI shows; a number
+typed here goes stale. Maturity is tracked per subsystem rather than by one
+version number: [STATUS.md](STATUS.md) says what is tested against
 real infrastructure, what is unverified, and what is known broken. Read it
 before depending on any single part.
 

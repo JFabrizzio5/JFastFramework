@@ -9,7 +9,7 @@ making sense at 0.2.
 ## Renumbering
 
 The entries below were originally numbered `0.1.0` through `0.7.0`. That numbering
-overstated the maturity of the code. Nothing has ever been published; the workspace
+overstated the maturity of the code. Nothing had been published at the time; the workspace
 file format is about to change; the Redis queue backend does not implement the
 visibility timeout its own contract documents; the RabbitMQ and Kafka backends have
 never been run against a real broker.
@@ -24,6 +24,75 @@ Subsystem-level maturity lives in [STATUS.md](STATUS.md), which is the file to r
 before depending on any single part of this.
 
 ## [Unreleased]
+
+
+## [0.1.0a9] - 2026-09-28
+
+A 201 has to mean the row exists.
+
+The request's session committed in dependency teardown, and FastAPI runs a
+`yield` dependency's teardown after the response has been sent. So a commit
+that failed had already been answered with success, and a client that read its
+own write straight away could get there before the commit did. Every
+generated module wired its session that way.
+
+### Breaking
+
+- **The database plugin refuses to start while a route's session would commit
+  after the response.** `DbSession`, `ReadSession` and `TenantSession` are the
+  three session dependencies with `scope="function"` applied, which commits
+  when the endpoint returns and before the response exists; a failed commit is
+  a 500 now. `Depends(session_dependency, scope="function")` works too. The
+  refusal names each route. `jfast upgrade --check` lists the lines before the
+  boot does.
+- **FastAPI floor 0.121**, the first release with `Depends(..., scope=...)`.
+  Nothing below it can commit before the response. **SQLAlchemy floor 2.0.16**
+  for `postgresql_nulls_not_distinct`.
+
+### Added
+
+- **Constraint violations are 409s.** `BaseRepository` turns a unique, foreign
+  key or exclusion violation raised by its flush into `ConflictError`, instead
+  of a driver exception that surfaced as a 500.
+- **`VersionedMixin` and `PreconditionFailedError`.** A `version` column checked
+  by SQLAlchemy on every `UPDATE`, so the second of two concurrent saves fails
+  with a 409 instead of silently replacing the first; and
+  `update(expected_version=n)`, a 412 when the row has moved past the version
+  the client read. It refuses to be listed after `TimestampMixin`, where it
+  would have been dropped without a word.
+- **`get_for_update`, `advisory_lock`, `run_in_transaction`.** A row lock for
+  read-modify-write; a transaction-scoped lock on any key, for rules one
+  constraint cannot express; and a runner that retries a whole unit of work on
+  serialisation failure or deadlock, and on nothing else.
+- **`docs/transactions.md`**, in English and Spanish.
+
+### Changed
+
+- **Generated modules.** Every layout depends on `DbSession`. `limit` is
+  bounded to 1-200 and `offset` to 0 and up: `?limit=-1` was a 500 and
+  `?limit=10000000` a table dump. The `name` the service checks for duplicates
+  is now `UniqueConstraint("tenant_id", "name", postgresql_nulls_not_distinct=True)`
+  -- two requests could both pass the check. `layered` modules are versioned:
+  `Read` returns `version`, `Update` accepts it, and the list sends
+  `X-Total-Count`.
+
+### Fixed
+
+- **Jobs ran with no tenant.** `Job.tenant_id` and `request_id` existed and
+  nothing filled them, so every handler ran unscoped and its repositories read
+  every tenant's rows. A job built inside a request takes both from context,
+  and the worker restores them around the handler.
+- **`jfast check` accepts `TenantSession`** as opening a tenant's database;
+  it only looked for `tenant_session_dependency`.
+- **Documentation that contradicted itself.** The README named `0.1.0a5`;
+  STATUS said installing needs `--pre`, which it does not while only
+  pre-releases exist; STATUS said there were no upper bounds, which `0.1.0a8`
+  added; CI said the package was not on PyPI.
+
+### Not done, and named
+
+The outbox (`enqueue` still commits in its own transaction), idempotency keys,
+and row-level security. All three are in `PLAN-NEXT.md`.
 
 
 ## [0.1.0a8] - 2026-09-03

@@ -51,6 +51,19 @@ class ConflictError(JFastError):
     title = "Conflict"
 
 
+class PreconditionFailedError(JFastError):
+    """The client wrote against a version of the row that is no longer current.
+
+    412 rather than 409: the request carried a precondition -- the version it
+    read -- and that precondition is what failed. The client's remedy is to
+    read again and decide, which is different from a conflict it can fix by
+    changing the payload.
+    """
+
+    status_code = 412
+    title = "Precondition Failed"
+
+
 class ValidationError(JFastError):
     status_code = 422
     title = "Unprocessable Entity"

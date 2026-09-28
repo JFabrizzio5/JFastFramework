@@ -104,10 +104,9 @@ jobs:
           JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
         run: pytest -q
 
-      # Named, because a skip is silent and this is the whole point of the
-      # service container above.
-      # Named, because a skip is silent and these three are the only
-      # evidence that the atomicity, the fan-out and the pinning are real.
+      # Named, because a skip is silent and these are the only evidence that
+      # the atomicity, the fan-out, the pinning and the transaction races are
+      # real.
       - name: Prove the tests needing a real server actually ran
         env:
           JFAST_TEST_REDIS_URL: redis://localhost:6379/0
@@ -117,6 +116,7 @@ jobs:
             tests/test_ratelimit.py::test_lua_script_against_real_redis \
             tests/test_websocket.py::test_a_message_published_on_one_worker_reaches_a_socket_on_the_other \
             tests/test_database_postgres.py \
+            tests/test_transactions.py \
             | tee /tmp/server-tests.log
           if grep -qE '^SKIPPED|no tests ran' /tmp/server-tests.log; then
             echo '::error::a test needing a real server skipped; a service container is not reachable'
@@ -134,8 +134,9 @@ jobs:
       # happen is a step going yellow and being ignored, which is how a
       # security check stops meaning anything.
       - name: Audit dependencies
-        # --skip-editable: this project is installed from the checkout and is
-        # not on PyPI, so there is nothing to look up for it.
+        # --skip-editable: this project is installed from the checkout, so the
+        # copy being audited is not the one on PyPI and there is nothing to
+        # look up for it.
         run: pip-audit --skip-editable --desc
 
       - name: Static security scan

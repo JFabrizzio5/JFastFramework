@@ -122,10 +122,10 @@ tenant_max_overflow = 2
 ```
 
 ```python
-from jfastframework.plugins.builtin.database import tenant_session_dependency
+from jfastframework.plugins.builtin.database import TenantSession
 
 @router.get("/invoices")
-async def list_invoices(session = Depends(tenant_session_dependency)):
+async def list_invoices(session: TenantSession):
     ...
 ```
 

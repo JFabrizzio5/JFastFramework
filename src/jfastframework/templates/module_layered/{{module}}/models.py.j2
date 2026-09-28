@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from jfastframework.db import Base, TenantMixin, TimestampMixin
+from jfastframework.db import Base, TenantMixin, TimestampMixin, VersionedMixin
 
 
-class {{ Module }}(Base, TimestampMixin, TenantMixin):
+# VersionedMixin before TimestampMixin: it carries both mixins' mapper settings.
+class {{ Module }}(Base, VersionedMixin, TimestampMixin, TenantMixin):
     __tablename__ = "{{ table }}"
+    # The rule the service checks, made true by the database: two requests can
+    # both pass the service's check, only one can pass the constraint. NULLS
+    # NOT DISTINCT so it also holds with no tenant (PostgreSQL 15+).
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", postgresql_nulls_not_distinct=True),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(index=True)

@@ -200,6 +200,14 @@ class Worker:
             limiter.release()
             return
 
+        # The handler runs as the request that queued it: same tenant, same
+        # request id. Without this a job ran with no tenant at all, so every
+        # repository it opened read every tenant's rows, and its log lines
+        # could not be traced back to anything.
+        from jfastframework.plugins.builtin.observability import request_id_var, tenant_id_var
+
+        request_token = request_id_var.set(job.request_id)
+        tenant_token = tenant_id_var.set(job.tenant_id)
         try:
             await asyncio.wait_for(handler(job.payload), timeout=self.job_timeout)
         except TimeoutError:
@@ -215,6 +223,8 @@ class Worker:
             await self.backend.ack(job)
             logger.info("job done", extra={"job_id": job.id, "task": job.task})
         finally:
+            tenant_id_var.reset(tenant_token)
+            request_id_var.reset(request_token)
             limiter.release()
 
     def stop(self) -> None:

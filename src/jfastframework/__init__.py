@@ -7,6 +7,7 @@ from jfastframework.errors import (
     ForbiddenError,
     JFastError,
     NotFoundError,
+    PreconditionFailedError,
     ServiceUnavailableError,
     UnauthorizedError,
     ValidationError,
@@ -20,7 +21,7 @@ from jfastframework.plugins.base import (
 )
 from jfastframework.settings import JFastConfig, JFastSettings
 
-__version__ = "0.1.0a8"
+__version__ = "0.1.0a9"
 
 __all__ = [
     "AppContext",
@@ -35,6 +36,7 @@ __all__ = [
     "Plugin",
     "PluginMeta",
     "PluginSettings",
+    "PreconditionFailedError",
     "ServiceUnavailableError",
     "UnauthorizedError",
     "ValidationError",

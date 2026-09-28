@@ -530,7 +530,16 @@ packages tested together. Two of those are covered above; this is the CLI.
       development.
 - [ ] **Outbox** — `publish_in_transaction()` plus a relay, so `events` cannot
       commit a row and lose the event. The PostgreSQL queue backend already
-      avoids this by construction; Kafka needs it explicitly.
+      avoids this by construction; Kafka needs it explicitly. The PostgreSQL
+      queue does *not* avoid the other half: `enqueue` commits in its own
+      transaction, apart from the request's rows, so it needs
+      `enqueue(job, session=...)` writing through the request's session.
+- [ ] **Idempotency keys** — an `Idempotency-Key` dependency backed by a table
+      `(tenant_id, key, request_hash, status, response)`, inserted with
+      `ON CONFLICT` in the request's own transaction. The same key with the
+      same body replays the stored response; with a different body, 422. What
+      a client that retries a `POST` after a timeout needs when there is no
+      natural unique key to stop the second row.
 
 ---
 

@@ -25,14 +25,16 @@ class {{ Module }}Service:
         return await self.repository.get_or_raise(item_id)
 
     async def create(self, payload: {{ Module }}Create) -> {{ Module }}:
+        # For the message. The unique constraint is what holds under
+        # concurrency: the repository turns its violation into the same 409.
         if await self.repository.by_name(payload.name) is not None:
             raise ConflictError(f"{{ Module }} named {payload.name!r} already exists")
         return await self.repository.create(**payload.model_dump())
 
     async def update(self, item_id: int, payload: {{ Module }}Update) -> {{ Module }}:
         item = await self.repository.get_or_raise(item_id)
-        changes = payload.model_dump(exclude_unset=True)
-        return await self.repository.update(item, **changes)
+        changes = payload.model_dump(exclude_unset=True, exclude={"version"})
+        return await self.repository.update(item, expected_version=payload.version, **changes)
 
     async def delete(self, item_id: int) -> None:
         item = await self.repository.get_or_raise(item_id)

@@ -9,7 +9,7 @@ un pin de release compatible (`~=`) empieza a tener sentido en 0.2.
 ## Renumeración
 
 Las entradas de abajo estaban numeradas originalmente de `0.1.0` a `0.7.0`. Esa
-numeración exageraba la madurez del código. Nunca se publicó nada; el formato
+numeración exageraba la madurez del código. En ese momento no se había publicado nada; el formato
 del archivo de workspace está por cambiar; el backend de cola de Redis no
 implementa el visibility timeout que documenta su propio contrato; los backends
 de RabbitMQ y Kafka nunca se corrieron contra un broker real.
@@ -24,6 +24,77 @@ La madurez a nivel de subsistema vive en [STATUS.md](STATUS.md), que es el
 archivo para leer antes de depender de cualquier parte de esto.
 
 ## [Unreleased]
+
+
+## [0.1.0a9] - 2026-09-28
+
+Un 201 tiene que significar que la fila existe.
+
+La sesión de la request confirmaba al desmontar la dependencia, y FastAPI corre
+el desmontaje de una dependencia con `yield` después de enviar la respuesta. Así
+que un commit fallido ya se había contestado como éxito, y un cliente que leía
+su propia escritura enseguida podía llegar antes que el commit. Todos los
+módulos generados conectaban la sesión de esa forma.
+
+> Las entradas de `0.1.0a6` a `0.1.0a8` solo están en inglés, en el
+> [CHANGELOG](../../CHANGELOG.md) del repositorio.
+
+### Incompatible
+
+- **El plugin de base de datos no arranca mientras la sesión de alguna ruta
+  confirme después de la respuesta.** `DbSession`, `ReadSession` y
+  `TenantSession` son las tres dependencias de sesión con `scope="function"`, que
+  confirma cuando el endpoint regresa y antes de que exista la respuesta; un
+  commit fallido ahora es un 500. `Depends(session_dependency, scope="function")`
+  también sirve. El rechazo nombra cada ruta, y `jfast upgrade --check` lista
+  las líneas antes de que lo haga el arranque.
+- **Piso de FastAPI 0.121**, la primera versión con `Depends(..., scope=...)`.
+  **Piso de SQLAlchemy 2.0.16** por `postgresql_nulls_not_distinct`.
+
+### Agregado
+
+- **Las violaciones de constraint son 409.** `BaseRepository` convierte una
+  violación única, de FK o de exclusión en `ConflictError`, en vez de una
+  excepción del driver que salía como 500.
+- **`VersionedMixin` y `PreconditionFailedError`.** Una columna `version` que
+  SQLAlchemy revisa en cada `UPDATE`, para que el segundo de dos guardados
+  concurrentes falle con 409 en vez de reemplazar al primero en silencio; y
+  `update(expected_version=n)`, un 412 cuando la fila ya pasó la versión que
+  leyó el cliente. Se niega a ir después de `TimestampMixin`, donde se perdería
+  sin aviso.
+- **`get_for_update`, `advisory_lock`, `run_in_transaction`.** Bloqueo de fila
+  para leer-modificar-escribir; bloqueo por llave durante la transacción, para
+  reglas que una constraint no expresa; y un ejecutor que reintenta la unidad de
+  trabajo completa ante fallo de serialización o deadlock, y ante nada más.
+- **`docs/transactions.md`**, en inglés y español.
+
+### Cambiado
+
+- **Módulos generados.** Todos los layouts dependen de `DbSession`. `limit` va
+  de 1 a 200 y `offset` desde 0: `?limit=-1` era un 500 y `?limit=10000000` un
+  volcado de la tabla. El `name` que el servicio revisa por duplicados ahora es
+  `UniqueConstraint("tenant_id", "name", postgresql_nulls_not_distinct=True)`
+  -- dos requests podían pasar la revisión. Los módulos `layered` tienen
+  versión: `Read` devuelve `version`, `Update` la acepta y la lista manda
+  `X-Total-Count`.
+
+### Corregido
+
+- **Los jobs corrían sin tenant.** `Job.tenant_id` y `request_id` existían y
+  nadie los llenaba, así que todo handler corría sin alcance y sus repositorios
+  leían las filas de todos los tenants. Un job creado dentro de una request toma
+  ambos del contexto, y el worker los restaura alrededor del handler.
+- **`jfast check` acepta `TenantSession`** como apertura de la base de un tenant;
+  solo buscaba `tenant_session_dependency`.
+- **Documentación que se contradecía.** El README decía `0.1.0a5`; STATUS decía
+  que instalar requiere `--pre`, y no es así mientras solo existan pre-releases;
+  STATUS decía que no había techos de versión, que `0.1.0a8` agregó; la CI decía
+  que el paquete no estaba en PyPI.
+
+### Sin hacer, y nombrado
+
+El outbox (`enqueue` sigue confirmando en su propia transacción), las
+idempotency keys y el row-level security. Los tres están en `PLAN-NEXT.md`.
 
 ### Agregado
 

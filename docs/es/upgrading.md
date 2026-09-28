@@ -170,6 +170,45 @@ desarrollo.
 
 ---
 
+## El que detiene un arranque en `0.1.0a9`
+
+### Una sesión que confirma después de la respuesta
+
+```
+PluginError: these routes open a database session that would commit after the
+response is sent ...
+  POST /invoices -> session_dependency
+```
+
+Antes: un commit fallido -- una constraint diferida, un fallo de serialización,
+una conexión que se cae en el momento equivocado -- ya se había contestado
+`201`, y un cliente que leía su propia escritura enseguida podía llegar antes
+que el commit. FastAPI corre el desmontaje de una dependencia con `yield`
+después de la respuesta salvo que tenga scope de función, y la sesión confirma
+en su desmontaje. Todo módulo que `jfast new module` generó antes de `0.1.0a9`
+la conecta así.
+
+La corrección es una línea por dependencia:
+
+```python
+# antes
+def get_service(request: Request, session=Depends(session_dependency)) -> Service: ...
+
+# después
+from jfastframework.plugins.builtin.database import DbSession
+
+def get_service(request: Request, session: DbSession) -> Service: ...
+```
+
+`ReadSession` reemplaza a `read_session_dependency` y `TenantSession` a
+`tenant_session_dependency`. `Depends(session_dependency, scope="function")` es
+lo mismo escrito completo. Una dependencia generadora propia que envuelva una
+sesión también debe tener scope de función -- FastAPI rechaza el otro orden.
+
+`jfast upgrade --check` lista cada línea como `session-commits-after-response`.
+El framework ahora necesita FastAPI 0.121 o posterior; `pip install -U` lo
+resuelve. [Transacciones](transactions.md) explica el resto.
+
 ## Exit codes
 
 | Código | Significado |

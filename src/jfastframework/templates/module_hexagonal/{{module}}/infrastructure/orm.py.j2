@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jfastframework.db import Base, TenantMixin, TimestampMixin
@@ -23,6 +24,12 @@ from ..domain.entities import {{ Module }}
 
 class {{ Module }}Row(Base, TimestampMixin, TenantMixin):
     __tablename__ = "{{ table }}"
+    # The duplicate check in the service is for the message; this is what
+    # holds when two requests pass it at once. NULLS NOT DISTINCT so it also
+    # holds with no tenant (PostgreSQL 15+).
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", postgresql_nulls_not_distinct=True),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(index=True)

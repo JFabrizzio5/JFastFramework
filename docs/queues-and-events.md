@@ -62,6 +62,36 @@ Charging a card twice is a bug in the handler, not in the queue. Key the side
 effect on something stable — the invoice id, an idempotency key — and check
 before acting.
 
+### A job runs as the tenant that queued it
+
+A `Job` built inside a request takes that request's `tenant_id` and
+`request_id` from context, and the worker puts both back while the handler
+runs. The handler's log lines carry the request that caused them, and
+`current_tenant_id()` inside it answers the same tenant:
+
+```python
+from jfastframework.plugins.builtin.observability import current_tenant_id
+
+@tasks.task("recalculate_balance")
+async def recalculate_balance(payload: dict) -> None:
+    async with sessionmaker() as session:
+        repository = AccountRepository(session, tenant_id=current_tenant_id())
+        ...
+```
+
+Until `0.1.0a9` the fields existed and nothing filled them, so every job ran
+with no tenant and a repository opened inside one read every tenant's rows.
+A job queued outside a request -- a cron, a script -- still carries none unless
+it is given one: `Job(task=..., tenant_id="acme")`.
+
+### Enqueueing is not part of the request's transaction
+
+`enqueue` writes the job in a transaction of its own. The request's rows commit
+separately, so the two can disagree: the request rolls back after the job was
+queued, and the worker looks for a row that never existed. Until the outbox
+lands (planned in `PLAN-NEXT.md`), make handlers tolerate a missing
+row -- log and ack -- rather than retrying it into the dead-letter queue.
+
 ### Choosing a backend
 
 | | PostgreSQL (default) | Redis | RabbitMQ |

@@ -38,7 +38,10 @@ classifiers = [
 # which is the point of having one. `typer` and `tzdata` are tools rather than
 # API surface and keep floors only.
 dependencies = [
-    "fastapi>=0.115,<1",
+    # 0.121 is the first with `Depends(..., scope="function")`, which is what
+    # lets a request-scoped session commit before the response is sent. Below
+    # it the commit runs after, and a failed one has already answered 2xx.
+    "fastapi>=0.121,<1",
     # Imported directly by nine modules here -- middleware, the proxy headers,
     # the error responses -- and it was never declared, so the version this
     # framework runs on was whatever FastAPI happened to pull. FastAPI's own
@@ -66,7 +69,9 @@ dependencies = [
 
 [project.optional-dependencies]
 server = ["uvicorn[standard]>=0.32"]
-db = ["sqlalchemy[asyncio]>=2.0", "asyncpg>=0.30", "alembic>=1.14"]
+# 2.0.16 for `postgresql_nulls_not_distinct`, which the generated unique
+# constraints use so they hold on rows with no tenant.
+db = ["sqlalchemy[asyncio]>=2.0.16", "asyncpg>=0.30", "alembic>=1.14"]
 cache = ["redis>=5.2"]
 metrics = ["prometheus-client>=0.21"]
 sentry = ["sentry-sdk>=2.19"]

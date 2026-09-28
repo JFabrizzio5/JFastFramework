@@ -66,21 +66,29 @@ async def _build(tmp_path: Path, **overrides: Any) -> Any:
             await conn.run_sync(Base.metadata.create_all)
 
     @app.get("/where")
-    async def where(session: Any = Depends(read_session_dependency)) -> dict[str, str]:
+    async def where(
+        session: Any = Depends(read_session_dependency, scope="function"),
+    ) -> dict[str, str]:
         return {"bind": str(session.get_bind().url)}
 
     @app.get("/items")
-    async def items(session: Any = Depends(read_session_dependency)) -> dict[str, list[str]]:
+    async def items(
+        session: Any = Depends(read_session_dependency, scope="function"),
+    ) -> dict[str, list[str]]:
         rows = await session.execute(select(Item.label))
         return {"labels": [row[0] for row in rows]}
 
     @app.post("/items")
-    async def create(session: Any = Depends(session_dependency)) -> dict[str, str]:
+    async def create(
+        session: Any = Depends(session_dependency, scope="function"),
+    ) -> dict[str, str]:
         session.add(Item(label="one"))
         return {"bind": str(session.get_bind().url)}
 
     @app.post("/write-through-raw-sql")
-    async def raw(session: Any = Depends(read_session_dependency)) -> dict[str, str]:
+    async def raw(
+        session: Any = Depends(read_session_dependency, scope="function"),
+    ) -> dict[str, str]:
         session.add(Item(label="smuggled"))
         return {"ok": "no"}
 
@@ -112,7 +120,9 @@ async def test_without_the_split_a_read_uses_the_only_database(tmp_path: Path) -
     plugin.register(app.state.jfast)
 
     @app.get("/where")
-    async def where(session: Any = Depends(read_session_dependency)) -> dict[str, str]:
+    async def where(
+        session: Any = Depends(read_session_dependency, scope="function"),
+    ) -> dict[str, str]:
         return {"bind": str(session.get_bind().url)}
 
     async with client_for(app) as client:

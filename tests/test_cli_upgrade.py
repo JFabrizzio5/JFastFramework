@@ -987,3 +987,45 @@ def test_a_job_timeout_inside_the_window_is_not_reported(tmp_path: Path) -> None
     found = upgrades.applicable(project_scan.load(root), current="0.1.0a7", installed="0.1.0a8")
 
     assert "job-timeout-past-visibility" not in [c.code for c, _ in found]
+
+
+_DB_CONFIG = (
+    '[app]\nname = "s"\nversion = "0.1.0"\nenv = "local"\n\n'
+    '[plugins]\nenabled = ["observability", "database"]\ndisabled = []\n'
+)
+
+
+def test_a_session_that_commits_after_the_response_names_the_line(tmp_path: Path) -> None:
+    """The database plugin refuses these at boot; this finds them on a laptop."""
+    root = _service(tmp_path, _DB_CONFIG)
+    write(
+        root / "routes.py",
+        "from fastapi import Depends\n"
+        "from jfastframework.plugins.builtin.database import (\n"
+        "    read_session_dependency, session_dependency)\n"
+        "def get_service(session=Depends(session_dependency)): ...\n"
+        "def fine(session=Depends(session_dependency, scope='function')): ...\n"
+        "def reads(session=Depends(read_session_dependency)): ...\n",
+    )
+
+    found = upgrades.applicable(project_scan.load(root), current="0.1.0a8", installed="0.1.0a9")
+
+    reported = [a for change, a in found if change.code == "session-commits-after-response"]
+    assert reported
+    assert reported[0] == [
+        "routes.py:4  ->  Depends(session_dependency)",
+        "routes.py:6  ->  Depends(read_session_dependency)",
+    ]
+
+
+def test_the_scoped_aliases_are_not_reported(tmp_path: Path) -> None:
+    root = _service(tmp_path, _DB_CONFIG)
+    write(
+        root / "routes.py",
+        "from jfastframework.plugins.builtin.database import DbSession\n"
+        "def get_service(session: DbSession): ...\n",
+    )
+
+    found = upgrades.applicable(project_scan.load(root), current="0.1.0a8", installed="0.1.0a9")
+
+    assert "session-commits-after-response" not in [c.code for c, _ in found]

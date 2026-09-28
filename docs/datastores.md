@@ -110,22 +110,22 @@ read_write_split = true
 Reads go to a `read_only` instance, writes to the primary:
 
 ```python
-from jfastframework.plugins.builtin.database import (
-    read_session_dependency,
-    session_dependency,
-)
+from jfastframework.plugins.builtin.database import DbSession, ReadSession
 
 @router.get("/invoices")
-async def list_invoices(session = Depends(read_session_dependency)):
+async def list_invoices(session: ReadSession):
     ...
 
 @router.post("/invoices")
-async def create_invoice(session = Depends(session_dependency)):
+async def create_invoice(session: DbSession):
     ...
 ```
 
-With no replica configured, `read_session_dependency` is the same session as
-`session_dependency`. Use it everywhere from the start and the split arrives
+`DbSession` and `ReadSession` are `session_dependency` and
+`read_session_dependency` with `scope="function"` already applied, which is
+what makes the commit happen before the response is sent -- see
+[Transactions](transactions.md). With no replica configured, `ReadSession` is
+the same database as `DbSession`. Use it everywhere from the start and the split arrives
 later as one configuration block.
 
 ### The part that is not optional: pinning
@@ -159,7 +159,7 @@ For the rare write behind a `GET` — a lazy upsert, a counter — say so:
 from jfastframework.plugins.builtin.database import mark_write
 
 @router.get("/reports/{id}")
-async def report(request: Request, session = Depends(session_dependency)):
+async def report(request: Request, session: DbSession):
     await touch_last_seen(session, id)
     mark_write(request)
 ```

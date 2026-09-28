@@ -25,11 +25,16 @@ class {{ Module }}Update(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
     is_active: bool | None = None
+    # The version the client read. Sent back, a save that raced another one
+    # is refused with 412 instead of overwriting it; left out, the last write
+    # wins as before.
+    version: int | None = Field(default=None, ge=1)
 
 
 class {{ Module }}Read({{ Module }}Base):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    version: int
     created_at: datetime
     updated_at: datetime

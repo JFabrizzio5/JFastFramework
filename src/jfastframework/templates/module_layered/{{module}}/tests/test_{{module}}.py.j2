@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from jfastframework.errors import ConflictError, NotFoundError
+from jfastframework.errors import ConflictError, NotFoundError, PreconditionFailedError
 
 from modules.{{ module }}.schemas import {{ Module }}Create, {{ Module }}Update
 from modules.{{ module }}.service import {{ Module }}Service
@@ -53,14 +53,19 @@ class FakeRepository:
         return next((i for i in self.items.values() if i.name == name), None)
 
     async def create(self, **values: object) -> Fake{{ Module }}:
-        item = Fake{{ Module }}(self._next_id, **values)
+        item = Fake{{ Module }}(self._next_id, version=1, **values)
         self.items[self._next_id] = item
         self._next_id += 1
         return item
 
-    async def update(self, instance: Fake{{ Module }}, **values: object) -> Fake{{ Module }}:
+    async def update(
+        self, instance: Fake{{ Module }}, *, expected_version: int | None = None, **values: object
+    ) -> Fake{{ Module }}:
+        if expected_version is not None and expected_version != instance.version:
+            raise PreconditionFailedError("stale version")
         for key, value in values.items():
             setattr(instance, key, value)
+        instance.version += 1
         return instance
 
     async def delete(self, instance: Fake{{ Module }}) -> None:
@@ -94,6 +99,13 @@ async def test_update_applies_only_set_fields(service: {{ Module }}Service) -> N
     updated = await service.update(item.id, {{ Module }}Update(name="after"))
     assert updated.name == "after"
     assert updated.description == "keep"
+
+
+async def test_update_with_a_stale_version_is_refused(service: {{ Module }}Service) -> None:
+    item = await service.create({{ Module }}Create(name="shared"))
+    await service.update(item.id, {{ Module }}Update(name="first save", version=1))
+    with pytest.raises(PreconditionFailedError):
+        await service.update(item.id, {{ Module }}Update(name="second save", version=1))
 
 
 async def test_delete_removes_item(service: {{ Module }}Service) -> None:

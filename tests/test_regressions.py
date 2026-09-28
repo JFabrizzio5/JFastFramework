@@ -47,7 +47,9 @@ def test_session_dependency_is_not_a_query_parameter() -> None:
     app = FastAPI()
 
     @app.get("/items")
-    async def list_items(session: object = Depends(session_dependency)) -> dict[str, str]:
+    async def list_items(
+        session: object = Depends(session_dependency, scope="function"),
+    ) -> dict[str, str]:
         return {"ok": "yes"}
 
     parameters = app.openapi()["paths"]["/items"]["get"].get("parameters", [])

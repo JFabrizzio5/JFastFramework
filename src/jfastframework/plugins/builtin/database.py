@@ -29,8 +29,9 @@ import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
+from fastapi import Depends
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from pydantic_settings import SettingsConfigDict
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -665,10 +666,9 @@ def mark_write(request: Request) -> None:
     """Say this request wrote, so this client's next read skips the replica.
 
     Only needed for a write behind a *safe* method -- a lazy upsert inside a
-    ``GET``. Unsafe methods pin on their own, and must, because the decision
-    has to be made before the handler returns: dependency teardown, where a
-    session commits, runs after the response headers are already on the wire,
-    so a commit cannot be what sets the cookie.
+    ``GET``. Unsafe methods pin on their own: the middleware decides from what
+    it can see when the response comes back, and whether a session committed
+    is not one of those things.
     """
     request.state.jfast_db_wrote = True
 
@@ -726,12 +726,11 @@ class ReadWritePinMiddleware(BaseHTTPMiddleware):
             return True
         if not self._settings.pin_on_unsafe_methods:
             return False
-        # The method, not the session. A session commits during dependency
-        # teardown, which happens after `call_next` has already handed back the
-        # response -- too late to set a cookie on it. The method is known
-        # before the handler runs and covers every write a REST API makes; the
-        # cost of the approximation is a POST that read nothing pinning its
-        # client for one window, which is load, not incorrectness.
+        # The method, not the session. The middleware cannot see whether a
+        # session committed; the method is known before the handler runs and
+        # covers every write a REST API makes. The cost of the approximation
+        # is a POST that read nothing pinning its client for one window, which
+        # is load, not incorrectness.
         return request.method in UNSAFE_METHODS and response.status_code < 400
 
 
@@ -810,6 +809,21 @@ class DatabasePlugin(Plugin):
                     settings=settings,
                     secure=ctx.settings.is_production,
                 )
+            )
+
+    async def startup(self, ctx: AppContext) -> None:
+        # Here rather than in `register`: routers are mounted after plugins
+        # register, and by startup every route the service serves exists.
+        violations = session_scope_violations(ctx.app)
+        if violations:
+            raise PluginError(
+                "these routes open a database session that would commit after the "
+                "response is sent, so a failed commit still answers 2xx and the next "
+                "request can read before the write is visible:\n  "
+                + "\n  ".join(violations)
+                + "\nDepend on DbSession / ReadSession / TenantSession from "
+                'jfastframework.plugins.builtin.database, or pass scope="function" '
+                "to Depends(...)."
             )
 
     async def shutdown(self, ctx: AppContext) -> None:
@@ -961,7 +975,18 @@ def _registry_of(request: Request) -> DatabaseRegistry:
 
 
 async def session_dependency(request: Request) -> AsyncIterator[Any]:
-    """FastAPI dependency yielding a request-scoped session on the primary.
+    """FastAPI dependency yielding a session on the primary, committed on exit.
+
+    Depend on it through ``DbSession`` (or ``Depends(session_dependency,
+    scope="function")``), never a bare ``Depends(session_dependency)``. The
+    scope decides *when* the commit below runs. FastAPI's default for a
+    ``yield`` dependency is ``"request"``, which runs it after the response has
+    been sent: a commit that fails -- a deferred constraint, a serialisation
+    failure, a dropped connection -- has already been answered 201, and a
+    client quick enough to read its own write can get there before the commit
+    and see nothing. ``"function"`` commits when the endpoint returns, before
+    the response exists, so a failed commit is the 500 it should be. The
+    database plugin refuses to start while a route uses any other scope.
 
     ``request`` is annotated ``Request`` and must stay that way. FastAPI
     decides what a dependency parameter *is* from its annotation, and with
@@ -1043,3 +1068,46 @@ async def tenant_session_dependency(request: Request) -> AsyncIterator[Any]:
         except Exception:
             await session.rollback()
             raise
+
+
+# -- what routes depend on ------------------------------------------------
+#
+# The dependencies above only commit before the response when they are
+# function-scoped, and the scope is chosen where they are used, not where they
+# are defined. These aliases are the one spelling that is always right:
+#
+#     async def create(payload: ItemCreate, session: DbSession) -> ItemRead: ...
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession as _Session
+else:
+    _Session = Any
+
+DbSession = Annotated[_Session, Depends(session_dependency, scope="function")]
+ReadSession = Annotated[_Session, Depends(read_session_dependency, scope="function")]
+TenantSession = Annotated[_Session, Depends(tenant_session_dependency, scope="function")]
+
+_TRANSACTIONAL = (session_dependency, read_session_dependency, tenant_session_dependency)
+
+
+def session_scope_violations(app: Any) -> list[str]:
+    """Routes that reach a session dependency with any scope but ``"function"``.
+
+    Walks every route's dependency tree, so a session two levels down --
+    inside a ``get_service`` -- is found as well as one on the endpoint.
+    """
+    from fastapi.routing import APIRoute
+
+    found: set[str] = set()
+    for route in getattr(app, "routes", ()):
+        if not isinstance(route, APIRoute):
+            continue
+        pending = [route.dependant]
+        while pending:
+            dependant = pending.pop()
+            for sub in dependant.dependencies:
+                if sub.call in _TRANSACTIONAL and sub.scope != "function":
+                    methods = ",".join(sorted(route.methods or ()))
+                    found.add(f"{methods} {route.path} -> {sub.call.__name__}")
+                pending.append(sub)
+    return sorted(found)

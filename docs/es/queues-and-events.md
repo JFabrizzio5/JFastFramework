@@ -64,6 +64,37 @@ Cobrar una tarjeta dos veces es un bug del handler, no de la cola. Ata el
 efecto secundario a algo estable — el id de la factura, una idempotency key — y
 verifica antes de actuar.
 
+### Un job corre como el tenant que lo encoló
+
+Un `Job` creado dentro de una request toma de contexto su `tenant_id` y su
+`request_id`, y el worker los restaura mientras corre el handler. Los logs del
+handler llevan la request que lo originó, y `current_tenant_id()` dentro de él
+responde el mismo tenant:
+
+```python
+from jfastframework.plugins.builtin.observability import current_tenant_id
+
+@tasks.task("recalculate_balance")
+async def recalculate_balance(payload: dict) -> None:
+    async with sessionmaker() as session:
+        repository = AccountRepository(session, tenant_id=current_tenant_id())
+        ...
+```
+
+Hasta `0.1.0a9` los campos existían pero nadie los llenaba, así que todo job
+corría sin tenant y un repositorio abierto dentro de él leía las filas de
+todos los tenants. Un job encolado fuera de una request -- un cron, un script --
+sigue sin tenant a menos que se lo den: `Job(task=..., tenant_id="acme")`.
+
+### Encolar no es parte de la transacción de la request
+
+`enqueue` escribe el job en una transacción propia. Las filas de la request se
+confirman aparte, así que pueden no coincidir: la request hace rollback después
+de encolar el job, y el worker busca una fila que nunca existió. Hasta que
+llegue el outbox (planeado en `PLAN-NEXT.md`), haz que los handlers
+toleren una fila ausente -- registrar y hacer ack -- en vez de reintentarla
+hasta la cola de muertos.
+
 ### Elegir un backend
 
 | | PostgreSQL (por defecto) | Redis | RabbitMQ |

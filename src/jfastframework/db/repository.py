@@ -56,6 +56,17 @@ is not built.
 
 ``paginate()`` unchanged, exact total, one COUNT. Keep it where a client
 genuinely renders "1-50 of 4,812" and can afford it.
+
+Writes fail as HTTP-shaped errors, not driver exceptions. A unique or foreign
+key violation raised by the flush is a ``ConflictError`` (409); a row changed
+by another request since this one read it -- ``VersionedMixin`` -- is a 409
+too; and ``update(expected_version=...)`` against a row that has moved on is a
+``PreconditionFailedError`` (412). Checking for a duplicate before inserting
+is still worth doing for the message, but the constraint is what makes it
+true: two requests can both pass the check.
+
+After one of those the transaction is finished -- PostgreSQL refuses every
+statement until it rolls back, which the request-scoped session does.
 """
 
 from __future__ import annotations
@@ -64,8 +75,11 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, TypeVar
 
 from sqlalchemy import and_, false, func, inspect, or_, select, tuple_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
+from jfastframework.db.transactions import conflict_from, stale_version, version_mismatch
 from jfastframework.errors import NotFoundError
 
 TModel = TypeVar("TModel")
@@ -395,15 +409,63 @@ class BaseRepository(Generic[TModel]):
         instance = self.model(**values)
         self.session.add(instance)
         # flush, not commit: the request-scoped session owns the transaction.
-        await self.session.flush()
+        await self._flush()
         return instance  # type: ignore[no-any-return]
 
-    async def update(self, instance: TModel, **values: Any) -> TModel:
+    async def update(
+        self, instance: TModel, *, expected_version: int | None = None, **values: Any
+    ) -> TModel:
+        """Apply ``values`` and flush.
+
+        ``expected_version`` is the version the client read. Passing it turns
+        "somebody else saved in between" into a 412 instead of their change
+        being overwritten; it needs a ``version`` column (``VersionedMixin``).
+        """
+        if expected_version is not None:
+            current = getattr(instance, "version", None)
+            if current is None:
+                raise TypeError(
+                    f"{self.model.__name__} has no version column, so expected_version "
+                    f"cannot be checked. Add VersionedMixin to the model."
+                )
+            if int(current) != int(expected_version):
+                raise version_mismatch(self.model.__name__, int(expected_version), int(current))
         for field, value in values.items():
             setattr(instance, field, value)
-        await self.session.flush()
+        await self._flush()
         return instance
 
     async def delete(self, instance: TModel) -> None:
         await self.session.delete(instance)
-        await self.session.flush()
+        await self._flush()
+
+    async def get_for_update(
+        self, pk: Any, *, nowait: bool = False, skip_locked: bool = False
+    ) -> TModel:
+        """Read one row and lock it until the transaction ends.
+
+        For read-modify-write on a value that cannot be expressed as one
+        UPDATE -- a balance, a stock count, a sequence. The second request
+        waits here instead of reading the same number and overwriting the
+        first one's result. ``nowait`` fails immediately instead of waiting.
+        """
+        query = (
+            self._base_query()
+            .where(self.model.id == pk)
+            .with_for_update(nowait=nowait, skip_locked=skip_locked)
+        )
+        instance = (await self.session.execute(query)).scalar_one_or_none()
+        if instance is None:
+            raise NotFoundError(f"{self.model.__name__} {pk!r} not found")
+        return instance  # type: ignore[no-any-return]
+
+    async def _flush(self) -> None:
+        try:
+            await self.session.flush()
+        except IntegrityError as exc:
+            conflict = conflict_from(exc)
+            if conflict is None:
+                raise
+            raise conflict from exc
+        except StaleDataError as exc:
+            raise stale_version(self.model.__name__) from exc

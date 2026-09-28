@@ -6,9 +6,9 @@ Business logic belongs in service.py, data access in repository.py.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
-from jfastframework.plugins.builtin.database import session_dependency
+from jfastframework.plugins.builtin.database import DbSession
 
 from .repository import {{ Module }}Repository
 from .schemas import {{ Module }}Create, {{ Module }}Read, {{ Module }}Update
@@ -16,22 +16,29 @@ from .service import {{ Module }}Service
 
 router = APIRouter(prefix="/{{ table }}", tags=["{{ module }}"])
 
+# A page nobody asked for is a table dump someone can ask for.
+MAX_PAGE_SIZE = 200
 
-def get_service(
-    request: Request,
-    session=Depends(session_dependency),
-) -> {{ Module }}Service:
+
+# DbSession commits when the endpoint returns, before the response is sent,
+# so a write that fails to commit is a 500 and not a 201 for a missing row.
+def get_service(request: Request, session: DbSession) -> {{ Module }}Service:
     tenant_id = getattr(request.state, "tenant_id", None)
     return {{ Module }}Service({{ Module }}Repository(session, tenant_id=tenant_id))
 
 
 @router.get("", response_model=list[{{ Module }}Read], summary="List {{ module }}")
 async def list_{{ module }}(
-    limit: int = 50,
-    offset: int = 0,
+    response: Response,
+    limit: int = Query(50, ge=1, le=MAX_PAGE_SIZE),
+    offset: int = Query(0, ge=0),
     service: {{ Module }}Service = Depends(get_service),
 ) -> list[{{ Module }}Read]:
     page = await service.list(limit=limit, offset=offset)
+    # The body stays a list; the total rides in a header so a client can
+    # page without a second request.
+    if page.total is not None:
+        response.headers["X-Total-Count"] = str(page.total)
     return [{{ Module }}Read.model_validate(item, from_attributes=True) for item in page.items]
 
 

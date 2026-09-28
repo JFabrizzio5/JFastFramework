@@ -9,7 +9,8 @@ Compose. Lo que escribes tú es la parte que solo tú conoces: las reglas de tu
 negocio. Lo que la mantiene coherente después es un contrato que CI hace
 cumplir.
 
-Estado: `0.1.0a4` — alpha, en PyPI. La madurez se rastrea por subsistema en vez
+Estado: alpha, en PyPI -- la versión actual es la que muestra PyPI; un número
+escrito aquí se queda viejo. La madurez se rastrea por subsistema en vez
 de con un solo número de versión: [STATUS.md](STATUS.md) dice qué está probado
 contra infraestructura real, qué no está verificado y qué se sabe roto. Léelo
 antes de depender de cualquier parte.

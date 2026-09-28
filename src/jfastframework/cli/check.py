@@ -607,7 +607,9 @@ def _tenant_routing_findings(root: Path, state: _State) -> list[Finding]:
         if any(part in {".venv", "__pycache__", ".git", "migrations"} for part in path.parts):
             continue
         try:
-            if "tenant_session_dependency" in path.read_text(encoding="utf-8"):
+            text = path.read_text(encoding="utf-8")
+            # Either spelling opens one: the alias is what 0.1.0a9 generates.
+            if "tenant_session_dependency" in text or "TenantSession" in text:
                 return []
         except OSError:
             continue
@@ -621,12 +623,12 @@ def _tenant_routing_findings(root: Path, state: _State) -> list[Finding]:
                 f"and no route opens one"
             ),
             why=(
-                "Routing to a tenant's database is `tenant_session_dependency`; "
-                "`session_dependency`, which is what `jfast new module` generates, is "
+                "Routing to a tenant's database is `TenantSession`; "
+                "`DbSession`, which is what `jfast new module` generates, is "
                 "the shared primary. Nothing fails and nothing leaks -- the rows carry "
                 "tenant_id and the repository filters on it -- but they are all in the "
                 "primary while the per-tenant databases stay empty. Depend on "
-                "tenant_session_dependency in the routes that own tenant data, or drop "
+                "TenantSession in the routes that own tenant data, or drop "
                 "the template if one database is what this service actually wants."
             ),
             path=DEFAULT_CONFIG_FILE,

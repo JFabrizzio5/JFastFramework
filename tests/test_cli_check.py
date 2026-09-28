@@ -638,7 +638,7 @@ def test_a_server_whose_size_nobody_here_knows_is_not_guessed_at(
     assert "pool-exceeds-server" not in codes
 
 
-def _tenant_database_service(tmp_path: Path, *, routed: bool) -> Path:
+def _tenant_database_service(tmp_path: Path, *, routed: bool, alias: bool = False) -> Path:
     root = tmp_path / ("routed" if routed else "unrouted")
     Scaffolder().render_trees(
         service_trees("api", None, root), service_context("t", plugins=["database"])
@@ -651,8 +651,9 @@ def _tenant_database_service(tmp_path: Path, *, routed: bool) -> Path:
         encoding="utf-8",
     )
     if routed:
+        name = "TenantSession" if alias else "tenant_session_dependency"
         (root / "routes.py").write_text(
-            "from jfastframework.plugins.builtin.database import tenant_session_dependency\n",
+            f"from jfastframework.plugins.builtin.database import {name}\n",
             encoding="utf-8",
         )
     return root
@@ -672,6 +673,16 @@ def test_a_database_per_tenant_that_no_route_opens_is_reported(tmp_path: Path) -
 
 def test_a_route_that_opens_one_clears_it(tmp_path: Path) -> None:
     root = _tenant_database_service(tmp_path, routed=True)
+
+    _, payload = _json(root, "--only", "plugins")
+
+    codes = [f["code"] for check in payload["checks"] for f in check["findings"]]
+    assert "tenant-databases-unused" not in codes
+
+
+def test_the_tenant_session_alias_clears_it_too(tmp_path: Path) -> None:
+    """`TenantSession` is what the docs now show; it must count as opening one."""
+    root = _tenant_database_service(tmp_path, routed=True, alias=True)
 
     _, payload = _json(root, "--only", "plugins")
 
