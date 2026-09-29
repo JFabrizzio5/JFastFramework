@@ -202,6 +202,81 @@ Jobs queued by yesterday's deploy are still in the queue when today's rolls
 out. Rename a task and those jobs become undeliverable. Add the new name,
 keep the old one until the queue has drained, then remove it.
 
+### Recurring tasks
+
+Declare the schedule where the task is declared, and turn the scheduler on:
+
+```toml
+[plugin.queue]
+scheduler = true
+```
+
+```python
+from datetime import timedelta
+
+@tasks.task("refresh_rates", every=timedelta(minutes=5))
+async def refresh_rates(payload: dict) -> None: ...
+
+@tasks.task("nightly_report", cron="0 3 * * *", timezone="America/Mexico_City")
+async def nightly_report(payload: dict) -> None:
+    day = payload["scheduled_for"]   # the tick's time, ISO-8601 UTC
+    ...
+
+# A task declared elsewhere, or one task on a second schedule:
+tasks.schedule("purge_sessions", cron="@hourly", payload={"older_than_days": 30})
+tasks.schedule("report", cron="0 8 * * mon", name="report-weekly", payload={"span": "week"})
+```
+
+Each tick becomes an ordinary job on the queue, so retries, dead-lettering and
+at-least-once delivery are the queue's. A handler that must not run twice for
+one tick deduplicates on `current_job().id` with `claim_once`: the id is
+derived from the schedule's name and the tick's time, and is the same in every
+replica.
+
+**Run it everywhere.** The scheduler is meant to run in every replica and
+every worker process, with no leader. Before enqueueing a tick, each process
+claims it in a store they all share, and only the claim that lands enqueues:
+
+| Store (`scheduler_store`) | Chosen by `auto` when | The claim |
+| --- | --- | --- |
+| `database` | the `database` plugin is on | a row in `jfast_schedule_ticks`, primary key `(name, fire_at)`, `INSERT … ON CONFLICT DO NOTHING` |
+| `cache` | only the `cache` plugin is on | `SET NX` on a key per tick, expiring after two periods (at least ten minutes) |
+| `memory` | neither | per process: every process fires every tick. Production refuses to start with it |
+
+With the PostgreSQL queue on the same database, the claim and the job commit
+in one transaction. With any other combination they are two writes: a failed
+enqueue releases the claim so the next pass takes the tick, but a process
+killed between the two loses that tick. The job id is the second line of
+defence -- the PostgreSQL queue inserts a duplicate id once.
+
+**When it fires.**
+
+- **Intervals** count from the Unix epoch in UTC, so `every=timedelta(hours=1)`
+  fires on the hour and every replica agrees on when that is without talking
+  to the others. For "every day at 03:00 local time", use cron.
+- **Cron** takes the five standard fields -- `*`, lists, ranges, steps, month
+  and weekday names -- plus `@hourly`, `@daily`, `@weekly`, `@monthly`,
+  `@yearly`. Day-of-month and day-of-week are an OR when both are restricted,
+  as in Vixie cron. Quartz's `?`, `L`, `W` and `#` are refused.
+- **Time zones:** cron is read in UTC unless the schedule names a zoneinfo
+  zone. Across a DST jump, a wall-clock time that does not exist fires once,
+  moved forward by the jump (02:30 becomes 03:30); a time that happens twice
+  fires on its first occurrence, unless the hour field is `*`, in which case
+  the job keeps running every real hour.
+- **Missed ticks:** after downtime -- a restart, a deploy, an event loop
+  blocked for an hour -- the most recent missed tick fires **once**. The ones
+  before it are skipped, never replayed as a burst. `catch_up=False` skips it
+  too. A schedule with no claim on record is new and starts with its next
+  tick.
+- **Names are contracts**, like task names: ticks are claimed under the
+  schedule's name, so renaming a schedule makes it new, and a new schedule
+  does not catch up.
+
+`/ready` reports the scheduler under the queue check: the store, each
+schedule and its next tick, and the last error. A stopped or failing
+scheduler turns readiness `degraded`, not `unavailable` -- recurring work is
+late, and the requests the replica serves are not.
+
 ---
 
 ## Events
@@ -330,6 +405,14 @@ hold up a short one behind it, delayed jobs arrive in due order, a retry waits
 out its backoff in the broker, an exhausted job is dead-lettered, a delay
 longer than the cascade goes round again, and a worker retries a failing
 handler through all of it.
+
+**Against a real PostgreSQL and Redis** (`tests/test_scheduler.py`, also
+refused a skip in CI): twenty concurrent claims of one tick from two engines
+land once, the claim and the job commit in one transaction, a duplicate job id
+is one row, pruning keeps each schedule's latest claim, two running services
+with the scheduler on enqueue each tick once, and the Redis store claims once
+and never moves its latest tick backwards. The cron parser, catch-up and the
+two-replica cases run everywhere against a fake clock.
 
 **Not tested:** the Redis and Kafka backends against real servers. The
 PostgreSQL queue meets a real server only in the outbox suite, which enqueues
