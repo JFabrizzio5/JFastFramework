@@ -72,7 +72,7 @@ scaffold de Go y dejó afuera el de Angular.
 | Área | Nivel | Notas |
 | --- | --- | --- |
 | `jfast new module` / `new service` (Python) | `beta` | Todos los layouts (`modular` por defecto), nombres de tabla en español o inglés, el overlay de HTMX, y el cableado de Alembic y pytest se renderizan y corren en CI. |
-| Scaffolds de Vue y React | `alpha` | `npm install` más `vite build` corren en CI, que es lo que detectó el bug del marker del router. Sin test en runtime. |
+| Scaffolds de Vue y React | `alpha` | `npm install` más `vite build` corren en CI, que es lo que detectó el bug del marker del router. Los dos looks -- `nexora` (el de por defecto) y `classic` -- se compilan en los dos frameworks en `smoke_frontend.sh`, y el look queda registrado en `.jfast-template` y lo sigue `jfast new view`. Las pantallas de Nexora y el selector de color se revisaron a mano solo en Chrome: ni Safari ni Firefox, y el respaldo sin WebGL no se ha visto. Sin test en runtime. |
 | Scaffold de servicio en Go | `alpha` | `go vet`, `go test`, `go build`, y después se arranca el binario y se le hace curl. |
 | gRPC | `experimental` | El contrato `.proto` se genera y el puerto queda reservado. Sin stubs, sin cableado de servidor. |
 | Workspaces y asignación de puertos | `beta` | Los recursos son instancias con nombre y los servicios se enlazan a ellas bajo una variable; todo el flujo se ejercita en CI. Un archivo 0.1 todavía carga y `migrate-resources` lo convierte. |

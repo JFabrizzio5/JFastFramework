@@ -199,6 +199,29 @@ these it had written itself, and each one it got wrong in the same place.
   queue object cached at declaration, with its original message count; it asks
   the raw channel now.
 
+### Added -- frontends come in looks, and Nexora is the default
+
+- **`--template nexora|classic`** on `jfast new service --kind spa`,
+  `jfast start` and `jfast init` (which asks). `nexora` is the new default: the
+  liquid-glass design system the docs site is built on -- glass panels and
+  sidebar, an island top bar, light and dark, a sign-in screen and a small
+  dashboard of real values (`/health`, its round trip, the registered views).
+  A WebGL ribbon (three.js, its own lazy chunk, off under reduced motion and
+  without WebGL, paused in hidden tabs). `classic` is exactly the previous
+  frontend.
+- **An accent picker.** Six presets and a custom colour, next to the theme
+  toggle and on the sign-in page. The whole palette is derived from the one
+  colour, with text shades that reach 4.5:1 contrast; the choice is kept per
+  app and applied before first paint. `VITE_ACCENT` sets the project's default.
+- **The brand is the project's name** (`VITE_APP_NAME`), `jfastframework` when
+  it is empty.
+- **The look is recorded** in `.jfast-template`, and `jfast new view` draws new
+  pages in it (`--template` overrides). Unknown looks, and a look given to a
+  service without a frontend, are refused before anything is written.
+- **Agents do what the user asked.** The generated design-system skill,
+  `AGENTS.md` and the frontend docs say the look the user asks for wins over
+  the default; the skill used to steer every request back to it.
+
 ### Changed -- modular by default
 
 - **`jfast new module` without `--layout` generates a `modular` module**, and

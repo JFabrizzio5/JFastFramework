@@ -291,6 +291,11 @@ cd admin && jfast new view Facturas
 lo registra en el router y en el sidebar en sus comentarios marcadores — de
 forma idempotente, fallando ruidosamente si un marcador ya no está.
 
+Viene en dos looks. `nexora`, el de por defecto, es el diseño liquid-glass con
+el que está hecho este sitio -- sidebar de vidrio, claro y oscuro, selector de
+color, pantalla de login. `--template classic` es el sencillo. Las vistas nuevas
+siguen el look con el que se generó el proyecto. Ve [Frontends](docs/frontend.md).
+
 Ambos frontends se instalan y se buildean en CI. Ese job existe por un bug
 real: el comentario marcador quedó dentro de un comentario de bloque, cuyo `*/`
 interno lo cerró antes de tiempo y dejó el router sintácticamente inválido.

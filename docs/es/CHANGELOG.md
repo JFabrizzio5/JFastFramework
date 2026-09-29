@@ -263,6 +263,30 @@ el mismo lugar.
   el objeto de cola que guardó al declararla, con su conteo original; ahora se
   pregunta al canal crudo.
 
+### Agregado -- los frontends vienen en looks, y Nexora es el de por defecto
+
+- **`--template nexora|classic`** en `jfast new service --kind spa`,
+  `jfast start` y `jfast init` (que pregunta). `nexora` es el nuevo default: el
+  sistema de diseño liquid-glass en el que está hecho el sitio de docs --
+  paneles y sidebar de vidrio, una barra superior tipo isla, claro y oscuro,
+  una pantalla de login y un pequeño dashboard con valores reales (`/health`, su
+  tiempo de respuesta, las vistas registradas). Un listón WebGL (three.js, en
+  su propio chunk perezoso, apagado con movimiento reducido y sin WebGL, en
+  pausa en pestañas ocultas). `classic` es exactamente el frontend anterior.
+- **Selector de color.** Seis colores predefinidos y uno libre, junto al botón
+  de tema y en el login. Toda la paleta sale de ese color, con tonos de texto
+  que alcanzan contraste 4.5:1; la elección se guarda por app y se aplica antes
+  del primer pintado. `VITE_ACCENT` fija el color por defecto del proyecto.
+- **La marca es el nombre del proyecto** (`VITE_APP_NAME`), o `jfastframework`
+  si está vacío.
+- **El look queda registrado** en `.jfast-template`, y `jfast new view` dibuja
+  las páginas nuevas en él (`--template` lo sobrescribe). Un look desconocido,
+  o un look para un servicio sin frontend, se rechaza antes de escribir nada.
+- **Los agentes hacen lo que pidió el usuario.** La skill de diseño generada,
+  `AGENTS.md` y la documentación de frontend dicen que el look que pide el
+  usuario gana sobre el de por defecto; antes la skill regresaba cualquier
+  petición al diseño por defecto.
+
 ### Cambiado -- modular por defecto
 
 - **`jfast new module` sin `--layout` genera un módulo `modular`**, y el prompt

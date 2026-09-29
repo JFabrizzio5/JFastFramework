@@ -285,6 +285,11 @@ cd admin && jfast new view Facturas
 and registers it in the router and the sidebar at their marker comments —
 idempotently, failing loudly if a marker is gone.
 
+It comes in two looks. `nexora`, the default, is the liquid-glass design this
+site is built on -- glass sidebar, light and dark, an accent picker, a sign-in
+screen. `--template classic` is the plain one. New views follow the look the
+project was generated with. See [Frontends](docs/frontend.md).
+
 Both frontends are installed and built in CI. That job exists because of a real
 bug: the marker comment sat inside a block comment, whose inner `*/` closed it
 early and left the router syntactically invalid. Every grep passed. Only
