@@ -41,6 +41,7 @@ BASE_PORT=9600
 
 cleanup() {
   code=$?
+  stop_checkout_wheel
   for project in "${WORKSPACE_PROJECT}" "${SERVICE_PROJECT}"; do
     docker compose -p "${project}" down -v --remove-orphans > /dev/null 2>&1 || true
   done
@@ -55,28 +56,21 @@ fail() { echo "FAIL: $1"; exit 1; }
 
 # At release time the version a generated service pins is not published yet, and
 # the image installs from PyPI. Rather than fail on exactly the commit that is
-# correct, the pin is rewritten to the newest published pre-release -- the same
-# trade smoke_docker.sh makes, and for the same reason. Announced, never silent.
-resolve_pin() {
-  if "${PYTHON}" -m pip install --dry-run --quiet --pre \
-       --target "${WORK}/resolve" -r requirements.txt > /dev/null 2>&1; then
-    return 0
-  fi
-  local latest
-  latest="$("${PYTHON}" - <<'PY'
-import json, urllib.request
-with urllib.request.urlopen("https://pypi.org/pypi/jfastframework/json") as r:
-    print(json.load(r)["info"]["version"])
-PY
-)"
-  echo "  the pinned version is not on PyPI yet; building against ${latest}"
-  "${PYTHON}" - "${latest}" <<'PY'
-import re, sys
-body = open('requirements.txt', encoding='utf-8').read()
-open('requirements.txt', 'w', encoding='utf-8').write(
-    re.sub(r'(jfastframework\[[^\]]*\])[^\s]*', r'\1==' + sys.argv[1], body)
-)
-PY
+# correct, the pin is pointed at this checkout's wheel -- the same trade
+# smoke_docker.sh makes; scripts/lib/checkout_wheel.sh has why. Announced,
+# never silent.
+# shellcheck source=lib/checkout_wheel.sh
+source "${ROOT}/scripts/lib/checkout_wheel.sh"
+
+# `docker compose up --build` for the generated file, plus the override that
+# lets the build reach the wheel server. Everything else about the command is
+# what the panel prints.
+up_built() {
+  local project="$1" service="$2" base
+  shift 2
+  base="$(default_compose_file)" || fail "no compose file in $(pwd)"
+  docker compose -p "${project}" -f "${base}" -f "$(wheel_hosts_override "${service}")" \
+    up -d --build "$@"
 }
 
 # Ask the running container rather than the host: the host port is a mapping
@@ -117,9 +111,10 @@ mkdir workspace && cd workspace
 
 [ -f demo/Dockerfile ] || fail "no demo/Dockerfile: \`build:\` in the compose file has nothing to read"
 
-(cd demo && resolve_pin)
+# Not in a subshell: the wheel server it may start has to be stopped by cleanup.
+cd demo && pin_to_checkout_wheel && cd ..
 
-docker compose -p "${WORKSPACE_PROJECT}" up -d --build demo \
+up_built "${WORKSPACE_PROJECT}" demo demo \
   || fail "docker compose up --build failed on a project nobody had touched"
 wait_for_ready "${WORKSPACE_PROJECT}" demo "${BASE_PORT}"
 
@@ -147,9 +142,9 @@ cd billing
 # addresses in it are the host's. The compose file has to override them.
 cp .env.example .env
 "${JFAST}" deploy compose -o docker-compose.yml > /dev/null
-resolve_pin
+pin_to_checkout_wheel
 
-docker compose -p "${SERVICE_PROJECT}" up -d --build \
+up_built "${SERVICE_PROJECT}" api \
   || fail "docker compose up failed on the file jfast deploy compose just wrote"
 wait_for_ready "${SERVICE_PROJECT}" api $((BASE_PORT + 20))
 
