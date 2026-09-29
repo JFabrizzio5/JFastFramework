@@ -18,6 +18,8 @@ Requires: ``pip install jfastframework[docs]``
 from __future__ import annotations
 
 import argparse
+import functools
+import hashlib
 import html
 import json
 import re
@@ -30,6 +32,22 @@ import markdown
 REPO = Path(__file__).resolve().parent.parent
 DOCS = REPO / "docs"
 ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+@functools.cache
+def asset_url(name: str) -> str:
+    """``name?v=<hash of its bytes>``: a new URL whenever the file changes.
+
+    Pages tells browsers to keep an asset for ten minutes, and browsers keep
+    one longer still under heuristics. With a fixed name, a deploy served new
+    HTML against the old site.css from cache -- the new markup under the old
+    styles -- until the cache let go. A changed file now has a URL no cache
+    has seen.
+    """
+    digest = hashlib.sha256((ASSETS / name).read_bytes()).hexdigest()[:10]
+    return f"{name}?v={digest}"
+
+
 GITHUB = "https://github.com/JFabrizzio5/JFastFramework"
 PYPI = "https://pypi.org/project/jfastframework/"
 DESCRIPTION = "A plugin-based FastAPI framework for microservices, built to be driven by AI agents."
@@ -668,7 +686,8 @@ def strip_leading_h1(body: str) -> tuple[str, str | None]:
 
 def brand_mark(root: str) -> str:
     """The monogram, as an <img> so one file is the single source of it."""
-    return f'<img class="mark" src="{root}assets/mark.svg" alt="" width="39" height="26">'
+    src = f"{root}assets/{asset_url('mark.svg')}"
+    return f'<img class="mark" src="{src}" alt="" width="39" height="26">'
 
 
 def heading_toc(body: str, label: str = "On this page") -> str:
@@ -887,8 +906,8 @@ def layout(
 <meta name="description" content="{html.escape(DESCRIPTIONS[lang])}">
 <meta name="theme-color" content="#030305">
 {FONTS}
-<link rel="stylesheet" href="{assets}assets/site.css">
-<link rel="icon" href="{assets}assets/favicon.svg">
+<link rel="stylesheet" href="{assets}assets/{asset_url("site.css")}">
+<link rel="icon" href="{assets}assets/{asset_url("favicon.svg")}">
 {THEME_BOOT}
 </head>
 <body class="docs">
@@ -1028,8 +1047,8 @@ def landing_layout(*, description: str, release: str, body: str, lang: str) -> s
 <link rel="alternate" hreflang="en" href="{"../index.html" if lang != "en" else "index.html"}">
 <link rel="alternate" hreflang="es" href="{"index.html" if lang != "en" else "es/index.html"}">
 {FONTS}
-<link rel="stylesheet" href="{assets}assets/site.css">
-<link rel="icon" href="{assets}assets/favicon.svg">
+<link rel="stylesheet" href="{assets}assets/{asset_url("site.css")}">
+<link rel="icon" href="{assets}assets/{asset_url("favicon.svg")}">
 {THEME_BOOT}
 </head>
 <body class="landing">
@@ -1075,7 +1094,7 @@ def landing_layout(*, description: str, release: str, body: str, lang: str) -> s
 {LANG_SCRIPT}
 {TILT_SCRIPT}
 {THREE_JS}
-<script src="{assets}assets/liquid.js"></script>
+<script src="{assets}assets/{asset_url("liquid.js")}"></script>
 </body>
 </html>
 """
@@ -1276,7 +1295,7 @@ def landing_body(release: str, lang: str) -> str:
 
         <div class="hero-mark" aria-hidden="true">
           <div class="mark-lockup">
-            <img src="{assets}assets/mark.svg" width="132" height="96" alt="">
+            <img src="{assets}assets/{asset_url("mark.svg")}" width="132" height="96" alt="">
             <span class="wordmark"><b>jfast</b>framework</span>
           </div>
         </div>
