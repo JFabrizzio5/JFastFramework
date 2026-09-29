@@ -21,7 +21,7 @@ from jfastframework.plugins.base import (
 )
 from jfastframework.settings import JFastConfig, JFastSettings
 
-__version__ = "0.1.0a10"
+__version__ = "0.1.0a11"
 
 __all__ = [
     "AppContext",
