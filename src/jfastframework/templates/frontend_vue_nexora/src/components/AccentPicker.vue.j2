@@ -1,0 +1,85 @@
+<template>
+  <div ref="root" class="nx-accent" @keydown.esc="close(true)">
+    <button ref="trigger" type="button" class="nx-round-btn" aria-haspopup="dialog" :aria-expanded="open"
+      :aria-controls="panelId" aria-label="Accent colour" title="Accent colour" @click="open ? close() : show()">
+      <span class="nx-accent-swatch" aria-hidden="true" />
+    </button>
+
+    <div v-if="open" :id="panelId" ref="panel" class="nx-accent-popover" role="dialog" aria-label="Accent colour">
+      <p class="nx-accent-title">Accent</p>
+
+      <div class="nx-accent-grid">
+        <button v-for="preset in PRESETS" :key="preset.name" type="button" class="nx-accent-option"
+          :aria-pressed="current === preset.accent" @click="choose(preset.accent)">
+          <span class="nx-orb" :style="{ background: orb(preset) }" aria-hidden="true" />
+          {{ preset.name }}
+        </button>
+      </div>
+
+      <label class="nx-accent-custom">
+        <span>Custom colour</span>
+        <input type="color" :value="current.toLowerCase()" @input="choose($event.target.value)" />
+      </label>
+
+      <button type="button" class="btn-modern btn-ghost btn-sm nx-accent-reset" @click="reset">
+        Back to the default
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+
+import { PRESETS, currentAccent, resetAccent, setAccent } from '@/nexora/accent.js'
+
+// A non-modal popover: it does not trap focus, it closes on Escape, on a click
+// outside, and returns focus to the button that opened it. The colour itself
+// is applied by accent.js, which is also what index.html replays on reload.
+const root = ref(null)
+const trigger = ref(null)
+const panel = ref(null)
+const panelId = useId()
+const open = ref(false)
+const current = ref(currentAccent())
+
+function orb(preset) {
+  return `radial-gradient(circle at 32% 28%, ${preset.glow ?? preset.accent} 0%, ${preset.accent} 45%, #000 100%)`
+}
+
+function choose(hex) {
+  setAccent(hex)
+  current.value = currentAccent()
+}
+
+function reset() {
+  resetAccent()
+  current.value = currentAccent()
+}
+
+async function show() {
+  open.value = true
+  await nextTick()
+  panel.value?.querySelector('button')?.focus()
+}
+
+function close(returnFocus = false) {
+  if (!open.value) return
+  open.value = false
+  if (returnFocus) trigger.value?.focus()
+}
+
+const onPointerDown = (event) => {
+  if (!root.value?.contains(event.target)) close()
+}
+
+// Listening only while open: a document listener per mounted picker that runs
+// on every click in the app, for a popover that is closed nearly all the time,
+// is cost for nothing.
+watch(open, (isOpen) => {
+  if (isOpen) document.addEventListener('pointerdown', onPointerDown)
+  else document.removeEventListener('pointerdown', onPointerDown)
+})
+
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown))
+</script>

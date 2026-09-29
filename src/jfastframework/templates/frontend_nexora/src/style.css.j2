@@ -1,0 +1,84 @@
+/* Tailwind v4 for layout utilities, and the Nexora look on top of it.
+   Nexora goes into the `components` layer so a utility written next to one of
+   its classes still wins -- see the header of src/nexora/nexora.css. */
+@import "tailwindcss";
+@import "./nexora/nexora.css" layer(components);
+
+/* ---------------------------------------------------------------------------
+ * Dark mode has three states, not two.
+ *
+ *   <html>                      follow the system
+ *   <html data-theme="dark">    dark, whatever the system says
+ *   <html data-theme="light">   light, whatever the system says
+ *
+ * Nexora's tokens already switch on that attribute. This variant makes
+ * Tailwind's `dark:` agree with them, for the rare utility that needs it.
+ * ------------------------------------------------------------------------ */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+{% if agent_docs %}
+/* The Nexora tokens, as Tailwind utilities. Read
+   .jfast/skills/design-system/SKILL.md before adding values here, and never
+   hardcode a colour in a component. */
+{% else %}
+/* The Nexora tokens, as Tailwind utilities. Add values to src/nexora/nexora.css
+   rather than hardcoding a colour in a component: a colour that lives in one
+   component is the colour nobody can change later. */
+{% endif %}
+/* `inline` is the mechanism: the utilities emit `var(--ui-panel)` rather than
+   a value resolved at build time, so the theme attribute -- and a palette
+   change -- reaches every `bg-panel` and `text-ink` without a rebuild. */
+@theme inline {
+  --color-surface: var(--ui-surface);
+  --color-panel: var(--ui-panel);
+  --color-elevated: var(--ui-elevated);
+  --color-line: var(--ui-line);
+  --color-ink: var(--ui-ink);
+  --color-ink-soft: var(--ui-ink-soft);
+  --color-ink-faint: var(--ui-ink-faint);
+
+  /* The brand ramp is the palette's accent, mixed towards white and towards
+     its own deep shade. The whole ramp is declared: a class like
+     `bg-brand-200` with no step behind it compiles to nothing. */
+  --color-brand-50: color-mix(in oklab, rgb(var(--c-accent)) 8%, white);
+  --color-brand-100: color-mix(in oklab, rgb(var(--c-accent)) 16%, white);
+  --color-brand-200: color-mix(in oklab, rgb(var(--c-accent)) 32%, white);
+  --color-brand-300: color-mix(in oklab, rgb(var(--c-accent)) 55%, white);
+  --color-brand-400: rgb(var(--c-glow));
+  --color-brand-500: rgb(var(--c-accent));
+  --color-brand-600: color-mix(in oklab, rgb(var(--c-accent)) 85%, rgb(var(--c-accent-deep)));
+  --color-brand-700: color-mix(in oklab, rgb(var(--c-accent)) 65%, rgb(var(--c-accent-deep)));
+  --color-brand-800: color-mix(in oklab, rgb(var(--c-accent)) 40%, rgb(var(--c-accent-deep)));
+  --color-brand-900: rgb(var(--c-accent-deep));
+}
+
+/* The surface names every JFast frontend shares, pointed at Nexora's tokens.
+   Defined once: the tokens they read are the ones that change per theme. */
+:root {
+  --ui-surface: var(--bg-primary);
+  --ui-panel: var(--bg-surface);
+  --ui-elevated: var(--pill-bg);
+  --ui-line: var(--card-border);
+  --ui-ink: var(--text-main);
+  --ui-ink-soft: var(--text-dim);
+  --ui-ink-faint: var(--text-light);
+}
+
+html,
+body,
+{% if frontend == "vue" %}
+#app {
+{% else %}
+#root {
+{% endif %}
+  min-height: 100%;
+}

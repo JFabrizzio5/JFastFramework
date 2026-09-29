@@ -1,0 +1,83 @@
+[# Scaffold-time values use square brackets; JSX keeps its own braces. #]
+import { mdiViewDashboardOutline } from '@mdi/js'
+import { useCallback, useEffect, useState } from 'react'
+
+import BaseButton from '@/components/BaseButton.jsx'
+import CardBox from '@/components/CardBox.jsx'
+import EmptyState from '@/components/EmptyState.jsx'
+import SectionMain from '@/components/SectionMain.jsx'
+import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.jsx'
+import SkeletonLoader from '@/components/SkeletonLoader.jsx'
+import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.jsx'
+import { list[[ View ]] } from '@/Modulo[[ View ]]/Services/[[ view_slug ]].service.js'
+
+export default function [[ View ]]View() {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  // HTTP lives in the service, not here. The component owns loading and error
+  // state; the service owns the request.
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setItems(await list[[ View ]]())
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
+
+  return (
+    <LayoutAuthenticated>
+      <SectionMain>
+        <SectionTitleLineWithButton icon={mdiViewDashboardOutline} title="[[ view_title ]]" main>
+          <BaseButton variant="outline" loading={loading} onClick={fetchData}>
+            Refresh
+          </BaseButton>
+        </SectionTitleLineWithButton>
+
+        <CardBox>
+          {loading && items.length === 0 ? (
+            <SkeletonLoader lines={4} />
+          ) : error ? (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon={mdiViewDashboardOutline}
+              title="Nothing here yet"
+              description="Records from [[ view_path ]] are listed here as soon as the API returns one."
+            />
+          ) : (
+            <div className="table-responsive">
+              <table className="erp-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr key={item.id}>
+                      <td className="cell-title">{item.name}</td>
+                      <td className="nx-dim">{item.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardBox>
+      </SectionMain>
+    </LayoutAuthenticated>
+  )
+}

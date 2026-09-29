@@ -1,6 +1,11 @@
 # {{ service_title }}
 
+{% if frontend_template == "nexora" %}
+Vue 3 + Vite + Tailwind v4 frontend, in the Nexora look, for the
+**{{ workspace_name }}** workspace.
+{% else %}
 Vue 3 + Vite + Tailwind v4 frontend for the **{{ workspace_name }}** workspace.
+{% endif %}
 
 ## Run
 
@@ -19,6 +24,49 @@ Regenerate it after adding or moving a backend:
 jfast workspace env
 ```
 
+{% if frontend_template == "nexora" %}
+## Look
+
+This project was generated with the **Nexora** look (`--template nexora`):
+frosted-glass panels over a black studio, a glass sidebar, an island top bar,
+and a WebGL liquid ribbon behind everything.
+
+| Path | Holds |
+| --- | --- |
+| `src/nexora/nexora.css` | The design system: palette, light and dark tokens, every `nx-*`, `card-panel`, `btn-modern`, `badge-status` class |
+| `src/nexora/accent.js` | The accent: presets, deriving the palette from one colour, remembering the viewer's pick |
+| `src/nexora/brand.js` | The product name shown on the wordmark |
+| `src/nexora/background.js` | Whether the ribbon runs at all: reduced motion, WebGL, lazy loading |
+| `src/nexora/liquid.js` | The ribbon itself, on three.js, loaded as its own chunk |
+| `src/style.css` | Tailwind, plus the Nexora tokens as utilities: `bg-panel`, `text-ink`, `brand-500` |
+
+**The name** on the sidebar and the sign-in page is `VITE_APP_NAME`, exactly
+as written, falling back to `jfastframework` when it is empty. Change it in
+`.env` (read by `npm run dev`) and `.env.production` (read by
+`npm run build`). `jfast workspace env` rewrites `.env`, so set it again there
+after running that.
+
+**The accent** is one colour; glow, deep shade, text-safe shades and the
+colour of text on a button are derived from it. Three places set it, first
+one wins:
+
+1. the viewer, with the swatch button next to the theme toggle -- six presets
+   and a custom colour, kept in this browser;
+2. `VITE_ACCENT="#3B82F6"` in `.env` / `.env.production`, the project's
+   default -- quoted, because an unquoted `#` starts a comment there;
+3. the `--c-*` triplets at the top of `src/nexora/nexora.css`, Nexora's ruby.
+
+Buttons, glows, badges, every `brand-*` utility and the ribbon follow it.
+
+**The ribbon costs nothing when it cannot help.** It is never loaded under
+`prefers-reduced-motion`, falls back to a still frame without WebGL 2, and
+stops rendering while the tab is hidden.
+
+**Another look** is a generation choice, not a restyle by hand:
+`jfast new service <name> --kind spa --frontend {{ frontend }} --template classic`.
+`jfast new view` reads the look from `.jfast-template`, so new pages match.
+
+{% endif %}
 ## Add a module
 
 ```bash
@@ -55,8 +103,15 @@ so you do not get duplicate routes or duplicate sidebar entries.
 - One Pinia store per domain, when a domain actually needs shared state. See
   [State](#state).
 - Components `PascalCase.vue`; route-level pages end in `View.vue`.
+{% if frontend_template == "nexora" %}
+- Nexora classes for components (`card-panel`, `btn-modern`, `kpi-card`) and
+  Tailwind utilities for layout. Colours come from the tokens in
+  `src/nexora/nexora.css` -- add a token there before using a value, never a
+  raw hex in a component.
+{% else %}
 - Tailwind utilities only. Design tokens live in `@theme` in `src/style.css` --
   add a token there before using a value, never a raw hex in a component.
+{% endif %}
 
 ## State
 

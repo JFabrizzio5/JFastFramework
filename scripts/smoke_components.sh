@@ -32,14 +32,16 @@ if ! command -v npm > /dev/null 2>&1; then
   exit 0
 fi
 
+# Every property below belongs to the shared tree, so both looks must keep it.
+for template in nexora classic; do
 for framework in vue react; do
-  echo "### ${framework}"
-  dir="${WORK}/${framework}"
+  echo "### ${framework} / ${template}"
+  dir="${WORK}/${framework}-${template}"
   mkdir -p "${dir}"
   cd "${dir}" || exit 1
 
-  if ! "${JFAST}" new service web --kind spa --frontend "${framework}" --agent-docs \
-       > "${dir}/gen.log" 2>&1; then
+  if ! "${JFAST}" new service web --kind spa --frontend "${framework}" --template "${template}" \
+       --agent-docs > "${dir}/gen.log" 2>&1; then
     echo "  FAIL: generate"; tail -10 "${dir}/gen.log"; rc=1; continue
   fi
   cd web || exit 1
@@ -106,7 +108,9 @@ for framework in vue react; do
     rc=1
   fi
 
-  js=$(find dist/assets -name '*.js' | head -1)
+  # Every chunk, not the first one found: a nexora build has two, and the
+  # three.js one says nothing about themes or sessions.
+  js=$(find dist/assets -name '*.js')
   if [ -z "${js}" ]; then
     echo "  FAIL: no script emitted"; rc=1; continue
   fi
@@ -115,7 +119,7 @@ for framework in vue react; do
   # something in the bundle has to offer the third. Asserted through the label
   # because that is the part a user can find: a `setTheme` export no component
   # calls leaves "system" unreachable the moment anyone touches the switch.
-  if ! grep -qF -- 'Follow the system theme' "${js}"; then
+  if ! grep -qF -- 'Follow the system theme' ${js}; then
     echo "  FAIL: nothing shipped can put the theme back on 'system'"; rc=1
   fi
 
@@ -125,14 +129,14 @@ for framework in vue react; do
   # in the bundle the whole time. `?next=` is only built by the two places that
   # send someone to sign in, so the pair is what says the path is wired.
   for needle in '/auth/refresh' '?next='; do
-    if ! grep -qF -- "${needle}" "${js}"; then
+    if ! grep -qF -- "${needle}" ${js}; then
       echo "  FAIL: no refresh-on-401 in the bundle (${needle} missing)"; rc=1
     fi
   done
 
   # And the route those redirects aim at has to be registered. A redirect to a
   # path with no route is a blank page.
-  if ! grep -qF -- '/login' "${js}"; then
+  if ! grep -qF -- '/login' ${js}; then
     echo "  FAIL: the sign-in route the 401 path redirects to is not in the bundle"; rc=1
   fi
 
@@ -143,12 +147,13 @@ for framework in vue react; do
     echo "  FAIL: the mobile drawer does not lock body scroll"; rc=1
   fi
 
-  echo "  ok: ${framework} builds, and the theme survives the build"
+  echo "  ok: ${framework} / ${template} builds, and the theme survives the build"
+done
 done
 
 echo
 if [ "${rc}" -eq 0 ]; then
-  echo "PASS: both frontends build"
+  echo "PASS: both frontends build, in both looks"
 else
   echo "FAIL"
 fi

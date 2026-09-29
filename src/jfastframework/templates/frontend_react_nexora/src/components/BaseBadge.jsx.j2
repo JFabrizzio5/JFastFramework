@@ -1,0 +1,25 @@
+// Status is the one thing the palette cannot express: the hue IS the meaning,
+// so these keep their own tokens (--success, --warning, --danger, --info) in
+// src/nexora/nexora.css instead of following the accent. `accent` is for a
+// state that is simply the brand's -- "new", "selected" -- never for success
+// or failure.
+const STATUSES = {
+  neutral: '',
+  success: 'is-success',
+  warning: 'is-warning',
+  info: 'is-info',
+  danger: 'is-danger',
+  accent: 'is-accent',
+}
+
+// The label falls back to the status name so the badge can never render as a
+// bare coloured dot: colour alone is not a status for anyone who cannot tell
+// these apart, and it is nothing at all in a screen reader.
+export default function BaseBadge({ status = 'neutral', className = '', children }) {
+  return (
+    <span className={`badge-status ${STATUSES[status] ?? STATUSES.neutral} ${className}`}>
+      <span className="status-dot" aria-hidden="true" />
+      {children ?? status}
+    </span>
+  )
+}

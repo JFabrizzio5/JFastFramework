@@ -10,5 +10,13 @@ export default defineConfig({
     // '@' points at src/, which is what the generated module imports assume.
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
+{% if frontend_template == "nexora" %}
+  build: {
+    // three.js is a chunk of its own, fetched after the first paint and only
+    // where the ribbon will run (src/nexora/background.js). It is over Vite's
+    // 500 kB warning by itself, and the warning is meant for the entry chunk.
+    chunkSizeWarningLimit: 600,
+  },
+{% endif %}
   server: { port: {{ port }} },
 })

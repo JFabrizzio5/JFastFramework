@@ -1,0 +1,456 @@
+// The liquid-glass ribbon: two twisted glass tubes lit by a procedural photo
+// studio, ported from nexora-suite's nexora-liquid.js.
+//
+// Do not import this file directly: background.js loads it on demand, after
+// deciding the machine should run it at all. Imported statically, three.js
+// lands in the main bundle and every visitor pays for it before first paint.
+
+import {
+  AdditiveBlending,
+  BackSide,
+  BufferAttribute,
+  BufferGeometry,
+  CatmullRomCurve3,
+  Color,
+  ColorManagement,
+  FrontSide,
+  Group,
+  LinearSRGBColorSpace,
+  Mesh,
+  PerspectiveCamera,
+  Points,
+  PointsMaterial,
+  Scene,
+  ShaderMaterial,
+  Vector2,
+  Vector3,
+  WebGLRenderer,
+} from 'three'
+
+// The shaders below mix colours in the space the CSS palette is written in,
+// as the original did on three r128. Colour management converts sRGB to
+// linear on the way in, and a ShaderMaterial never converts back: left on, the
+// ribbon renders visibly darker than the accent on the buttons beside it.
+ColorManagement.enabled = false
+
+// Each ribbon is an elliptical tube along a spine, twisted and extruded in
+// the vertex shader, so the geometry is uploaded once and animated for free.
+const RIBBON_VERT = `
+  uniform float uTime;
+  uniform float uWidth;
+  uniform float uThick;
+  uniform float uTwist;
+  uniform float uTwistSpeed;
+  uniform float uWave;
+  uniform float uSeed;
+  uniform vec2 uMouse;
+
+  attribute vec3 aN;
+  attribute vec3 aB;
+  attribute vec2 aUV;
+
+  varying vec3 vNormal;
+  varying vec3 vViewPos;
+  varying vec2 vUv;
+  varying float vEdge;
+
+  void main() {
+    float u = aUV.x;
+    float th = aUV.y;
+    float t = uTime;
+
+    float tw = u * uTwist + t * uTwistSpeed + sin(u * 6.2831 + t * 0.45 + uSeed) * 0.8;
+    float ct = cos(tw);
+    float st = sin(tw);
+    vec3 n = ct * aN + st * aB;
+    vec3 b = -st * aN + ct * aB;
+
+    float taper = smoothstep(0.0, 0.07, u) * (1.0 - smoothstep(0.93, 1.0, u));
+    float w = uWidth * (0.8 + 0.3 * sin(u * 7.0 - t * 0.6 + uSeed)) * taper + 0.001;
+    float k = uThick * (0.85 + 0.25 * cos(u * 11.0 + t * 0.8 + uSeed)) * taper + 0.001;
+
+    vec3 flow = vec3(
+      sin(u * 5.0 + t * 0.55 + uSeed) * 0.45,
+      cos(u * 3.0 + t * 0.38 + uSeed) * 0.25,
+      sin(u * 4.0 - t * 0.50 + uSeed) * 0.55
+    ) * uWave;
+    float mid = 1.0 - abs(u - 0.5) * 2.0;
+    flow.x += uMouse.x * 0.9 * mid;
+    flow.y += uMouse.y * 0.6 * mid;
+
+    float c = cos(th);
+    float s = sin(th);
+    vec3 p = position + flow + n * (c * w) + b * (s * k);
+    vec3 nrm = normalize(n * (c / w) + b * (s / k));
+
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    vViewPos = mv.xyz;
+    vNormal = normalize(normalMatrix * nrm);
+    vUv = aUV;
+    vEdge = abs(c);
+    gl_Position = projectionMatrix * mv;
+  }
+`
+
+// Reflections of a procedural studio -- key, fill, top and rim lights -- plus
+// chromatic refraction. The light-theme branch swaps the glowing glass for a
+// tinted, frosted one: additive light on white washes out to nothing.
+const RIBBON_FRAG = `
+  uniform vec3 uAccent;
+  uniform vec3 uGlow;
+  uniform vec3 uBody;
+  uniform vec3 uDeep;
+  uniform vec3 uSpec;
+  uniform float uIsLight;
+  uniform float uBackface;
+  uniform float uTime;
+
+  varying vec3 vNormal;
+  varying vec3 vViewPos;
+  varying vec2 vUv;
+  varying float vEdge;
+
+  float strip(float x, float halfW, float soft) {
+    return 1.0 - smoothstep(halfW, halfW + soft, abs(x));
+  }
+
+  vec3 studioEnv(vec3 d) {
+    vec3 col = uDeep * 0.05;
+    float key  = strip(d.x - 0.62, 0.04, 0.12) * smoothstep(-0.4, 0.3, d.y);
+    float fill = strip(d.x + 0.58, 0.05, 0.16) * (1.0 - smoothstep(-0.3, 0.55, d.y));
+    float top  = strip(d.y - 0.80, 0.02, 0.10) * (1.0 - smoothstep(0.2, 0.95, abs(d.x)));
+    float rim  = exp(-pow((d.y + 0.15) * 4.5, 2.0)) * smoothstep(-0.3, 0.7, -d.z);
+    float back = pow(max(-d.z, 0.0), 3.0);
+
+    col += uSpec * (key * 1.3 + top * 0.5);
+    col += uAccent * fill * 2.1 + vec3(1.0) * pow(fill, 8.0) * 0.35;
+    col += uGlow * rim * 1.15;
+    col += mix(uDeep, uAccent, 0.4) * back * 0.6;
+    return col;
+  }
+
+  void main() {
+    vec3 N = normalize(vNormal);
+    vec3 V = normalize(vViewPos);
+    if (dot(N, V) > 0.0) N = -N;
+
+    float cosT = clamp(dot(-V, N), 0.0, 1.0);
+    float facing = 1.0 - cosT;
+    float fres = 0.04 + 0.96 * pow(facing, 4.0);
+
+    vec3 R = reflect(V, N);
+    vec3 refl = studioEnv(R);
+
+    float eta = 1.0 / 1.46;
+    float disp = 0.018;
+    vec3 refr = vec3(
+      studioEnv(refract(V, N, eta - disp)).r,
+      studioEnv(refract(V, N, eta)).g,
+      studioEnv(refract(V, N, eta + disp)).b
+    );
+
+    float thick = pow(facing, 1.4);
+    vec3 absorb = mix(vec3(1.0), uBody * 1.6, 0.45 + 0.55 * thick);
+    vec3 bodyCol = refr * absorb * 0.75;
+
+    float edge = pow(vEdge, 10.0);
+    float shimmer = 0.5 + 0.5 * sin(vUv.x * 18.0 - uTime * 1.3 + vUv.y);
+    bodyCol += uAccent * edge * (0.12 + 0.35 * shimmer);
+    bodyCol += uBody * (0.22 + thick * 0.6);
+
+    vec3 col = mix(bodyCol, refl, fres);
+
+    vec3 L1 = normalize(vec3(0.55, 0.7, 0.45));
+    vec3 L2 = normalize(vec3(-0.6, -0.25, 0.75));
+    float g1 = pow(max(dot(R, L1), 0.0), 160.0);
+    float g2 = pow(max(dot(R, L2), 0.0), 70.0);
+    col += uSpec * g1 * 2.4 + uGlow * g2 * 1.4;
+
+    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    float alpha = clamp(0.1 + fres * 0.75 + lum * 0.9, 0.0, 1.0);
+
+    if (uIsLight > 0.5) {
+      vec3 tint = mix(vec3(1.0), uAccent, 0.3);
+      vec3 lc = mix(tint, uDeep, clamp(pow(facing, 1.8) * 0.9, 0.0, 1.0));
+      lc = mix(lc, uAccent, edge * 0.5);
+      lc += uSpec * g1 * 1.2;
+      col = lc;
+      alpha = clamp(0.16 + pow(facing, 1.6) * 0.72 + g1 * 0.5, 0.0, 0.95);
+    }
+
+    if (!gl_FrontFacing) alpha *= uBackface;
+    gl_FragColor = vec4(col, alpha);
+  }
+`
+
+const MAIN_SPINE = [
+  [10.5, 14.0, -4.0], [7.5, 9.5, -1.0], [2.2, 6.0, 2.0], [1.2, 2.5, 3.0],
+  [5.5, 0.0, 2.0], [10.0, -2.5, 0.0], [9.0, -6.5, -1.0], [4.0, -9.0, 1.0], [5.5, -14.0, -2.0],
+]
+const SECONDARY_SPINE = [
+  [13.5, 12.0, -6.0], [9.5, 8.5, -4.0], [5.0, 7.5, -2.5], [3.2, 4.0, -1.0],
+  [7.2, 1.5, -2.0], [11.5, -1.0, -3.5], [12.0, -5.0, -4.0], [7.5, -8.0, -3.0], [9.0, -14.0, -5.0],
+]
+
+// Horizontal offset of the ribbon in world units: positive is to the right,
+// out from behind the sidebar and the main column of text.
+const OFFSET_X = 0.6
+
+/** The palette as nexora.css defines it, so the ribbon matches the buttons. */
+function readPalette() {
+  const style = getComputedStyle(document.documentElement)
+  const triplet = (name, fallback) => {
+    const parts = style.getPropertyValue(name).trim().split(/\s+/).map(Number)
+    return parts.length === 3 && parts.every(Number.isFinite)
+      ? new Color(parts[0] / 255, parts[1] / 255, parts[2] / 255)
+      : new Color(fallback)
+  }
+  const glow = triplet('--c-glow', '#ff6f8a')
+  return {
+    accent: triplet('--c-accent', '#ff1744'),
+    glow,
+    body: triplet('--c-body', '#d0103a'),
+    deep: triplet('--c-accent-deep', '#38050f'),
+    spec: new Color(1, 1, 1).lerp(glow, 0.12),
+  }
+}
+
+function ribbonGeometry(points, segments, radial) {
+  const curve = new CatmullRomCurve3(points, false, 'centripetal')
+  const frames = curve.computeFrenetFrames(segments, false)
+  const count = (segments + 1) * (radial + 1)
+  const position = new Float32Array(count * 3)
+  const normals = new Float32Array(count * 3)
+  const binormals = new Float32Array(count * 3)
+  const uv = new Float32Array(count * 2)
+
+  let v = 0
+  for (let i = 0; i <= segments; i += 1) {
+    const u = i / segments
+    const p = curve.getPointAt(u)
+    const N = frames.normals[i]
+    const B = frames.binormals[i]
+    for (let j = 0; j <= radial; j += 1) {
+      position.set([p.x, p.y, p.z], v * 3)
+      normals.set([N.x, N.y, N.z], v * 3)
+      binormals.set([B.x, B.y, B.z], v * 3)
+      uv.set([u, (j / radial) * Math.PI * 2], v * 2)
+      v += 1
+    }
+  }
+
+  const index = []
+  for (let i = 0; i < segments; i += 1) {
+    for (let j = 0; j < radial; j += 1) {
+      const a = i * (radial + 1) + j
+      const b = (i + 1) * (radial + 1) + j
+      index.push(a, a + 1, b, b, a + 1, b + 1)
+    }
+  }
+
+  const geometry = new BufferGeometry()
+  geometry.setAttribute('position', new BufferAttribute(position, 3))
+  geometry.setAttribute('aN', new BufferAttribute(normals, 3))
+  geometry.setAttribute('aB', new BufferAttribute(binormals, 3))
+  geometry.setAttribute('aUV', new BufferAttribute(uv, 2))
+  geometry.setIndex(index)
+  return geometry
+}
+
+/**
+ * Draw the ribbon on `canvas` until `destroy()`.
+ *
+ * Throws when the browser refuses a WebGL context; background.js catches that
+ * and leaves the still frame in place.
+ */
+export function mountLiquid(canvas, { mode = 'dark' } = {}) {
+  const renderer = new WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'low-power' })
+  renderer.outputColorSpace = LinearSRGBColorSpace
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+  renderer.setClearColor(0x000000, 0)
+
+  const palette = readPalette()
+  const shared = {
+    uTime: { value: 0 },
+    uMouse: { value: new Vector2(0, 0) },
+    uIsLight: { value: mode === 'light' ? 1 : 0 },
+    uAccent: { value: palette.accent },
+    uGlow: { value: palette.glow },
+    uBody: { value: palette.body },
+    uDeep: { value: palette.deep },
+    uSpec: { value: palette.spec },
+  }
+
+  const scene = new Scene()
+  const camera = new PerspectiveCamera(42, 1, 0.1, 100)
+  camera.position.set(0, 0, 22)
+  const group = new Group()
+  scene.add(group)
+
+  const disposables = []
+
+  // Two passes per ribbon -- inner faces, then outer -- which is what gives
+  // the glass its depth.
+  function addRibbon(config) {
+    const geometry = ribbonGeometry(
+      config.spine.map(([x, y, z]) => new Vector3(x, y, z)),
+      config.segments,
+      config.radial,
+    )
+    const own = {
+      uWidth: { value: config.width },
+      uThick: { value: config.thickness },
+      uTwist: { value: config.twist },
+      uTwistSpeed: { value: config.twistSpeed },
+      uWave: { value: config.wave },
+      uSeed: { value: config.seed },
+    }
+    const material = (side, backface) =>
+      new ShaderMaterial({
+        uniforms: { ...shared, ...own, uBackface: { value: backface } },
+        vertexShader: RIBBON_VERT,
+        fragmentShader: RIBBON_FRAG,
+        transparent: true,
+        depthWrite: false,
+        side,
+      })
+
+    const back = new Mesh(geometry, material(BackSide, 0.55))
+    const front = new Mesh(geometry, material(FrontSide, 1.0))
+    back.renderOrder = config.order
+    front.renderOrder = config.order + 1
+    back.frustumCulled = false
+    front.frustumCulled = false
+    group.add(back, front)
+    disposables.push(geometry, back.material, front.material)
+  }
+
+  addRibbon({ spine: SECONDARY_SPINE, width: 0.95, thickness: 0.22, twist: 9.0, twistSpeed: -0.35, wave: 0.8, seed: 2.1, segments: 240, radial: 48, order: 0 })
+  addRibbon({ spine: MAIN_SPINE, width: 1.75, thickness: 0.38, twist: 7.5, twistSpeed: 0.28, wave: 1.0, seed: 0.0, segments: 300, radial: 72, order: 2 })
+
+  // Dust in the studio light.
+  const dust = new Float32Array(360 * 3)
+  for (let i = 0; i < 360; i += 1) {
+    dust.set([(Math.random() - 0.5) * 44, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 16 - 4], i * 3)
+  }
+  const dustGeometry = new BufferGeometry()
+  dustGeometry.setAttribute('position', new BufferAttribute(dust, 3))
+  const dustMaterial = new PointsMaterial({
+    color: palette.glow,
+    size: 0.055,
+    transparent: true,
+    opacity: 0.4,
+    depthWrite: false,
+    blending: AdditiveBlending,
+  })
+  const particles = new Points(dustGeometry, dustMaterial)
+  scene.add(particles)
+  disposables.push(dustGeometry, dustMaterial)
+
+  const layout = { x: OFFSET_X, scale: 1, opacity: 1 }
+  const mouse = { x: 0, y: 0, tx: 0, ty: 0 }
+  let scroll = 0
+
+  // On a narrow screen the ribbon sits behind the text, so it moves over and
+  // fades rather than competing with what is being read.
+  function relayout() {
+    const width = window.innerWidth
+    const height = window.innerHeight
+    const aspect = width / height
+    camera.aspect = aspect
+    camera.updateProjectionMatrix()
+    renderer.setSize(width, height, false)
+
+    if (aspect < 0.8) Object.assign(layout, { x: OFFSET_X - 3.0, scale: 0.8, opacity: 0.5 })
+    else if (aspect < 1.25) Object.assign(layout, { x: OFFSET_X - 2.2, scale: 0.9, opacity: 0.75 })
+    else Object.assign(layout, { x: OFFSET_X, scale: 1, opacity: 1 })
+    group.scale.setScalar(layout.scale)
+    canvas.style.setProperty('--liquid-opacity', String(layout.opacity))
+  }
+
+  function onMouseMove(event) {
+    mouse.tx = (event.clientX / window.innerWidth) * 2 - 1
+    mouse.ty = -(event.clientY / window.innerHeight) * 2 + 1
+  }
+
+  function onScroll() {
+    const max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
+    scroll = Math.min(1, Math.max(0, window.scrollY / max))
+  }
+
+  let frame = 0
+  let last = performance.now()
+  let time = 0
+
+  function tick(now) {
+    frame = requestAnimationFrame(tick)
+    // Clamped: after a long pause the first delta would jump the animation.
+    const dt = Math.min((now - last) / 1000, 0.05)
+    last = now
+    time += dt
+    shared.uTime.value = time
+
+    const ease = 1 - Math.exp(-dt * 3)
+    mouse.x += (mouse.tx - mouse.x) * ease
+    mouse.y += (mouse.ty - mouse.y) * ease
+    shared.uMouse.value.set(mouse.x, mouse.y)
+
+    group.position.set(layout.x + mouse.x * 0.4, scroll * 4.0 + mouse.y * 0.3, 0)
+    group.rotation.set(-mouse.y * 0.08, Math.sin(time * 0.18) * 0.14 + mouse.x * 0.2, scroll * 0.22)
+    particles.rotation.y = time * 0.012
+    particles.position.y = Math.sin(time * 0.2) * 0.4 + scroll * 2.0
+
+    renderer.render(scene, camera)
+  }
+
+  // A hidden tab renders nothing at all: the loop is cancelled rather than
+  // left spinning on an early return, which would still wake the CPU sixty
+  // times a second for a page nobody is looking at.
+  function onVisibility() {
+    cancelAnimationFrame(frame)
+    frame = 0
+    if (!document.hidden) {
+      last = performance.now()
+      frame = requestAnimationFrame(tick)
+    }
+  }
+
+  relayout()
+  onScroll()
+  window.addEventListener('resize', relayout)
+  window.addEventListener('mousemove', onMouseMove, { passive: true })
+  window.addEventListener('scroll', onScroll, { passive: true })
+  document.addEventListener('visibilitychange', onVisibility)
+  onVisibility()
+
+  // Uniforms are shared by every material, so copying into them recolours
+  // both ribbons at once with nothing recompiled.
+  function refresh() {
+    const fresh = readPalette()
+    shared.uAccent.value.copy(fresh.accent)
+    shared.uGlow.value.copy(fresh.glow)
+    shared.uBody.value.copy(fresh.body)
+    shared.uDeep.value.copy(fresh.deep)
+    shared.uSpec.value.copy(fresh.spec)
+    dustMaterial.color.copy(fresh.glow)
+  }
+
+  return {
+    setMode(next) {
+      shared.uIsLight.value = next === 'light' ? 1 : 0
+    },
+    refresh,
+    destroy() {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', relayout)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('scroll', onScroll)
+      document.removeEventListener('visibilitychange', onVisibility)
+      disposables.forEach((item) => item.dispose())
+      // Not forceContextLoss(): background.js may start again on this same
+      // canvas when reduced motion is switched back off, and a canvas whose
+      // context was lost cannot hand out another.
+      renderer.dispose()
+    },
+  }
+}

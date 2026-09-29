@@ -1,0 +1,116 @@
+<template>
+  <Teleport to="body">
+    <Transition enter-active-class="transition-opacity duration-150" enter-from-class="opacity-0"
+      leave-active-class="transition-opacity duration-150" leave-to-class="opacity-0">
+      <div v-if="modelValue" class="nx-modal-backdrop" @click.self="close">
+        <div ref="panel" role="dialog" aria-modal="true" :aria-labelledby="titleId" tabindex="-1"
+          class="nx-modal max-w-lg" @keydown.tab="trapTab">
+          <div class="nx-modal-header">
+            <h2 :id="titleId">{{ title }}</h2>
+            <button type="button" aria-label="Close dialog" class="nx-close-pill" @click="close">
+              <BaseIcon :path="mdiClose" size="sm" />
+            </button>
+          </div>
+
+          <div class="nx-modal-body">
+            <slot />
+          </div>
+
+          <div v-if="$slots.footer" class="nx-modal-footer">
+            <slot name="footer" />
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+</template>
+
+<script setup>
+import { mdiClose } from '@mdi/js'
+import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+
+import BaseIcon from '@/components/BaseIcon.vue'
+
+// `title` is required because aria-labelledby points at it: a dialog with no
+// accessible name is announced as "dialog" and nothing else.
+const props = defineProps({
+  modelValue: Boolean,
+  title: { type: String, required: true },
+})
+
+const emit = defineEmits(['update:modelValue'])
+
+const panel = ref(null)
+const titleId = useId()
+let previouslyFocused = null
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+const close = () => emit('update:modelValue', false)
+
+const onKeydown = (event) => {
+  if (event.key === 'Escape') {
+    close()
+  }
+}
+
+// Queried on every Tab rather than cached once on open: a dialog body that
+// renders conditionally would otherwise cycle focus through elements that are
+// no longer in the document.
+const trapTab = (event) => {
+  const items = panel.value?.querySelectorAll(FOCUSABLE)
+  if (!items || items.length === 0) {
+    return
+  }
+
+  const first = items[0]
+  const last = items[items.length - 1]
+  const active = document.activeElement
+
+  if (event.shiftKey && (active === first || active === panel.value)) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+const teardown = () => {
+  document.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
+}
+
+watch(
+  () => props.modelValue,
+  async (open) => {
+    if (open) {
+      previouslyFocused = document.activeElement
+      document.addEventListener('keydown', onKeydown)
+      document.body.style.overflow = 'hidden'
+      // The panel is not in the DOM until the Teleport has rendered.
+      await nextTick()
+      panel.value?.focus()
+      return
+    }
+
+    teardown()
+    // Focus returns to whatever opened the dialog. Without this the next Tab
+    // starts from the top of the document, which to a keyboard user reads as
+    // the page having reloaded under them.
+    previouslyFocused?.focus?.()
+    previouslyFocused = null
+  },
+  // Immediate, because a modal can be mounted already open -- a route that
+  // renders one, or a v-if that flips in the same tick. Without this the open
+  // branch never runs for that case: no focus trap, no Escape handler, and a
+  // page behind it that still scrolls.
+  { immediate: true },
+)
+
+// The dialog can be unmounted while still open -- a route change with the modal
+// up does exactly that. Nothing else would remove the document listener or give
+// the body its scrollbar back, and the next page would be silently unscrollable.
+onBeforeUnmount(teardown)
+</script>

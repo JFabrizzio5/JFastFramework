@@ -1,0 +1,176 @@
+// The accent: the one colour the whole Nexora look is derived from.
+//
+// Picking one writes the palette triplets nexora.css reads (`--c-accent`,
+// `--c-glow`, `--c-accent-deep`, ...) onto <html>, so every `brand-*` utility,
+// every glow, the primary button and the WebGL ribbon follow without a
+// rebuild. Nothing here knows what a component looks like.
+//
+// Three sources, first one set wins:
+//
+//   1. the viewer's own choice, from the picker, kept in localStorage;
+//   2. VITE_ACCENT in .env -- the project's default, fixed at build time;
+//   3. the triplets written in nexora.css, which are nexora-suite's ruby.
+
+// Scoped to this app, like the theme key: localStorage is per origin, and in
+// development every JFast frontend is on localhost.
+export const ACCENT_KEY = '{{ service_slug }}:accent'
+
+// Glow and body are given where nexora-suite tuned them by hand; for the rest
+// they are derived the same way a custom colour is.
+export const PRESETS = [
+  { name: 'Ruby', accent: '#FF1744', glow: '#FF6F8A', body: '#D0103A' },
+  { name: 'Blue', accent: '#3B82F6' },
+  { name: 'Emerald', accent: '#10B981', glow: '#6EE7B7', body: '#053D2E' },
+  { name: 'Violet', accent: '#8B5CF6', glow: '#C4B5FD', body: '#2E0B66' },
+  { name: 'Amber', accent: '#F59E0B', glow: '#FFB547', body: '#4A2204' },
+  { name: 'Slate', accent: '#64748B', glow: '#CBD5E1', body: '#1E293B' },
+]
+
+const DEFAULT_ACCENT = PRESETS[0].accent
+const WHITE = [255, 255, 255]
+const BLACK = [0, 0, 0]
+const INK = [10, 10, 12]
+// The lightest surface accent-coloured text sits on in the dark studio.
+// Checking against it, not against black, is the strict case.
+const DARK_SURFACE = [18, 19, 25]
+
+const HEX = /^#([0-9a-f]{6})$/i
+
+export function isHex(value) {
+  return typeof value === 'string' && HEX.test(value.trim())
+}
+
+function toRgb(hex) {
+  const n = parseInt(hex.trim().slice(1), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+function toHex(rgb) {
+  return `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`.toUpperCase()
+}
+
+function mix(from, to, amount) {
+  return from.map((value, i) => Math.round(value + (to[i] - value) * amount))
+}
+
+// WCAG 2 relative luminance and contrast ratio.
+function luminance(rgb) {
+  const [r, g, b] = rgb.map((v) => {
+    const c = v / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+function contrast(a, b) {
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (light + 0.05) / (dark + 0.05)
+}
+
+// Walk the colour towards black or white until it reads as body text (4.5:1)
+// on the surface it will sit on. An amber eyebrow on a white card is 2.1:1 as
+// picked; this is what keeps a custom accent from producing unreadable text.
+function readable(rgb, surface, toward) {
+  let colour = rgb
+  for (let step = 1; step <= 20 && contrast(colour, surface) < 4.5; step += 1) {
+    colour = mix(rgb, toward, step / 20)
+  }
+  return colour
+}
+
+const triplet = (rgb) => rgb.join(' ')
+
+/** Every CSS variable one accent implies, as the strings nexora.css reads. */
+export function derivePalette({ accent, glow, body }) {
+  const base = toRgb(accent)
+  const shine = glow && isHex(glow) ? toRgb(glow) : mix(base, WHITE, 0.35)
+  return {
+    '--c-accent': triplet(base),
+    '--c-glow': triplet(shine),
+    '--c-body': triplet(body && isHex(body) ? toRgb(body) : mix(base, BLACK, 0.6)),
+    '--c-accent-deep': triplet(mix(base, BLACK, 0.78)),
+    // White on the accent unless that falls below 3:1 -- the large, bold text
+    // threshold a button label is held to. Amber and emerald get dark ink.
+    '--c-on-accent': triplet(contrast(WHITE, base) >= 3 ? WHITE : INK),
+    '--c-accent-text-light': triplet(readable(base, WHITE, BLACK)),
+    '--c-accent-text-dark': triplet(readable(shine, DARK_SURFACE, WHITE)),
+  }
+}
+
+function applyVariables(variables) {
+  const style = document.documentElement.style
+  for (const [name, value] of Object.entries(variables)) style.setProperty(name, value)
+  // The ribbon reads the palette from the DOM; this is its cue to read again.
+  document.dispatchEvent(new CustomEvent('nexora:accent'))
+}
+
+function clearVariables() {
+  const style = document.documentElement.style
+  for (const name of Object.keys(derivePalette({ accent: DEFAULT_ACCENT }))) {
+    style.removeProperty(name)
+  }
+}
+
+function presetFor(hex) {
+  return PRESETS.find((preset) => preset.accent.toUpperCase() === hex.toUpperCase()) ?? { accent: hex }
+}
+
+function buildDefault() {
+  // Accepted with or without the "#": in a .env file an unquoted # starts a
+  // comment, so `VITE_ACCENT=#3B82F6` arrives here as an empty string, and
+  // the leading # is the part people leave off to avoid exactly that.
+  const configured = (import.meta.env.VITE_ACCENT ?? '').trim().replace(/^(?!#)/, '#')
+  return isHex(configured) ? configured.toUpperCase() : null
+}
+
+function stored() {
+  try {
+    const value = JSON.parse(localStorage.getItem(ACCENT_KEY))
+    return value && isHex(value.hex) ? value.hex.toUpperCase() : null
+  } catch {
+    // Private mode, or a value somebody edited by hand. Either way: no choice.
+    return null
+  }
+}
+
+/** The accent on screen now, as a hex. */
+export function currentAccent() {
+  return stored() ?? buildDefault() ?? DEFAULT_ACCENT
+}
+
+/**
+ * Put the saved or configured accent on the page. Call once, before the app
+ * mounts: nothing accent-coloured has been painted before that, so there is
+ * no flash to see. index.html replays a saved choice even earlier.
+ */
+export function restoreAccent() {
+  const hex = stored() ?? buildDefault()
+  if (hex) applyVariables(derivePalette(presetFor(hex)))
+}
+
+/** The viewer picked a colour: apply it and remember it on this device. */
+export function setAccent(hex) {
+  if (!isHex(hex)) return
+  const variables = derivePalette(presetFor(hex))
+  applyVariables(variables)
+  try {
+    // The derived variables are stored too, so the inline script in
+    // index.html can apply them before first paint without a copy of the
+    // maths above.
+    localStorage.setItem(ACCENT_KEY, JSON.stringify({ hex: toHex(toRgb(hex)), variables }))
+  } catch {
+    // Applied, just not remembered.
+  }
+}
+
+/** Forget the viewer's choice and go back to the project's default. */
+export function resetAccent() {
+  try {
+    localStorage.removeItem(ACCENT_KEY)
+  } catch {
+    // Nothing stored to remove.
+  }
+  clearVariables()
+  restoreAccent()
+  document.dispatchEvent(new CustomEvent('nexora:accent'))
+}

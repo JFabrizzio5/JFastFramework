@@ -1,0 +1,55 @@
+<template>
+  <Teleport to="body">
+    <div role="status" class="nx-toasts">
+      <TransitionGroup leave-active-class="transition duration-150" leave-to-class="opacity-0"
+        move-class="transition duration-150">
+        <div v-for="toast in toasts" :key="toast.id" class="nx-toast" :class="`is-${toast.variant}`">
+          <span class="nx-toast-icon" aria-hidden="true">
+            <BaseIcon :path="ICONS[toast.variant] ?? ICONS.info" size="sm" />
+          </span>
+
+          <div class="nx-toast-body">
+            <p class="nx-toast-title">{{ toast.title ?? WORDS[toast.variant] ?? WORDS.info }}</p>
+            <p class="nx-toast-message">{{ toast.message }}</p>
+          </div>
+
+          <button type="button" class="nx-close-pill" aria-label="Dismiss notification"
+            @click="dismiss(toast.id)">
+            <BaseIcon :path="mdiClose" size="sm" />
+          </button>
+        </div>
+      </TransitionGroup>
+    </div>
+  </Teleport>
+</template>
+
+<script setup>
+import { mdiAlertCircleOutline, mdiCheckCircleOutline, mdiClose, mdiInformationOutline } from '@mdi/js'
+
+import BaseIcon from '@/components/BaseIcon.vue'
+import { useToast } from '@/composables/useToast.js'
+
+// Mount this once, in App.vue. The live region is the wrapper and it stays in
+// the DOM whether or not there are toasts: a role="status" element that appears
+// at the same moment as its text is usually not announced, because screen
+// readers only report changes inside a region they were already watching.
+//
+// The wrapper spans a corner of the viewport, so it is pointer-events: none in
+// nexora.css and each capsule turns them back on -- clicks go where they were
+// aimed, not into an invisible sheet.
+const { toasts, dismiss } = useToast()
+
+const ICONS = {
+  success: mdiCheckCircleOutline,
+  error: mdiAlertCircleOutline,
+  info: mdiInformationOutline,
+}
+
+// A word as well as a hue and an icon: colour alone says nothing to a screen
+// reader and not much to a red-green eye.
+const WORDS = {
+  success: 'Done',
+  error: 'Something went wrong',
+  info: 'Heads up',
+}
+</script>

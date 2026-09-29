@@ -1,0 +1,86 @@
+// The liquid ribbon behind the whole app, and every reason not to draw it.
+//
+// Framework-agnostic on purpose: LiquidBackground is a thin wrapper in each
+// framework, and the decisions below are the part worth having once.
+//
+// The ribbon is decoration, so it has to cost nothing when it cannot help:
+//
+// * three.js is ~130 kB gzipped, so it is a separate chunk loaded only after
+//   the first paint, and only on a machine that will run it;
+// * `prefers-reduced-motion` means it is never loaded, and turning the setting
+//   on while the app is open stops it;
+// * no WebGL 2 -- an old GPU, a locked-down browser, a remote desktop -- leaves
+//   the still CSS frame (`.nx-ambient`) that is already on screen;
+// * a hidden tab renders nothing: liquid.js cancels its frame loop.
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+
+function webglAvailable() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2')
+    // Browsers cap live WebGL contexts at around sixteen and drop the oldest
+    // when a page exceeds it. A probe must not be one of them.
+    gl?.getExtension('WEBGL_lose_context')?.loseContext()
+    return Boolean(gl)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Start the ribbon on `canvas` when this machine and this person want it.
+ *
+ * Returns a handle straight away; the engine arrives later, or never. Every
+ * call on the handle is safe in either case, which is what keeps the
+ * components that own the canvas free of async bookkeeping.
+ */
+export function createLiquidBackground(canvas, { mode = 'dark' } = {}) {
+  let engine = null
+  let loading = null
+  let destroyed = false
+  let current = mode
+
+  async function start() {
+    if (engine || loading || destroyed || reducedMotion.matches || !webglAvailable()) return
+    loading = import('./liquid.js')
+    try {
+      const { mountLiquid } = await loading
+      // The component can unmount while the chunk is on the wire.
+      if (destroyed || reducedMotion.matches) return
+      engine = mountLiquid(canvas, { mode: current })
+      canvas.classList.add('is-live')
+    } catch {
+      // The chunk failed to load or the GPU refused a context. The still
+      // frame is already showing, which is the right answer to both.
+      engine = null
+    } finally {
+      loading = null
+    }
+  }
+
+  function stop() {
+    engine?.destroy()
+    engine = null
+    canvas.classList.remove('is-live')
+  }
+
+  const onMotionChange = () => (reducedMotion.matches ? stop() : start())
+  reducedMotion.addEventListener('change', onMotionChange)
+  // Fired by accent.js whenever the palette on <html> changes.
+  const onAccent = () => engine?.refresh()
+  document.addEventListener('nexora:accent', onAccent)
+  start()
+
+  return {
+    setMode(next) {
+      current = next
+      engine?.setMode(next)
+    },
+    destroy() {
+      destroyed = true
+      reducedMotion.removeEventListener('change', onMotionChange)
+      document.removeEventListener('nexora:accent', onAccent)
+      stop()
+    },
+  }
+}

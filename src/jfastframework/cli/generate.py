@@ -21,6 +21,7 @@ from jfastframework.cli import ui as cli_ui
 from jfastframework.cli.common import _report
 from jfastframework.cli.patcher import PatchError, insert_at_marker
 from jfastframework.cli.scaffold import (
+    DEFAULT_FRONTEND_TEMPLATE,
     Scaffolder,
     WrittenFile,
     service_context,
@@ -87,6 +88,7 @@ def generate_service(
     frontend: str | None,
     target: Path | None,
     workspace: Workspace | None,
+    frontend_template: str | None = None,
     language: str = "python",
     grpc: bool = False,
     agent_docs: bool = False,
@@ -118,6 +120,7 @@ def generate_service(
         port=resolved_port,
         plugins=plugins,
         frontend=frontend,
+        frontend_template=frontend_template,
         language=language,
         grpc=grpc,
         agent_docs=agent_docs,
@@ -134,6 +137,7 @@ def generate_service(
         grpc=grpc,
         agent_docs=agent_docs,
         layout=layout,
+        frontend_template=frontend_template or DEFAULT_FRONTEND_TEMPLATE,
     )
     with ui.working("scaffolding"):
         written = scaffolder.render_trees(trees, context, force=force, dry_run=dry_run)
@@ -239,8 +243,9 @@ def _print_next_steps(destination: Path, context: dict[str, Any], kind: str) -> 
         return
 
     if kind == "spa":
+        look = context["frontend_template"]
         ui.next_steps(
-            f"{slug} {ui.G.dash} {context['frontend']}",
+            f"{slug} {ui.G.dash} {context['frontend']} {ui.G.bullet} {look}",
             [
                 (f"cd {destination}", ""),
                 ("npm install", ""),

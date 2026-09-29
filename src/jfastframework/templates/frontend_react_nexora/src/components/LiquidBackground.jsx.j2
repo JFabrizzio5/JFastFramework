@@ -1,0 +1,41 @@
+import { useEffect, useRef } from 'react'
+
+import { useTheme } from '@/hooks/useTheme.js'
+import { createLiquidBackground } from '@/nexora/background.js'
+
+// Mount once, in main.jsx. Every decision about whether the ribbon runs --
+// reduced motion, WebGL, a hidden tab -- is in background.js.
+export default function LiquidBackground() {
+  const canvas = useRef(null)
+  const background = useRef(null)
+  const { resolved } = useTheme()
+
+  // Created once. StrictMode mounts, unmounts and mounts again in development,
+  // and destroy() is what makes the second mount start from nothing.
+  useEffect(() => {
+    background.current = createLiquidBackground(canvas.current, { mode: resolved })
+    return () => {
+      background.current?.destroy()
+      background.current = null
+    }
+    // The theme is applied by the effect below; recreating the scene on every
+    // switch would recompile the shaders to change one uniform.
+  }, [])
+
+  // The glass is lit differently on white: glowing light washes out there.
+  useEffect(() => {
+    background.current?.setMode(resolved)
+  }, [resolved])
+
+  return (
+    <>
+      {/* The still frame is always there. It is what shows under reduced
+          motion, without WebGL, and for the moment before three.js arrives,
+          so none of those cases is a blank page. */}
+      <div className="nx-ambient" aria-hidden="true">
+        <div className="nx-ambient-glow" />
+      </div>
+      <canvas ref={canvas} className="nx-liquid-canvas" aria-hidden="true" />
+    </>
+  )
+}
