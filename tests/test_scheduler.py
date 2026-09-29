@@ -229,6 +229,24 @@ async def test_a_failed_enqueue_releases_the_tick_for_the_next_pass() -> None:
     assert len(queue.jobs) == 1
 
 
+async def test_one_schedule_failing_does_not_hold_up_the_others() -> None:
+    class FailsFor(ListQueue):
+        async def enqueue(self, job: Job) -> str:
+            if job.task == "broken":
+                raise ConnectionError("broker unreachable")
+            return await super().enqueue(job)
+
+    registry = TaskRegistry()
+    registry.schedule("broken", every=timedelta(hours=1))
+    registry.schedule("healthy", every=timedelta(hours=1))
+    queue = FailsFor()
+    scheduler = Scheduler(queue, registry, MemoryTickStore())  # type: ignore[arg-type]
+    await scheduler.tick(at("2026-09-29 10:20"))
+    with pytest.raises(ConnectionError):
+        await scheduler.tick(at("2026-09-29 11:00"))
+    assert [job.task for job in queue.jobs] == ["healthy"]
+
+
 async def test_a_schedule_for_a_task_this_process_lacks_still_fires(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

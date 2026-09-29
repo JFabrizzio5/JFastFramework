@@ -240,23 +240,40 @@ class Scheduler:
             self._previous_pass = now
 
         fired: list[Job] = []
+        failures: list[Exception] = []
         for schedule in self.registry.schedules:
-            due = schedule.latest_at_or_before(now)
-            if due is None:
+            try:
+                job = await self._consider(schedule, now, self._previous_pass)
+            except Exception as exc:
+                # One schedule's failure -- its enqueue, its claim -- must not
+                # hold up the others in the same pass. Its tick stays unseen,
+                # so the next pass tries it again.
+                logger.exception("schedule %s failed to fire", schedule.name)
+                failures.append(exc)
                 continue
-            seen = self._seen.get(schedule.name)
-            if seen is None:
-                seen = await self._starting_point(schedule, self._previous_pass)
-                self._seen[schedule.name] = seen
-            if due <= seen:
-                continue
-            job = await self._fire(schedule, due)
             if job is not None:
                 fired.append(job)
-            self._seen[schedule.name] = due
 
         self._previous_pass = now
+        if failures:
+            raise failures[0]
         return fired
+
+    async def _consider(
+        self, schedule: Schedule, now: datetime, previous_pass: datetime
+    ) -> Job | None:
+        due = schedule.latest_at_or_before(now)
+        if due is None:
+            return None
+        seen = self._seen.get(schedule.name)
+        if seen is None:
+            seen = await self._starting_point(schedule, previous_pass)
+            self._seen[schedule.name] = seen
+        if due <= seen:
+            return None
+        job = await self._fire(schedule, due)
+        self._seen[schedule.name] = due
+        return job
 
     async def _starting_point(self, schedule: Schedule, previous_pass: datetime) -> datetime:
         """The newest tick to treat as already dealt with, on first sight.
