@@ -101,8 +101,8 @@ def infra_compose_service(infra: InfraService, *, base_port: int) -> dict[str, A
     """One ``InfraService`` rendered as a compose service.
 
     Shared with the workspace generator: a field added to ``InfraService`` and
-    emitted here reaches both generated files, or neither. The two used to
-    build this entry separately and only one of them knew about volumes.
+    emitted here reaches both generated files, or neither. Built separately,
+    the two entries drift: a field such as volumes reaches only one of them.
     """
     entry: dict[str, Any] = {
         "image": infra.image,

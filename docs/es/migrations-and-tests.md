@@ -107,7 +107,7 @@ Autogenerate es un borrador, no un plan:
 - Las **migraciones de datos** no se escriben en absoluto.
 - Los renombres de índices y los cambios de miembros de un enum se pierden con
   frecuencia. Mira
-  [Enums](datastores.md#enums-qué-mitad-de-la-garantía-estás-comprando) para
+  [Enums](datastores.md#enums-que-mitad-de-la-garantia-estas-comprando) para
   saber qué impone y qué no impone la columna en cada caso.
 - Una **columna `NOT NULL` nueva** se repara sola cuando el modelo trae un
   `default=` escalar: la revisión agrega la columna con un `server_default`

@@ -1,15 +1,13 @@
 """Datastores as named instances, and the bindings that connect services to them.
 
-The workspace used to record ``datastores = ["database", "cache"]`` on a
-service: a list of *types*. Two things fell out of that, and both were bugs
-wearing the costume of a design:
+A list of datastore *types* on a service (the legacy
+``datastores = ["database", "cache"]``) cannot express two things:
 
-* the generated compose file created a ``billing-database`` container and
-  **nothing wrote the DSN that points at it**, so the connection string stayed
-  hand-maintained in a ``.env`` while the container was derived. That gap is
-  where drift lives;
-* a second PostgreSQL could not be expressed at all, because there was no name
-  to hang the second instance on.
+* the DSN that points at a generated container. Deriving the container while
+  the connection string stays hand-maintained in a ``.env`` is where drift
+  lives;
+* a second PostgreSQL, because a type gives the second instance no name to
+  hang on.
 
 A resource has a name. A service binds to it under an environment variable.
 From those two facts the compose file, the per-service ``.env``, the
@@ -126,7 +124,8 @@ class Resource:
     database: str = ""
     user: str = "app"
     # True for resources synthesised from a service's legacy `datastores` list.
-    # They render exactly as they always did and are not written to the file.
+    # They render exactly as the legacy list does and are not written to the
+    # file.
     implicit: bool = False
 
     def __post_init__(self) -> None:

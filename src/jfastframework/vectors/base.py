@@ -1,7 +1,7 @@
 """The vector store contract.
 
-RAG used to be welded to pgvector. It is not any more: the ``rag`` plugin talks
-to this protocol, so the backing store is a configuration choice.
+The ``rag`` plugin talks to this protocol rather than to pgvector, so the
+backing store is a configuration choice.
 
     [plugin.rag]
     store = "qdrant"        # or "pgvector", or "mypkg.stores:MyStore"

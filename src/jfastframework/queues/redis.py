@@ -8,12 +8,11 @@ per-worker processing list, so a worker that dies leaves the job visible for
 recovery instead of losing it. A naive ``BRPOP`` queue drops that job on the
 floor, which is why this one is more code than you might expect.
 
-**Recovery is cross-worker, and has to be.** An earlier version of this backend
-recovered only its *own* processing list, under a name that included the
-process's memory address -- so a worker that died recovered nothing, because
-the process that came back had a different name. Every worker now registers in
-a hash with a heartbeat, and any worker returns the in-flight jobs of a
-consumer whose heartbeat has gone stale. That is what makes the visibility
+**Recovery is cross-worker, and has to be.** A worker that recovers only its
+*own* processing list recovers nothing after a crash, because the process that
+comes back has a different name. Every worker registers in a hash with a
+heartbeat, and any worker returns the in-flight jobs of a consumer whose
+heartbeat has gone stale. That is what makes the visibility
 timeout documented in ``queues.base`` true here rather than aspirational.
 
 Time comes from the Redis server (``TIME``), not from each worker's clock. Two

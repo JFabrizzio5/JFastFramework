@@ -22,6 +22,7 @@ Requires: ``pip install jfastframework[s3]``
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,10 +33,13 @@ from jfastframework.storage.base import (
     guess_content_type,
     normalise_key,
 )
-from jfastframework.storage.pipeline import Upload, UploadPipeline
+from jfastframework.storage.pipeline import StreamCheck, Upload, UploadPipeline, guard_stream
 
 
 class S3Storage:
+    #: S3's minimum part is 5 MiB for every part but the last.
+    PART_BYTES = 8 * 1024 * 1024
+
     def __init__(
         self,
         name: str,
@@ -149,6 +153,92 @@ class S3Storage:
             key=safe,
             size=len(data),
             content_type=resolved_type,
+            modified_at=datetime.now(UTC),
+            etag=(response.get("ETag") or "").strip('"') or None,
+            metadata=metadata or {},
+        )
+
+    async def put_stream(
+        self,
+        key: str,
+        chunks: AsyncIterable[bytes],
+        *,
+        content_type: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> StoredFile:
+        """A multipart upload, one part per ``PART_BYTES`` of the stream.
+
+        Nothing is visible under ``key`` until the upload completes, and a
+        failure part way aborts it, so S3 does not keep -- and bill for -- the
+        parts of an upload that will never finish. A stream shorter than one
+        part is a single ``put_object``.
+        """
+        safe = normalise_key(key)
+        check = StreamCheck()
+        guarded = guard_stream(self._pipeline, disk=self.name, key=safe, chunks=chunks, check=check)
+        buffer = bytearray()
+        parts: list[dict[str, Any]] = []
+        upload_id: str | None = None
+
+        def resolved_type() -> str:
+            return check.content_type or content_type or guess_content_type(safe)
+
+        async def flush(final: bool) -> None:
+            nonlocal upload_id
+            if not buffer and not final:
+                return
+            if upload_id is None:
+                created = await asyncio.to_thread(
+                    self.client.create_multipart_upload,
+                    Bucket=self._bucket,
+                    Key=safe,
+                    ContentType=resolved_type(),
+                    Metadata=metadata or {},
+                )
+                upload_id = str(created["UploadId"])
+            number = len(parts) + 1
+            response = await asyncio.to_thread(
+                self.client.upload_part,
+                Bucket=self._bucket,
+                Key=safe,
+                UploadId=upload_id,
+                PartNumber=number,
+                Body=bytes(buffer),
+            )
+            parts.append({"ETag": response["ETag"], "PartNumber": number})
+            buffer.clear()
+
+        try:
+            async for chunk in guarded:
+                buffer += chunk
+                if len(buffer) >= self.PART_BYTES:
+                    await flush(final=False)
+            if upload_id is None:
+                return await self.write(
+                    safe, bytes(buffer), content_type=resolved_type(), metadata=metadata
+                )
+            if buffer:
+                await flush(final=True)
+            response = await asyncio.to_thread(
+                self.client.complete_multipart_upload,
+                Bucket=self._bucket,
+                Key=safe,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+        except BaseException:
+            if upload_id is not None:
+                await asyncio.to_thread(
+                    self.client.abort_multipart_upload,
+                    Bucket=self._bucket,
+                    Key=safe,
+                    UploadId=upload_id,
+                )
+            raise
+        return StoredFile(
+            key=safe,
+            size=check.size,
+            content_type=resolved_type(),
             modified_at=datetime.now(UTC),
             etag=(response.get("ETag") or "").strip('"') or None,
             metadata=metadata or {},

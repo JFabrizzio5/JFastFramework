@@ -1,0 +1,1656 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JFast Suite | Pasarela de Pagos Segura</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet">
+    
+    <!-- Unified CSS -->
+    <link rel="stylesheet" href="assets/css/nexora.css">
+
+    <style>
+        /* ==========================================================
+           Pagos — checkout en vidrio líquido
+           ========================================================== */
+        .pay-head { margin-top: 40px; }
+        .pay-head .nx-eyebrow { margin-bottom: 12px; }
+        .pay-head h1 .hero-title-faded { font-weight: 800; }
+
+        .checkout-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+            gap: 28px;
+            align-items: start;
+            margin: 8px 0 72px;
+        }
+
+        .checkout-form-panel { padding: 30px; border-radius: var(--radius-xl); }
+
+        .checkout-aside { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+
+        /* ---- Encabezados de paso ---- */
+        .step-head {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+
+        .step-num {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            color: rgb(var(--c-accent));
+            padding: 5px 9px;
+            border-radius: 9999px;
+            background: rgb(var(--c-accent) / 0.1);
+            border: 1px solid rgb(var(--c-accent) / 0.28);
+            line-height: 1;
+            margin-top: 3px;
+            flex-shrink: 0;
+        }
+
+        .step-head h2 {
+            font-size: 1.22rem;
+            font-weight: 800;
+            letter-spacing: -0.035em;
+            line-height: 1.2;
+        }
+
+        .step-head p { font-size: 0.8rem; color: var(--text-dim); margin-top: 2px; }
+
+        .step-divider {
+            height: 1px;
+            background: var(--card-border);
+            margin: 26px 0 24px;
+        }
+
+        /* ---- Selector de método: control segmentado de vidrio ---- */
+        .payment-methods-selector {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 4px;
+            padding: 5px;
+            margin-bottom: 26px;
+            border-radius: 20px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+        }
+
+        html.nx-light .payment-methods-selector { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05); }
+
+        .pay-tab-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 15px;
+            padding: 12px 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 7px;
+            cursor: pointer;
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: var(--text-dim);
+            white-space: nowrap;
+            transition: var(--transition-smooth);
+        }
+
+        .pay-tab-btn svg { opacity: 0.85; transition: transform 0.25s var(--ease-out), color 0.2s ease; }
+
+        .pay-tab-btn:hover { color: var(--text-main); background: var(--pill-bg); }
+        .pay-tab-btn:hover svg { transform: translateY(-1px); }
+
+        .pay-tab-btn.active {
+            color: var(--text-main);
+            border-color: rgb(var(--c-accent) / 0.45);
+            background: linear-gradient(180deg, rgb(var(--c-accent) / 0.2), rgb(var(--c-accent) / 0.06));
+            box-shadow: 0 12px 26px -12px rgb(var(--c-accent) / 0.7), inset 0 1px 1px var(--card-specular);
+        }
+
+        .pay-tab-btn.active svg {
+            color: rgb(var(--c-accent));
+            opacity: 1;
+            filter: drop-shadow(0 0 6px rgb(var(--c-accent) / 0.55));
+        }
+
+        .pay-tab-btn:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 2px; }
+
+        /* ---- Formulario ---- */
+        .checkout-form-panel .form-label { flex-wrap: wrap; gap: 4px 10px; }
+
+        .form-hint {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 500;
+            color: var(--text-sub);
+            letter-spacing: 0.02em;
+        }
+
+        .card-detect {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: rgb(var(--c-accent));
+        }
+
+        .input-with-icon { position: relative; }
+        .input-with-icon .form-input { padding-right: 44px; }
+
+        .input-with-icon > svg {
+            position: absolute;
+            right: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-sub);
+            pointer-events: none;
+        }
+
+        .form-input.nx-mono { letter-spacing: 0.06em; }
+
+        .form-row-2 {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        /* Panel interior (SPEI, CFDI) */
+        .pay-inset {
+            padding: 18px 20px;
+            border-radius: 20px;
+            background: var(--bg-muted);
+            border: 1px solid var(--card-border);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+        }
+
+        #method-spei-panel { margin-bottom: 4px; }
+
+        .pay-inset h4 {
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            margin: 8px 0 4px;
+        }
+
+        .pay-inset > p { font-size: 0.82rem; color: var(--text-dim); margin-bottom: 14px; }
+
+        .spei-sheet {
+            border-radius: 16px;
+            border: 1px dashed var(--badge-border);
+            background: var(--pill-bg);
+            padding: 6px 16px;
+        }
+
+        .spei-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 11px 0;
+            border-bottom: 1px solid var(--card-border);
+            font-size: 0.82rem;
+            flex-wrap: wrap;
+        }
+
+        .spei-row:last-child { border-bottom: none; }
+
+        .spei-k {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        .spei-v { font-weight: 600; text-align: right; }
+        .spei-v.nx-mono { font-size: 0.82rem; letter-spacing: 0.04em; }
+
+        .spei-clabe .spei-v {
+            font-family: var(--font-mono);
+            font-size: 0.98rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            color: var(--text-main);
+        }
+
+        .spei-clabe-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+
+        .btn-xs {
+            padding: 5px 12px;
+            font-size: 0.72rem;
+            gap: 6px;
+        }
+
+        .cfdi-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .cfdi-row strong { font-size: 0.9rem; font-weight: 700; }
+        .cfdi-row p { font-size: 0.78rem; color: var(--text-dim); margin-top: 2px; }
+
+        #cfdiFields {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--card-border);
+        }
+
+        #cfdiFields .form-group { margin-bottom: 0; }
+
+        /* ---- Botón de pago ---- */
+        .btn-pay {
+            width: 100%;
+            margin-top: 22px;
+            padding: 17px 24px;
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: -0.01em;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .btn-pay > span, .btn-pay > svg { position: relative; z-index: 1; }
+
+        .btn-pay:disabled {
+            opacity: 1;
+            cursor: progress;
+            transform: none;
+        }
+
+        .btn-pay:disabled .pay-lock { display: none; }
+
+        .btn-pay:disabled::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            background: linear-gradient(100deg, transparent 25%, rgba(255, 255, 255, 0.32) 50%, transparent 75%);
+            animation: paySweep 1.15s ease-in-out infinite;
+        }
+
+        @keyframes paySweep {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(100%); }
+        }
+
+        .btn-pay .btn-spinner {
+            border-color: rgb(var(--c-on-accent) / 0.35);
+            border-top-color: rgb(var(--c-on-accent));
+        }
+
+        .security-badges {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .security-badges span {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 12px;
+            border-radius: 9999px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        /* ==========================================================
+           Tarjeta 3D: metal negro con reflejo cáustico del acento
+           ========================================================== */
+        .cc-stage {
+            width: 100%;
+            max-width: 480px;
+            margin: 0 auto;
+            container-type: inline-size;
+        }
+
+        .cc-scene {
+            position: relative;
+            perspective: 1400px;
+            transform-style: preserve-3d;
+            transition: transform 0.3s var(--ease-out);
+        }
+
+        /* Sombra de piso con tinte de acento */
+        .cc-scene::before {
+            content: "";
+            position: absolute;
+            left: 12%;
+            right: 12%;
+            bottom: -26px;
+            height: 46px;
+            border-radius: 50%;
+            background: radial-gradient(ellipse at center, rgb(var(--c-accent) / 0.55), rgb(var(--c-accent-deep) / 0.25) 45%, transparent 72%);
+            filter: blur(16px);
+            transform: translateZ(-60px);
+            pointer-events: none;
+        }
+
+        html.nx-light .cc-scene::before { opacity: 0.6; }
+
+        .cc-visual-card {
+            --mx: 28%;
+            --my: 8%;
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1.586;
+            border-radius: 22px;
+            transform-style: preserve-3d;
+            transition: transform 0.85s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.4s ease;
+            cursor: pointer;
+            color: #ffffff;
+            box-shadow:
+                0 44px 70px -30px rgb(var(--c-accent) / 0.55),
+                0 30px 60px -24px rgba(0, 0, 0, 0.85);
+        }
+
+        html.nx-light .cc-visual-card {
+            box-shadow:
+                0 40px 60px -30px rgb(var(--c-accent) / 0.45),
+                0 26px 50px -22px rgba(15, 20, 40, 0.45);
+        }
+
+        .cc-visual-card.is-flipped { transform: rotateY(180deg); }
+
+        .cc-visual-card:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 6px; }
+
+        .cc-visual-card.has-cvc {
+            box-shadow:
+                0 44px 80px -28px rgb(var(--c-accent) / 0.75),
+                0 30px 60px -24px rgba(0, 0, 0, 0.85);
+        }
+
+        .cc-face {
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            overflow: hidden;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+            background:
+                radial-gradient(120% 95% at 102% -8%, rgb(var(--c-accent) / 0.62) 0%, rgb(var(--c-accent-deep) / 0.42) 30%, transparent 58%),
+                radial-gradient(75% 80% at -8% 108%, rgb(var(--c-glow) / 0.26) 0%, transparent 58%),
+                repeating-linear-gradient(100deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 4px),
+                linear-gradient(152deg, #1d1e25 0%, #0b0b0f 42%, #16171d 68%, #07070a 100%);
+            box-shadow:
+                inset 0 1px 1px rgba(255, 255, 255, 0.38),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+                inset 0 -28px 50px rgba(0, 0, 0, 0.4);
+        }
+
+        /* Reflejo cáustico: manchas de luz líquida que se mueven lento */
+        .cc-face::before {
+            content: "";
+            position: absolute;
+            inset: -35%;
+            background:
+                radial-gradient(24% 12% at 64% 32%, rgb(var(--c-glow) / 0.7), transparent 70%),
+                radial-gradient(14% 30% at 80% 56%, rgb(var(--c-accent) / 0.6), transparent 70%),
+                radial-gradient(34% 9% at 42% 70%, rgb(var(--c-glow) / 0.3), transparent 70%),
+                radial-gradient(10% 18% at 24% 40%, rgb(var(--c-accent) / 0.22), transparent 70%);
+            filter: blur(14px);
+            mix-blend-mode: screen;
+            opacity: 0.85;
+            animation: ccCaustic 11s ease-in-out infinite alternate;
+            pointer-events: none;
+            transition: opacity 0.35s ease, filter 0.35s ease;
+        }
+
+        /* Brillo especular que sigue al cursor */
+        .cc-face::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(55% 60% at var(--mx) var(--my), rgba(255, 255, 255, 0.2), transparent 62%),
+                linear-gradient(116deg, transparent 34%, rgba(255, 255, 255, 0.07) 47%, rgba(255, 255, 255, 0.02) 52%, transparent 60%);
+            pointer-events: none;
+        }
+
+        @keyframes ccCaustic {
+            0% { transform: rotate(-8deg) translate(0, 0) scale(1); }
+            50% { transform: rotate(4deg) translate(-4%, 3%) scale(1.06); }
+            100% { transform: rotate(-2deg) translate(3%, -2%) scale(0.98); }
+        }
+
+        /* Reacciona al escribir */
+        .cc-visual-card.cc-pulse .cc-face::before {
+            opacity: 1;
+            filter: blur(12px) brightness(1.35);
+        }
+
+        .cc-front {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 6.4cqi 7cqi;
+            max-width: 100%;
+        }
+
+        .cc-front > *, .cc-back > * { position: relative; z-index: 2; }
+
+        .cc-top-row,
+        .cc-chip-row,
+        .cc-footer-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .cc-issuer {
+            display: flex;
+            align-items: baseline;
+            gap: 7px;
+            font-family: var(--font-script);
+            font-size: clamp(1.15rem, 6cqi, 1.7rem);
+            font-weight: 700;
+            line-height: 1;
+            color: #ffffff;
+        }
+
+        .cc-issuer small {
+            font-family: var(--font-mono);
+            font-size: 0.34em;
+            font-weight: 700;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: rgb(var(--c-glow));
+            transform: translateY(-3px);
+        }
+
+        .cc-brand-badge {
+            font-family: var(--font-sans);
+            font-size: clamp(0.95rem, 4.6cqi, 1.3rem);
+            font-weight: 900;
+            font-style: italic;
+            letter-spacing: 0.02em;
+            color: #ffffff;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+            white-space: nowrap;
+        }
+
+        .cc-chip-row { justify-content: flex-start; gap: 14px; }
+
+        .cc-chip {
+            width: clamp(38px, 11cqi, 50px);
+            aspect-ratio: 1.34;
+            border-radius: 7px;
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, #f7e7ad 0%, #d6ab4d 32%, #f4dc8f 55%, #b18a36 78%, #e6c774 100%);
+            box-shadow: inset 0 0 0 1px rgba(60, 40, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.7), 0 3px 8px rgba(0, 0, 0, 0.45);
+        }
+
+        .cc-chip::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                linear-gradient(90deg, transparent 31%, rgba(70, 45, 0, 0.35) 31% 34%, transparent 34% 66%, rgba(70, 45, 0, 0.35) 66% 69%, transparent 69%),
+                linear-gradient(0deg, transparent 47%, rgba(70, 45, 0, 0.35) 47% 53%, transparent 53%);
+        }
+
+        .cc-chip::after {
+            content: "";
+            position: absolute;
+            inset: 26% 38%;
+            border: 1px solid rgba(70, 45, 0, 0.4);
+            border-radius: 3px;
+        }
+
+        .cc-contactless { width: clamp(20px, 6cqi, 26px); height: auto; color: rgba(255, 255, 255, 0.75); }
+
+        .cc-field {
+            border-radius: 10px;
+            padding: 3px 8px;
+            margin: -3px -8px;
+            transition: background 0.25s ease, box-shadow 0.25s ease;
+            min-width: 0;
+        }
+
+        #ccFieldNumber { align-self: flex-start; max-width: calc(100% + 16px); }
+
+        .cc-field.is-focus {
+            background: rgba(255, 255, 255, 0.07);
+            box-shadow: 0 0 0 1px rgb(var(--c-glow) / 0.6), 0 0 22px -2px rgb(var(--c-accent) / 0.45);
+        }
+
+        .cc-number-display {
+            font-family: var(--font-mono);
+            font-size: clamp(0.95rem, 5.3cqi, 1.6rem);
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            word-spacing: 0.1em;
+            white-space: nowrap;
+            line-height: 1.2;
+            background: linear-gradient(180deg, #ffffff 0%, #e2e4ec 50%, #9da1b0 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.7)) drop-shadow(0 0 14px rgb(var(--c-accent) / 0.3));
+        }
+
+        .cc-footer-row { align-items: flex-end; text-transform: uppercase; }
+        .cc-footer-row > .cc-field:first-child { flex: 1; }
+
+        .cc-label {
+            font-family: var(--font-mono);
+            font-size: clamp(0.5rem, 2.1cqi, 0.6rem);
+            color: rgba(255, 255, 255, 0.5);
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            margin-bottom: 3px;
+        }
+
+        .cc-holder-display {
+            font-size: clamp(0.74rem, 3.4cqi, 0.95rem);
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #ffffff;
+            max-width: 60cqi;
+        }
+
+        .cc-holder-display.nx-mono { letter-spacing: 0.06em; }
+
+        /* Reverso */
+        .cc-back { transform: rotateY(180deg); }
+
+        .cc-back.cc-face {
+            background:
+                radial-gradient(110% 90% at -4% -6%, rgb(var(--c-accent) / 0.5) 0%, rgb(var(--c-accent-deep) / 0.4) 30%, transparent 58%),
+                radial-gradient(70% 80% at 108% 108%, rgb(var(--c-glow) / 0.22) 0%, transparent 58%),
+                repeating-linear-gradient(80deg, rgba(255, 255, 255, 0.02) 0 1px, transparent 1px 4px),
+                linear-gradient(208deg, #1d1e25 0%, #0b0b0f 42%, #16171d 68%, #07070a 100%);
+        }
+
+        .cc-stripe {
+            position: absolute !important;
+            left: 0;
+            right: 0;
+            top: 11%;
+            height: 19%;
+            background: linear-gradient(180deg, #030304 0%, #17171c 45%, #060607 100%);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        .cc-sign-row {
+            position: absolute !important;
+            left: 7%;
+            right: 7%;
+            top: 41%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .cc-sign {
+            flex: 1;
+            height: clamp(28px, 9cqi, 40px);
+            border-radius: 6px;
+            background: repeating-linear-gradient(-45deg, #ecedf2 0 6px, #d8d9e0 6px 12px);
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+        }
+
+        .cc-cvv-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-width: clamp(58px, 17cqi, 78px);
+            height: clamp(28px, 9cqi, 40px);
+            border-radius: 8px;
+            background: #ffffff;
+            color: #0b0b10;
+            box-shadow: 0 0 0 2px rgb(var(--c-accent)), 0 0 22px rgb(var(--c-accent) / 0.55);
+        }
+
+        .cc-cvv-box #ccDisplayCvc {
+            font-family: var(--font-mono);
+            font-size: clamp(0.8rem, 3.6cqi, 1rem);
+            font-weight: 700;
+            letter-spacing: 0.18em;
+            line-height: 1;
+        }
+
+        .cc-cvv-label {
+            position: absolute !important;
+            right: 7%;
+            top: 33%;
+            font-family: var(--font-mono);
+            font-size: clamp(0.5rem, 2.1cqi, 0.6rem);
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            color: rgba(255, 255, 255, 0.55);
+        }
+
+        .cc-back-foot {
+            position: absolute !important;
+            left: 7%;
+            right: 7%;
+            bottom: 9%;
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .cc-legal {
+            font-family: var(--font-mono);
+            font-size: clamp(0.46rem, 1.9cqi, 0.56rem);
+            line-height: 1.5;
+            letter-spacing: 0.04em;
+            color: rgba(255, 255, 255, 0.45);
+            max-width: 62%;
+        }
+
+        .cc-holo {
+            width: clamp(38px, 12cqi, 54px);
+            aspect-ratio: 1;
+            border-radius: 12px;
+            background:
+                radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.85), transparent 35%),
+                conic-gradient(from 200deg, rgb(var(--c-glow)), #ffffff, rgb(var(--c-accent)), rgb(var(--c-accent-deep)), rgb(var(--c-glow)));
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35), 0 6px 16px -4px rgb(var(--c-accent) / 0.6);
+            opacity: 0.9;
+        }
+
+        .cc-hint {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 34px;
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-sub);
+            text-align: center;
+        }
+
+        /* ==========================================================
+           Resumen del pedido
+           ========================================================== */
+        .order-panel { padding: 26px; border-radius: var(--radius-xl); }
+
+        .order-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 6px;
+        }
+
+        .order-head h3 { font-size: 1.15rem; font-weight: 800; letter-spacing: -0.035em; }
+        #cartItemCountBadge { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.04em; }
+
+        .order-item-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 15px 0;
+            border-bottom: 1px solid var(--card-border);
+            gap: 12px;
+        }
+
+        .order-item-idx {
+            font-family: var(--font-mono);
+            font-size: 0.66rem;
+            font-weight: 700;
+            color: var(--text-sub);
+            width: 30px;
+            height: 30px;
+            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            flex-shrink: 0;
+        }
+
+        .order-item-info { flex: 1; min-width: 0; }
+
+        .order-item-title { font-size: 0.88rem; font-weight: 700; line-height: 1.3; letter-spacing: -0.01em; }
+        .order-item-desc { font-size: 0.74rem; color: var(--text-dim); margin-top: 2px; }
+
+        .order-item-actions { display: flex; align-items: center; gap: 10px; margin-top: 9px; }
+
+        .qty-stepper {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px;
+            border-radius: 9999px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+        }
+
+        .qty-btn {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: none;
+            background: transparent;
+            color: var(--text-dim);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: var(--transition-fast);
+        }
+
+        .qty-btn:hover { background: var(--pill-hover); color: var(--text-main); }
+
+        .qty-val {
+            min-width: 24px;
+            text-align: center;
+            font-family: var(--font-mono);
+            font-size: 0.76rem;
+            font-weight: 700;
+        }
+
+        .order-remove {
+            border: none;
+            background: none;
+            padding: 4px 6px;
+            border-radius: 9999px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-sub);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: var(--transition-fast);
+        }
+
+        .order-remove:hover { color: var(--danger); background: var(--danger-light); }
+
+        .order-item-price {
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: var(--text-main);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .order-empty {
+            padding: 28px 12px;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.84rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .order-empty svg { color: var(--text-sub); }
+
+        .coupon-box { display: flex; gap: 8px; margin: 18px 0 14px; }
+        .coupon-box .form-input { flex: 1; min-width: 0; text-transform: uppercase; }
+        .coupon-box .btn-modern { flex-shrink: 0; }
+
+        #couponFeedback {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            margin: -4px 0 12px;
+            display: none;
+        }
+
+        .totals-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            font-size: 0.84rem;
+            margin-top: 4px;
+            padding-top: 16px;
+            border-top: 1px dashed var(--badge-border);
+        }
+
+        .totals-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+        .totals-row > span:first-child { color: var(--text-dim); }
+
+        .totals-row > span:last-child {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .totals-row.is-discount > span { color: var(--success) !important; }
+
+        .totals-total {
+            margin-top: 6px;
+            padding-top: 16px;
+            border-top: 1px solid var(--card-border);
+            align-items: flex-end;
+        }
+
+        .totals-total > span:first-child {
+            color: var(--text-main) !important;
+            font-weight: 800;
+            font-size: 0.95rem;
+            letter-spacing: -0.02em;
+        }
+
+        .total-amount { display: inline-flex; align-items: baseline; gap: 6px; }
+
+        #totalFinalVal {
+            font-family: var(--font-mono);
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            color: rgb(var(--c-accent));
+            text-shadow: 0 0 26px rgb(var(--c-accent) / 0.35);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .total-amount small {
+            font-family: var(--font-mono);
+            font-size: 0.66rem;
+            font-weight: 700;
+            color: var(--text-dim);
+            letter-spacing: 0.08em;
+        }
+
+        /* ==========================================================
+           Modal de éxito
+           ========================================================== */
+        .pay-success-card { max-width: 520px; }
+
+        .success-hero { text-align: center; padding: 6px 0 4px; }
+
+        .success-orb {
+            width: 68px;
+            height: 68px;
+            margin: 0 auto 16px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--success);
+            background: var(--success-light);
+            border: 1px solid var(--success-border);
+            box-shadow: 0 0 0 8px rgba(52, 211, 153, 0.06), 0 18px 40px -12px rgba(52, 211, 153, 0.55);
+        }
+
+        .success-orb path {
+            stroke-dasharray: 26;
+            stroke-dashoffset: 26;
+        }
+
+        .modal-overlay.active .success-orb path { animation: drawCheck 0.6s 0.25s var(--ease-out) forwards; }
+
+        @keyframes drawCheck { to { stroke-dashoffset: 0; } }
+
+        #modalConfirmedAmount {
+            font-family: var(--font-mono);
+            font-size: clamp(1.7rem, 6vw, 2.3rem);
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            color: var(--text-main);
+            line-height: 1.1;
+        }
+
+        .success-hero p { color: var(--text-dim); font-size: 0.86rem; margin-top: 6px; }
+
+        .receipt {
+            border-radius: 18px;
+            padding: 6px 18px;
+            background: var(--bg-muted);
+            border: 1px dashed var(--badge-border);
+        }
+
+        .receipt-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 11px 0;
+            border-bottom: 1px solid var(--card-border);
+            font-size: 0.82rem;
+            flex-wrap: wrap;
+        }
+
+        .receipt-row:last-child { border-bottom: none; }
+
+        .receipt-row > span:first-child {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        .receipt-row .nx-mono { font-size: 0.8rem; font-weight: 600; }
+
+        .success-note { font-size: 0.8rem; color: var(--text-dim); text-align: center; }
+
+        .pay-success-card .modal-footer { flex-wrap: wrap; }
+
+        /* ==========================================================
+           Responsive
+           ========================================================== */
+        @media (max-width: 950px) {
+            .checkout-layout { grid-template-columns: minmax(0, 1fr); }
+            /* En móvil la tarjeta va primero para verla mientras se escribe */
+            .checkout-aside { display: contents; }
+            .cc-stage { order: -1; margin-bottom: 8px; }
+            .payment-methods-selector { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        @media (max-width: 560px) {
+            .pay-head { margin-top: 28px; }
+            .checkout-form-panel, .order-panel { padding: 20px; }
+            .cfdi-grid { grid-template-columns: minmax(0, 1fr) !important; }
+            .cc-hint { margin-top: 28px; }
+            .pay-success-card .modal-footer .btn-modern { flex: 1 1 100%; }
+            .order-item-idx { display: none; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .cc-visual-card { transition: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main Navigation Bar -->
+    <header class="nexora-navbar">
+        <div class="brand-wrapper">
+            <a href="index.html" aria-label="JFast Suite, inicio">
+                <div class="brand-info">
+                    <h1>JFast <span>Suite</span></h1>
+                </div>
+            </a>
+        </div>
+
+        <nav class="nav-links-menu" id="navLinksMenu" aria-label="Módulos">
+            <a href="index.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+                <span>Inicio</span>
+            </a>
+            <a href="crm.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M9 3v18M15 9l3 3-3 3"/></svg>
+                <span>CRM</span>
+            </a>
+            <a href="social.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                <span>Red Social</span>
+            </a>
+            <a href="pagos.html" class="nav-pill-link active" aria-current="page">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="20" height="14" x="2" y="5" rx="3"/><path d="M2 10h20"/></svg>
+                <span>Pagos</span>
+            </a>
+            <a href="widgets.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="7" height="7" x="3" y="3" rx="2"/><rect width="7" height="7" x="14" y="3" rx="2"/><rect width="7" height="7" x="14" y="14" rx="2"/><rect width="7" height="7" x="3" y="14" rx="2"/></svg>
+                <span>Widgets</span>
+            </a>
+            <a href="tablas.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+                <span>Tablas ERP</span>
+            </a>
+        </nav>
+
+        <div class="navbar-actions">
+            <span class="nx-pill nx-hide-sm" style="font-size:0.72rem;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;stroke-width:2.2;color:var(--success);"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>SSL cifrado</span>
+            <button type="button" class="nx-round-btn" data-open-palette aria-label="Personalizar paleta" title="Personalizar paleta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;color:rgb(var(--c-accent));"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+            </button>
+            <button type="button" class="nx-round-btn theme-toggle-btn" onclick="toggleTheme()" aria-label="Cambiar tema"></button>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Encabezado -->
+        <div class="page-header-row pay-head">
+            <div class="page-title">
+                <span class="nx-eyebrow"><span class="nx-live-dot"></span>Checkout seguro · PCI-DSS Nivel 1</span>
+                <h1>Pasarela de pagos <span class="hero-title-faded">&amp; checkout B2B</span></h1>
+                <p>Procesamiento bancario cifrado de punta a punta, con factura CFDI generada al instante.</p>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn-modern btn-outline" onclick="fillTestCard()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;color:rgb(var(--c-accent));"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    Autocompletar tarjeta demo
+                </button>
+            </div>
+        </div>
+
+        <div class="checkout-layout">
+            <!-- Columna izquierda: formulario de pago -->
+            <div class="liquid-panel checkout-form-panel">
+                <div class="step-head">
+                    <span class="step-num">01</span>
+                    <div>
+                        <h2>Método de pago</h2>
+                        <p>Elige cómo quieres liquidar este pedido.</p>
+                    </div>
+                </div>
+
+                <div class="payment-methods-selector" role="group" aria-label="Método de pago">
+                    <button type="button" class="pay-tab-btn active" onclick="selectPayMethod('card', this)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+                        <span>Tarjeta</span>
+                    </button>
+                    <button type="button" class="pay-tab-btn" onclick="selectPayMethod('spei', this)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 14v3M12 14v3M16 14v3"/></svg>
+                        <span>SPEI / Wire</span>
+                    </button>
+                    <button type="button" class="pay-tab-btn" onclick="selectPayMethod('paypal', this)">
+                        <svg viewBox="0 0 24 24" fill="currentColor" class="icon-md">
+                            <path d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944 3.72a.78.78 0 0 1 .77-.656h6.495c3.217 0 5.405 1.583 5.035 4.966-.356 3.256-2.457 5.09-5.59 5.09H8.76a.78.78 0 0 0-.77.656l-.914 5.557zm4.512-14.887H6.945l-1.92 12.188h2.382l.707-4.478a1.56 1.56 0 0 1 1.54-1.312h1.61c2.518 0 4.2-1.468 4.48-3.978.278-2.493-1.306-3.42-4.156-3.42z"/>
+                        </svg>
+                        <span>PayPal</span>
+                    </button>
+                    <button type="button" class="pay-tab-btn" onclick="selectPayMethod('crypto', this)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 6v2m0 8v2"/></svg>
+                        <span>Cripto / USDC</span>
+                    </button>
+                </div>
+
+                <form id="paymentForm" onsubmit="processPayment(event)">
+                    <!-- Tarjeta -->
+                    <div id="method-card-panel">
+                        <div class="form-group">
+                            <label class="form-label" for="cardHolderInput">
+                                <span>Nombre en la tarjeta</span>
+                                <span class="form-hint">Tal como aparece en el plástico</span>
+                            </label>
+                            <input type="text" id="cardHolderInput" class="form-input" placeholder="Elena Valenzuela" autocomplete="cc-name" required oninput="syncCardHolder(this.value)">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="cardNumberInput">
+                                <span>Número de tarjeta</span>
+                                <span id="cardTypeDetect" class="card-detect">VISA / MASTERCARD</span>
+                            </label>
+                            <div class="input-with-icon">
+                                <input type="text" id="cardNumberInput" class="form-input nx-mono" placeholder="4532 •••• •••• 8921" maxlength="19" inputmode="numeric" autocomplete="cc-number" required oninput="handleCardNumberInput(this)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+                            </div>
+                        </div>
+
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label class="form-label" for="cardExpiryInput">
+                                    <span>Expiración</span>
+                                    <span class="form-hint">MM/AA</span>
+                                </label>
+                                <input type="text" id="cardExpiryInput" class="form-input nx-mono" placeholder="12/28" maxlength="5" inputmode="numeric" autocomplete="cc-exp" required oninput="handleExpiryInput(this)">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="cardCvcInput">
+                                    <span>CVC</span>
+                                    <span class="form-hint">3 o 4 dígitos</span>
+                                </label>
+                                <input type="password" id="cardCvcInput" class="form-input nx-mono" placeholder="•••" maxlength="4" inputmode="numeric" autocomplete="cc-csc" required oninput="syncCvc(this.value)">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SPEI -->
+                    <div id="method-spei-panel" class="pay-inset" style="display: none;">
+                        <span class="nx-eyebrow">SPEI · Acreditación en segundos</span>
+                        <h4>Transferencia bancaria inmediata</h4>
+                        <p>Transfiere desde cualquier app bancaria a esta cuenta CLABE autorizada.</p>
+                        <div class="spei-sheet">
+                            <div class="spei-row spei-clabe">
+                                <span class="spei-k">CLABE</span>
+                                <span class="spei-clabe-wrap">
+                                    <span class="spei-v">012180001928374652</span>
+                                    <button type="button" class="btn-modern btn-outline btn-xs" onclick="navigator.clipboard.writeText('012180001928374652'); showToast('Copiado', 'CLABE copiada al portapapeles.', 'success');">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;stroke-width:2.2;"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                        Copiar
+                                    </button>
+                                </span>
+                            </div>
+                            <div class="spei-row">
+                                <span class="spei-k">Banco receptor</span>
+                                <span class="spei-v">BBVA México / JFast Pay STP</span>
+                            </div>
+                            <div class="spei-row">
+                                <span class="spei-k">Beneficiario</span>
+                                <span class="spei-v">JFast Technologies S.A. de C.V.</span>
+                            </div>
+                            <div class="spei-row">
+                                <span class="spei-k">Referencia</span>
+                                <span class="spei-v nx-mono">NX-2026-9481</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="step-divider"></div>
+
+                    <div class="step-head">
+                        <span class="step-num">02</span>
+                        <div>
+                            <h2>Facturación</h2>
+                            <p>Timbrado CFDI 4.0 en el mismo instante del cobro.</p>
+                        </div>
+                    </div>
+
+                    <!-- Factura CFDI -->
+                    <div class="pay-inset">
+                        <div class="cfdi-row">
+                            <div>
+                                <strong>¿Requieres factura fiscal (CFDI)?</strong>
+                                <p>Generamos automáticamente el XML y el PDF oficiales.</p>
+                            </div>
+                            <label class="toggle-switch" aria-label="Requiero factura CFDI">
+                                <input type="checkbox" id="cfdiToggle" onchange="toggleCfdiFields(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+
+                        <div id="cfdiFields" style="display: none;">
+                            <div class="cfdi-grid" style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;">
+                                <div class="form-group">
+                                    <label class="form-label" for="cfdiRfcInput">RFC / Tax ID</label>
+                                    <input type="text" id="cfdiRfcInput" class="form-input nx-mono" placeholder="LOUA850423H82" style="text-transform: uppercase;">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="cfdiRazonInput">Razón social</label>
+                                    <input type="text" id="cfdiRazonInput" class="form-input" placeholder="Logística Austral S.A. de C.V.">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="btnSubmitPayment" class="btn-modern btn-primary btn-pay">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm pay-lock" style="stroke-width:2.2;"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        <span id="btnPayText">Pagar $4,850.00 USD</span>
+                        <span id="btnPaySpinner" class="btn-spinner" style="display: none;"></span>
+                    </button>
+                </form>
+
+                <div class="security-badges">
+                    <span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;color:var(--success);stroke-width:2.2;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        Cifrado AES-256
+                    </span>
+                    <span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;color:rgb(var(--c-accent));stroke-width:2.2;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14.01l-3-3"/></svg>
+                        3D Secure 2.0
+                    </span>
+                    <span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;color:var(--info);stroke-width:2.2;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                        Liquidación inmediata
+                    </span>
+                </div>
+            </div>
+
+            <!-- Columna derecha: tarjeta 3D y resumen -->
+            <div class="checkout-aside">
+                <div class="cc-stage">
+                    <div class="cc-scene" id="ccScene" data-tilt>
+                        <div class="cc-visual-card" id="visualCreditCard" role="button" tabindex="0" aria-label="Vista previa de la tarjeta. Pulsa para voltearla.">
+                            <!-- Frente -->
+                            <div class="cc-face cc-front">
+                                <div class="cc-top-row">
+                                    <span class="cc-issuer">JFast <small>Corporate</small></span>
+                                    <span class="cc-brand-badge" id="cardBrandText">CorpCard</span>
+                                </div>
+
+                                <div class="cc-chip-row">
+                                    <div class="cc-chip"></div>
+                                    <svg class="cc-contactless" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="M8.5 7.5a6 6 0 0 1 0 9M12 5a9.5 9.5 0 0 1 0 14M15.5 2.5a13 13 0 0 1 0 19M5 10a2.5 2.5 0 0 1 0 4"/></svg>
+                                </div>
+
+                                <div class="cc-field" id="ccFieldNumber">
+                                    <div class="cc-number-display" id="ccDisplayNumber">•••• •••• •••• ••••</div>
+                                </div>
+
+                                <div class="cc-footer-row">
+                                    <div class="cc-field" id="ccFieldHolder">
+                                        <div class="cc-label">Titular</div>
+                                        <div class="cc-holder-display" id="ccDisplayHolder">ELENA VALENZUELA</div>
+                                    </div>
+                                    <div class="cc-field" id="ccFieldExpiry">
+                                        <div class="cc-label">Válida hasta</div>
+                                        <div class="cc-holder-display nx-mono" id="ccDisplayExpiry">12/28</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Reverso -->
+                            <div class="cc-face cc-back" aria-hidden="true">
+                                <div class="cc-stripe"></div>
+                                <span class="cc-cvv-label">CVV</span>
+                                <div class="cc-sign-row">
+                                    <div class="cc-sign"></div>
+                                    <div class="cc-cvv-box"><span id="ccDisplayCvc">•••</span></div>
+                                </div>
+                                <div class="cc-back-foot">
+                                    <p class="cc-legal">JFast Pay · Uso exclusivo corporativo.<br>Soporte 24/7 · +52 55 0000 0000</p>
+                                    <div class="cc-holo"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cc-hint">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:12px;height:12px;stroke-width:2.2;"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                        El CVC voltea la tarjeta · clic para girarla
+                    </div>
+                </div>
+
+                <!-- Resumen del pedido -->
+                <div class="liquid-panel order-panel">
+                    <div class="order-head">
+                        <h3>Resumen del pedido</h3>
+                        <span class="badge-status status-processing" id="cartItemCountBadge">3 Artículos</span>
+                    </div>
+
+                    <div id="orderItemsListContainer">
+                        <!-- Se renderiza con JS -->
+                    </div>
+
+                    <div class="coupon-box">
+                        <input type="text" id="couponCodeInput" class="form-input nx-mono" placeholder="Cupón · prueba JFAST20" aria-label="Código de cupón (prueba JFAST20 o BIENVENIDO10)">
+                        <button type="button" class="btn-modern btn-outline" onclick="applyPromoCode()">Aplicar</button>
+                    </div>
+                    <div id="couponFeedback"></div>
+
+                    <div class="totals-list">
+                        <div class="totals-row">
+                            <span>Subtotal</span>
+                            <span id="subtotalVal">$4,850.00</span>
+                        </div>
+                        <div class="totals-row is-discount" id="discountRow" style="display: none;">
+                            <span>Descuento promocional</span>
+                            <span id="discountVal">-$0.00</span>
+                        </div>
+                        <div class="totals-row">
+                            <span>IVA (16 %)</span>
+                            <span id="taxVal">$776.00</span>
+                        </div>
+                        <div class="totals-row totals-total">
+                            <span>Total a liquidar</span>
+                            <span class="total-amount"><span id="totalFinalVal">$5,626.00</span><small>USD</small></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de confirmación -->
+    <div id="modalPaymentSuccess" class="modal-overlay" style="display: none;">
+        <div class="modal-card pay-success-card" role="dialog" aria-modal="true" aria-labelledby="paySuccessTitle">
+            <div class="modal-header">
+                <div>
+                    <span class="nx-eyebrow" style="color: var(--success);">Pago aprobado</span>
+                    <h3 id="paySuccessTitle">Transacción exitosa</h3>
+                </div>
+                <button class="modal-close-btn" onclick="closeModal('modalPaymentSuccess')" aria-label="Cerrar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2.2;"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="success-hero">
+                    <div class="success-orb">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:30px;height:30px;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;"><path d="M20 6 9 17l-5-5"/></svg>
+                    </div>
+                    <div id="modalConfirmedAmount">$5,626.00 USD</div>
+                    <p>El cobro fue aprobado y liquidado correctamente.</p>
+                </div>
+
+                <div class="receipt">
+                    <div class="receipt-row">
+                        <span>Folio de autorización</span>
+                        <strong class="nx-mono" id="authCodeDisplay">AUTH-9482910</strong>
+                    </div>
+                    <div class="receipt-row">
+                        <span>Fecha y hora</span>
+                        <span class="nx-mono" id="authDateDisplay">28 Sep 2026, 17:45 hrs</span>
+                    </div>
+                    <div class="receipt-row">
+                        <span>Método</span>
+                        <span class="nx-mono" id="authMethodDisplay">Tarjeta terminación 8921</span>
+                    </div>
+                    <div class="receipt-row">
+                        <span>Estado fiscal</span>
+                        <span class="badge-status status-completed"><span class="status-dot"></span>CFDI 4.0 generado</span>
+                    </div>
+                </div>
+
+                <p class="success-note">
+                    Enviamos el recibo de compra y los archivos fiscales a tu correo corporativo.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-modern btn-outline" onclick="downloadReceipt()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+                    Descargar comprobante PDF
+                </button>
+                <button class="btn-modern btn-primary" onclick="closeModal('modalPaymentSuccess'); window.location.href='tablas.html'">
+                    Ver en Tablas ERP
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2.2;"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="assets/js/nexora-common.js"></script>
+    <script>
+        // Dynamic Cart State
+        let cartItems = [
+            { id: 1, name: 'Servidor Rack 2U Dell PowerEdge R740', desc: 'Xeon Silver 4210R, 64GB ECC RAM, 2x 960GB NVMe', price: 3850.00, qty: 1 },
+            { id: 2, name: 'Módulo Switch Cisco Catalyst 9200', desc: '24 Puertos Gigabit PoE+ Capa 3', price: 750.00, qty: 1 },
+            { id: 3, name: 'Licencia JFast ERP Enterprise (Anual)', desc: 'Usuarios ilimitados y soporte crítico 24/7', price: 250.00, qty: 1 }
+        ];
+
+        let subtotal = 4850.00;
+        let discount = 0.00;
+        let taxRate = 0.16;
+
+        function renderCart() {
+            const container = document.getElementById('orderItemsListContainer');
+            const totalQty = cartItems.reduce((acc, item) => acc + item.qty, 0);
+            document.getElementById('cartItemCountBadge').textContent = `${totalQty} Artículo(s)`;
+
+            if (cartItems.length === 0) {
+                container.innerHTML = `
+                    <div class="order-empty">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:26px;height:26px;stroke-width:1.8;"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
+                        El carrito está vacío. Agrega productos para cotizar.
+                    </div>
+                `;
+                subtotal = 0;
+                discount = 0;
+                updateTotals();
+                return;
+            }
+
+            container.innerHTML = cartItems.map((item, idx) => `
+                <div class="order-item-row">
+                    <span class="order-item-idx">${String(idx + 1).padStart(2, '0')}</span>
+                    <div class="order-item-info">
+                        <div class="order-item-title">${item.name}</div>
+                        <div class="order-item-desc">${item.desc}</div>
+                        <div class="order-item-actions">
+                            <div class="qty-stepper">
+                                <button type="button" class="qty-btn" aria-label="Quitar uno" onclick="changeCartQty(${idx}, -1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:12px;height:12px;stroke-width:2.5;"><path d="M5 12h14"/></svg></button>
+                                <span class="qty-val">${item.qty}</span>
+                                <button type="button" class="qty-btn" aria-label="Agregar uno" onclick="changeCartQty(${idx}, 1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:12px;height:12px;stroke-width:2.5;"><path d="M12 5v14M5 12h14"/></svg></button>
+                            </div>
+                            <button type="button" class="order-remove" onclick="removeCartItem(${idx})"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:12px;height:12px;stroke-width:2.2;"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Eliminar</button>
+                        </div>
+                    </div>
+                    <div class="order-item-price">$${(item.price * item.qty).toLocaleString('en-US', {minimumFractionDigits: 2})}</div>
+                </div>
+            `).join('');
+
+            subtotal = cartItems.reduce((acc, item) => acc + (item.price * item.qty), 0);
+            updateTotals();
+        }
+
+        function changeCartQty(idx, delta) {
+            cartItems[idx].qty += delta;
+            if (cartItems[idx].qty <= 0) {
+                cartItems.splice(idx, 1);
+            }
+            renderCart();
+        }
+
+        function removeCartItem(idx) {
+            const removed = cartItems.splice(idx, 1);
+            renderCart();
+            showToast('Carrito', `${removed[0].name} retirado del pedido.`, 'info');
+        }
+
+        function updateTotals() {
+            const tax = (subtotal - discount) * taxRate;
+            const total = Math.max(0, (subtotal - discount) + tax);
+
+            document.getElementById('subtotalVal').textContent = `$${subtotal.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+            document.getElementById('discountVal').textContent = `-$${discount.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+            document.getElementById('taxVal').textContent = `$${tax.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+            document.getElementById('totalFinalVal').textContent = `$${total.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+            document.getElementById('btnPayText').textContent = `Pagar $${total.toLocaleString('en-US', {minimumFractionDigits: 2})} USD`;
+            document.getElementById('modalConfirmedAmount').textContent = `$${total.toLocaleString('en-US', {minimumFractionDigits: 2})} USD`;
+        }
+
+        // Card sync
+        function handleCardNumberInput(input) {
+            let val = input.value.replace(/\D/g, '');
+            let formatted = val.replace(/(.{4})/g, '$1 ').trim();
+            input.value = formatted;
+
+            const display = document.getElementById('ccDisplayNumber');
+            display.textContent = formatted.length > 0 ? formatted : '•••• •••• •••• ••••';
+
+            // Detect Visa / Master
+            const brand = document.getElementById('cardBrandText');
+            if (val.startsWith('4')) {
+                brand.textContent = 'VISA';
+                document.getElementById('cardTypeDetect').textContent = 'VISA DETECTADA';
+            } else if (val.startsWith('5')) {
+                brand.textContent = 'MASTERCARD';
+                document.getElementById('cardTypeDetect').textContent = 'MASTERCARD DETECTADA';
+            } else if (val.startsWith('3')) {
+                brand.textContent = 'AMEX';
+                document.getElementById('cardTypeDetect').textContent = 'AMERICAN EXPRESS';
+            } else {
+                brand.textContent = 'CorpCard';
+                document.getElementById('cardTypeDetect').textContent = 'TARJETA CRÉDITO / DÉBITO';
+            }
+        }
+
+        function handleExpiryInput(input) {
+            let val = input.value.replace(/\D/g, '');
+            if (val.length >= 2) {
+                val = val.substring(0, 2) + '/' + val.substring(2, 4);
+            }
+            input.value = val;
+            document.getElementById('ccDisplayExpiry').textContent = val.length > 0 ? val : '12/28';
+        }
+
+        function syncCardHolder(val) {
+            document.getElementById('ccDisplayHolder').textContent = val.trim().length > 0 ? val.toUpperCase() : 'ELENA VALENZUELA';
+        }
+
+        function syncCvc(val) {
+            document.getElementById('ccDisplayCvc').textContent = val.length > 0 ? val.replace(/./g, '•') : '•••';
+            const card = document.getElementById('visualCreditCard');
+            card.classList.toggle('has-cvc', val.length > 0);
+        }
+
+        function toggleCfdiFields(checked) {
+            document.getElementById('cfdiFields').style.display = checked ? 'block' : 'none';
+        }
+
+        function selectPayMethod(method, btn) {
+            document.querySelectorAll('.pay-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            if (method === 'card') {
+                document.getElementById('method-card-panel').style.display = 'block';
+                document.getElementById('method-spei-panel').style.display = 'none';
+            } else if (method === 'spei') {
+                document.getElementById('method-card-panel').style.display = 'none';
+                document.getElementById('method-spei-panel').style.display = 'block';
+            } else {
+                document.getElementById('method-card-panel').style.display = 'block';
+                document.getElementById('method-spei-panel').style.display = 'none';
+                showToast(method.toUpperCase(), `Método ${method.toUpperCase()} seleccionado.`, 'info');
+            }
+
+            // Con SPEI los campos de tarjeta quedan ocultos: si siguen siendo
+            // required el navegador bloquea el envío sin mostrar el error.
+            document.querySelectorAll('#method-card-panel input').forEach(input => {
+                input.required = method !== 'spei';
+            });
+        }
+
+        function fillTestCard() {
+            document.getElementById('cardHolderInput').value = 'Elena Valenzuela';
+            syncCardHolder('Elena Valenzuela');
+
+            const numberInput = document.getElementById('cardNumberInput');
+            numberInput.value = '4532 8920 1823 8921';
+            handleCardNumberInput(numberInput);
+
+            const expInput = document.getElementById('cardExpiryInput');
+            expInput.value = '10/29';
+            handleExpiryInput(expInput);
+
+            document.getElementById('cardCvcInput').value = '849';
+            syncCvc('849');
+
+            showToast('Demo Lista', 'Datos de tarjeta de prueba cargados correctamente.', 'success');
+        }
+
+        function applyPromoCode() {
+            const code = document.getElementById('couponCodeInput').value.trim().toUpperCase();
+            const feedback = document.getElementById('couponFeedback');
+            const discountRow = document.getElementById('discountRow');
+
+            if (code === 'JFAST20') {
+                discount = subtotal * 0.20;
+                discountRow.style.display = 'flex';
+                feedback.style.display = 'block';
+                feedback.style.color = 'var(--success)';
+                feedback.textContent = `✓ ¡Cupón JFAST20 aplicado! 20% de descuento ($${discount.toFixed(2)} USD).`;
+                showToast('Cupón Válido', 'Descuento del 20% aplicado a la orden.', 'success');
+            } else if (code === 'BIENVENIDO10') {
+                discount = subtotal * 0.10;
+                discountRow.style.display = 'flex';
+                feedback.style.display = 'block';
+                feedback.style.color = 'var(--success)';
+                feedback.textContent = `✓ ¡Cupón BIENVENIDO10 aplicado! 10% de descuento ($${discount.toFixed(2)} USD).`;
+                showToast('Cupón Válido', 'Descuento del 10% aplicado.', 'success');
+            } else if (code === 'VIP50') {
+                discount = subtotal * 0.50;
+                discountRow.style.display = 'flex';
+                feedback.style.display = 'block';
+                feedback.style.color = 'var(--success)';
+                feedback.textContent = `✓ ¡Cupón VIP50 activado! 50% de descuento especial ($${discount.toFixed(2)} USD).`;
+                showToast('Cupón VIP', '50% de descuento especial aplicado.', 'success');
+            } else if (code === '') {
+                feedback.style.display = 'none';
+                discount = 0;
+                discountRow.style.display = 'none';
+            } else {
+                discount = 0;
+                discountRow.style.display = 'none';
+                feedback.style.display = 'block';
+                feedback.style.color = 'var(--danger)';
+                feedback.textContent = '✕ Código no válido o expirado. Prueba con JFAST20 o BIENVENIDO10';
+                showToast('Cupón Inválido', 'El código ingresado no existe.', 'warning');
+            }
+            updateTotals();
+        }
+
+        function processPayment(e) {
+            e.preventDefault();
+            const btn = document.getElementById('btnSubmitPayment');
+            const text = document.getElementById('btnPayText');
+            const spinner = document.getElementById('btnPaySpinner');
+
+            text.textContent = 'Autorizando con el Banco Central...';
+            spinner.style.display = 'inline-block';
+            btn.disabled = true;
+
+            setTimeout(() => {
+                spinner.style.display = 'none';
+                btn.disabled = false;
+                text.textContent = 'Pago Procesado ✓';
+                
+                // Set modal random auth
+                const randomAuth = 'AUTH-' + Math.floor(1000000 + Math.random() * 9000000);
+                document.getElementById('authCodeDisplay').textContent = randomAuth;
+                const now = new Date();
+                document.getElementById('authDateDisplay').textContent = `${now.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}, ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')} hrs`;
+
+                openModal('modalPaymentSuccess');
+                showToast('Transacción Aprobada', 'El pago fue procesado con éxito.', 'success');
+            }, 1600);
+        }
+
+        function downloadReceipt() {
+            const auth = document.getElementById('authCodeDisplay').textContent;
+            showToast('Descargando', `Generando archivo PDF para ${auth}...`, 'info');
+            setTimeout(() => {
+                showToast('Comprobante', 'Comprobante bancario descargado en tu dispositivo.', 'success');
+            }, 1200);
+        }
+
+        // Tarjeta 3D: el CVC la voltea, brillo que sigue al cursor y realce del campo que se edita
+        (function initCardPreview() {
+            const card = document.getElementById('visualCreditCard');
+            const scene = document.getElementById('ccScene');
+            let pulseTimer;
+            const pulse = () => {
+                card.classList.add('cc-pulse');
+                clearTimeout(pulseTimer);
+                pulseTimer = setTimeout(() => card.classList.remove('cc-pulse'), 420);
+            };
+            const setFlip = (on) => card.classList.toggle('is-flipped', on);
+
+            const fieldMap = { cardNumberInput: 'ccFieldNumber', cardHolderInput: 'ccFieldHolder', cardExpiryInput: 'ccFieldExpiry' };
+            Object.entries(fieldMap).forEach(([inputId, fieldId]) => {
+                const input = document.getElementById(inputId);
+                const field = document.getElementById(fieldId);
+                input.addEventListener('focus', () => { setFlip(false); field.classList.add('is-focus'); });
+                input.addEventListener('blur', () => field.classList.remove('is-focus'));
+                input.addEventListener('input', pulse);
+            });
+
+            const cvc = document.getElementById('cardCvcInput');
+            cvc.addEventListener('focus', () => setFlip(true));
+            cvc.addEventListener('blur', () => setFlip(false));
+            cvc.addEventListener('input', pulse);
+
+            card.addEventListener('click', () => card.classList.toggle('is-flipped'));
+            card.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.classList.toggle('is-flipped'); }
+            });
+
+            scene.addEventListener('mousemove', (e) => {
+                const r = scene.getBoundingClientRect();
+                card.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100).toFixed(1) + '%');
+                card.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100).toFixed(1) + '%');
+            });
+            scene.addEventListener('mouseleave', () => {
+                card.style.removeProperty('--mx');
+                card.style.removeProperty('--my');
+            });
+        })();
+
+        // Initialize calculations and cart render
+        renderCart();
+    </script>
+</body>
+</html>

@@ -92,13 +92,13 @@ class InfraService:
     # How a service on the same compose network reaches this container:
     # ``{"JFAST_DB_DSN": "postgresql+asyncpg://app:${POSTGRES_PASSWORD}@postgres:5432/app"}``.
     #
-    # The container was always derived from the plugin graph and the connection
-    # string never was, so `jfast deploy compose` wrote a file whose api service
-    # loaded a `.env` still pointing at `localhost` -- which inside a container
-    # is that container. A crash loop on a fresh project, on the first command
-    # the scaffold tells you to run. The workspace generator already derived
-    # this (`resources.Resource.dsn`); this is the same fact, declared where the
-    # single-service generator can see it.
+    # The container is derived from the plugin graph, so the connection string
+    # has to be too: otherwise `jfast deploy compose` writes a file whose api
+    # service loads a `.env` still pointing at `localhost` -- which inside a
+    # container is that container. A crash loop on a fresh project, on the
+    # first command the scaffold tells you to run. The workspace generator
+    # derives this through `resources.Resource.dsn`; this is the same fact,
+    # declared where the single-service generator can see it.
     #
     # Hostname and internal port, never the published one: the published port is
     # for a client on the host, and this value is only ever read by a container

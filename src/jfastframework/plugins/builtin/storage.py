@@ -256,7 +256,8 @@ class StoragePlugin(Plugin):
     def _read_disk_config(self, name: str, raw: dict[str, Any]) -> DiskConfig:
         """Turn one disk's table into a `DiskConfig`, or fail at startup.
 
-        Everything in here is a configuration mistake that used to be silent.
+        Everything in here is a configuration mistake that would otherwise be
+        silent.
         A key nobody reads produces no error and no behaviour, and the only
         symptom is the feature you thought you turned on not being on.
         """

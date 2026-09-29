@@ -1,0 +1,77 @@
+// What sits behind the app: the 3D liquid ribbon, the still 2D frame, or
+// nothing at all.
+//
+// The choice lives on <html> as `data-backdrop`, and nexora.css hides what it
+// does not want, so switching costs one attribute. background.js listens for
+// `nexora:backdrop` and loads or drops three.js to match -- "2D" and "off"
+// never download it.
+//
+// Three sources, first one set wins, as with the accent:
+//
+//   1. the viewer's own choice, from the picker, kept in localStorage;
+//   2. VITE_BACKGROUND in .env (liquid, still or none) -- the project's default;
+//   3. liquid.
+//
+// index.html replays 1 and 2 before the first paint, so a page set to "off"
+// does not flash the ribbon's still frame on every reload.
+
+// Scoped to this app, like the theme and accent keys.
+export const BACKDROP_KEY = '{{ service_slug }}:backdrop'
+
+export const BACKDROPS = [
+  { value: 'liquid', label: '3D' },
+  { value: 'still', label: '2D' },
+  { value: 'none', label: 'Off' },
+]
+
+const VALUES = BACKDROPS.map((backdrop) => backdrop.value)
+
+function isBackdrop(value) {
+  return VALUES.includes(value)
+}
+
+/** The project's default: VITE_BACKGROUND, or the ribbon. */
+export function defaultBackdrop() {
+  const configured = (import.meta.env.VITE_BACKGROUND ?? '').trim().toLowerCase()
+  return isBackdrop(configured) ? configured : 'liquid'
+}
+
+/** The backdrop in effect: the viewer's choice, else the project's default. */
+export function currentBackdrop() {
+  try {
+    const stored = localStorage.getItem(BACKDROP_KEY)
+    if (isBackdrop(stored)) return stored
+  } catch {
+    // Storage throws in some privacy modes; the default is the right answer.
+  }
+  return defaultBackdrop()
+}
+
+function apply(value) {
+  document.documentElement.setAttribute('data-backdrop', value)
+  document.dispatchEvent(new CustomEvent('nexora:backdrop', { detail: value }))
+}
+
+/** Put the backdrop in effect on <html>. Call once at startup. */
+export function restoreBackdrop() {
+  document.documentElement.setAttribute('data-backdrop', currentBackdrop())
+}
+
+export function setBackdrop(value) {
+  if (!isBackdrop(value)) return
+  try {
+    localStorage.setItem(BACKDROP_KEY, value)
+  } catch {
+    // Not remembered, but still applied for this visit.
+  }
+  apply(value)
+}
+
+export function resetBackdrop() {
+  try {
+    localStorage.removeItem(BACKDROP_KEY)
+  } catch {
+    // Nothing stored that could be removed.
+  }
+  apply(defaultBackdrop())
+}

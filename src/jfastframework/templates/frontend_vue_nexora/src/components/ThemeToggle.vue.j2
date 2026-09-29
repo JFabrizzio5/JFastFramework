@@ -1,0 +1,45 @@
+<template>
+  <div class="flex items-center gap-2">
+    <!-- Shown only once the choice is pinned, which is also the only time it
+         does anything. It is not optional polish: the button beside it can
+         only ever pin light or dark, so without this one nothing in the app
+         can reach 'system' again and the first click is permanent. -->
+    <button v-if="theme !== 'system'" type="button" class="nx-round-btn" aria-label="Follow the system theme"
+      title="Follow the system theme" @click="followSystem">
+      <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <path d="M8 21h8M12 17v4" />
+      </svg>
+    </button>
+
+    <button type="button" class="nx-round-btn" :aria-label="label" :title="label" @click="toggleTheme">
+      <svg v-if="resolved === 'dark'" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+      </svg>
+      <svg v-else class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9" />
+      </svg>
+    </button>
+  </div>
+</template>
+
+<script setup>
+import { computed } from 'vue'
+
+import { useTheme } from '@/composables/useTheme.js'
+
+// The icon shows the destination, not the current state: a sun means "switch
+// to light". A button whose icon does not change when you press it reads as
+// broken, and this one changes either way.
+const { theme, resolved, toggleTheme, followSystem } = useTheme()
+
+// Named, not just drawn. A bare icon button is invisible to a screen reader,
+// and the title makes it discoverable with a mouse too.
+const label = computed(() =>
+  resolved.value === 'dark' ? 'Switch to the light studio' : 'Switch to the dark studio',
+)
+</script>

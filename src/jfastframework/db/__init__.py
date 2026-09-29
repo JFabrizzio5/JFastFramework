@@ -6,8 +6,10 @@ from jfastframework.db.base import (
     TenantMixin,
     TimestampMixin,
     UTCDateTime,
+    VersionedMixin,
 )
 from jfastframework.db.repository import BaseRepository, Cursor, Page
+from jfastframework.db.transactions import advisory_lock, run_in_transaction
 
 __all__ = [
     "NAMING_CONVENTION",
@@ -18,4 +20,7 @@ __all__ = [
     "TenantMixin",
     "TimestampMixin",
     "UTCDateTime",
+    "VersionedMixin",
+    "advisory_lock",
+    "run_in_transaction",
 ]

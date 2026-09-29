@@ -362,8 +362,10 @@ Install: `pip install jfastframework[oidc]`.
 
 ## What is not here
 
-- **A user store, password hashing, MFA, lockout.** Application concerns.
-  Social login stops at a verified identity; turning that into a user is yours.
+- **A user store, password login, roles.** Not in this plugin, on purpose: it
+  verifies and mints tokens and nothing else. The [accounts](accounts.md)
+  plugin is the user store, and registers this plugin's `on_refresh` and
+  `on_identity` hooks for you. MFA is in neither.
 - **PKCE.** The authorization-code flow here is the confidential-client one,
   run from your backend with a client secret. A public client (a mobile app
   talking to Google directly) needs PKCE, which is not implemented.

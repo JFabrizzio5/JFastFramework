@@ -1,0 +1,159 @@
+<template>
+  <div class="nx-shell">
+    <!-- One <nav> for both breakpoints: a glass sidebar on desktop, the same
+         element as a drawer below 960px. Two lists of links -- a sidebar and a
+         separate mobile menu -- drift apart the first time somebody adds a
+         page to one of them. -->
+    <aside class="nx-sidebar" :class="open && 'is-open'">
+      <div class="nx-sidebar-brand">
+        <RouterLink to="/" class="nx-logo" @click="open = false">{{ appName }}</RouterLink>
+        <span class="nx-sidebar-sub" title="VITE_API_URL">{{ apiHost }}</span>
+      </div>
+
+      <nav class="nx-sidebar-menu" aria-label="Main navigation">
+        <span class="nx-nav-label">Workspace</span>
+        <RouterLink v-for="item in menu" :key="item.to" :to="item.to" class="nav-sublink"
+          active-class="is-active" @click="open = false">
+          <BaseIcon v-if="item.icon" :path="item.icon" size="sm" />
+          <span>{{ item.label }}</span>
+        </RouterLink>
+      </nav>
+
+      <div class="nx-sidebar-footer">
+        <span class="nx-avatar" aria-hidden="true">{{ initials }}</span>
+        <div class="nx-user">
+          <p class="nx-user-name">{{ userName }}</p>
+          <p class="nx-user-role">{{ auth.isAuthenticated ? 'Signed in' : 'Not signed in' }}</p>
+        </div>
+        <button v-if="auth.isAuthenticated" type="button" class="nx-round-btn" aria-label="Sign out"
+          title="Sign out" @click="signOut">
+          <BaseIcon :path="mdiLogout" size="sm" />
+        </button>
+        <RouterLink v-else :to="LOGIN_ROUTE" class="nx-round-btn" aria-label="Sign in" title="Sign in">
+          <BaseIcon :path="mdiLogin" size="sm" />
+        </RouterLink>
+      </div>
+    </aside>
+
+    <!-- Drawer only. Tapping outside to close is the gesture people already
+         have. -->
+    <div v-if="open" class="nx-scrim" aria-hidden="true" @click="open = false" />
+
+    <div class="nx-main">
+      <header class="nx-topbar">
+        <div class="nx-topbar-group">
+          <button type="button" class="nx-round-btn nx-menu-toggle" :aria-expanded="menuShown"
+            aria-label="Toggle navigation" @click="toggleMenu">
+            <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h10" />
+            </svg>
+          </button>
+          <span class="nx-topbar-title">{{ route.meta?.title ?? appName }}</span>
+        </div>
+
+        <div class="nx-topbar-group">
+          <AccentPicker />
+          <ThemeToggle />
+        </div>
+      </header>
+
+      <main class="nx-content">
+        <slot />
+      </main>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { mdiLogin, mdiLogout } from '@mdi/js'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+
+import AccentPicker from '@/components/AccentPicker.vue'
+import BaseIcon from '@/components/BaseIcon.vue'
+import ThemeToggle from '@/components/ThemeToggle.vue'
+import menu from '@/menuAside.js'
+import { APP_NAME as appName } from '@/nexora/brand.js'
+import { DESKTOP_QUERY, isCollapsed, setCollapsed } from '@/nexora/sidebar.js'
+import { LOGIN_ROUTE, useAuthStore } from '@/stores/auth.store.js'
+
+// Which backend this build calls: the first thing to check when a panel is
+// empty, so it sits under the name rather than in a settings page.
+const apiHost = (import.meta.env.VITE_API_URL ?? '').replace(/^https?:\/\//, '') || '/'
+const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
+
+// Whatever the backend put on the session. Nothing is assumed about its shape
+// beyond these two common fields.
+const userName = computed(() => auth.user?.name ?? auth.user?.email ?? 'Guest')
+const initials = computed(() =>
+  userName.value
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join(''),
+)
+
+async function signOut() {
+  await auth.logout()
+  await router.replace(LOGIN_ROUTE)
+}
+
+// Closed at load, at every width. Past the breakpoint the sidebar is static
+// and this only governs the drawer.
+const open = ref(false)
+
+// The drawer covers the page, so the page behind it must stop scrolling --
+// same lock BaseModal.vue uses, and for the same reason: without it a swipe
+// aimed at the menu scrolls the article underneath and the menu slides away
+// with it. The previous value is restored rather than cleared, so a modal that
+// was already holding the lock keeps it.
+let previousOverflow = ''
+watch(open, (isOpen) => {
+  if (isOpen) {
+    previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+  } else {
+    document.body.style.overflow = previousOverflow
+  }
+})
+
+// One button, two jobs. Past 960px it folds the sidebar away and back, and
+// sidebar.js remembers it; below, it opens and closes the drawer.
+const desktop = window.matchMedia(DESKTOP_QUERY)
+const isDesktop = ref(desktop.matches)
+const collapsed = ref(isCollapsed())
+const menuShown = computed(() => (isDesktop.value ? !collapsed.value : open.value))
+
+function toggleMenu() {
+  if (isDesktop.value) {
+    collapsed.value = !collapsed.value
+    setCollapsed(collapsed.value)
+  } else {
+    open.value = !open.value
+  }
+}
+
+// `open` outlives the breakpoint that made it a drawer. Past 960px there is
+// nothing to close, so the lock would be invisible and the page simply would
+// not scroll. The width is the one in nexora.css's drawer media query.
+const closeOnDesktop = (event) => {
+  isDesktop.value = event.matches
+  if (event.matches) {
+    open.value = false
+  }
+}
+desktop.addEventListener('change', closeOnDesktop)
+
+// A route change with the drawer open unmounts this. Nothing else would give
+// the body its scrollbar back, and the next page would be silently frozen.
+onBeforeUnmount(() => {
+  desktop.removeEventListener('change', closeOnDesktop)
+  if (open.value) {
+    document.body.style.overflow = previousOverflow
+  }
+})
+</script>

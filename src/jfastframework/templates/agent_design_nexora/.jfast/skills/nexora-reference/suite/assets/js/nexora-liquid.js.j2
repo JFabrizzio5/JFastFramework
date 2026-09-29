@@ -1,0 +1,417 @@
+/**
+ * NEXORA SUITE — listón de vidrio líquido (Three.js r128)
+ * Requiere three.min.js y nexora-common.js cargados antes.
+ * Toma los colores de NexoraTheme y escucha los eventos
+ * nexora:palette, nexora:mode y nexora:liquid.
+ *
+ * Opciones por data-attributes en <body>:
+ *   data-liquid-x="0.6"        desplazamiento horizontal base del listón
+ *   data-liquid-opacity="1"    opacidad del lienzo en escritorio
+ */
+(function () {
+    if (typeof THREE === 'undefined') return;
+
+    const uniforms = {
+        uTime: { value: 0 },
+        uMouse: { value: new THREE.Vector2(0, 0) },
+        uPulse: { value: 0 },
+        uTwistMul: { value: 1 },
+        uIntensity: { value: 1 },
+        uIsLight: { value: 0 },
+        uAccent: { value: new THREE.Color('#FF1744') },
+        uGlow: { value: new THREE.Color('#FF6F8A') },
+        uBody: { value: new THREE.Color('#D0103A') },
+        uDeep: { value: new THREE.Color('#38050F') },
+        uSpec: { value: new THREE.Color('#FFF0F3') }
+    };
+
+    /* El listón es un tubo elíptico torcido que se extruye en el vertex shader. */
+    const RIBBON_VERT = `
+        uniform float uTime;
+        uniform float uWidth;
+        uniform float uThick;
+        uniform float uTwist;
+        uniform float uTwistMul;
+        uniform float uTwistSpeed;
+        uniform float uWave;
+        uniform float uSeed;
+        uniform float uPulse;
+        uniform vec2 uMouse;
+
+        attribute vec3 aN;
+        attribute vec3 aB;
+        attribute vec2 aUV;
+
+        varying vec3 vNormal;
+        varying vec3 vViewPos;
+        varying vec2 vUv;
+        varying float vEdge;
+
+        void main() {
+            float u = aUV.x;
+            float th = aUV.y;
+            float t = uTime;
+
+            float tw = u * uTwist * uTwistMul + t * uTwistSpeed + sin(u * 6.2831 + t * 0.45 + uSeed) * 0.8;
+            float ct = cos(tw);
+            float st = sin(tw);
+            vec3 n = ct * aN + st * aB;
+            vec3 b = -st * aN + ct * aB;
+
+            float taper = smoothstep(0.0, 0.07, u) * (1.0 - smoothstep(0.93, 1.0, u));
+            float w = uWidth * (0.8 + 0.3 * sin(u * 7.0 - t * 0.6 + uSeed)) * (1.0 + uPulse * 0.22) * taper + 0.001;
+            float k = uThick * (0.85 + 0.25 * cos(u * 11.0 + t * 0.8 + uSeed)) * taper + 0.001;
+
+            vec3 flow = vec3(
+                sin(u * 5.0 + t * 0.55 + uSeed) * 0.45,
+                cos(u * 3.0 + t * 0.38 + uSeed) * 0.25,
+                sin(u * 4.0 - t * 0.50 + uSeed) * 0.55
+            ) * uWave * (1.0 + uPulse * 1.4);
+            float mid = 1.0 - abs(u - 0.5) * 2.0;
+            flow.x += uMouse.x * 0.9 * mid;
+            flow.y += uMouse.y * 0.6 * mid;
+
+            float c = cos(th);
+            float s = sin(th);
+            vec3 p = position + flow + n * (c * w) + b * (s * k);
+            vec3 nrm = normalize(n * (c / w) + b * (s / k));
+
+            vec4 mv = modelViewMatrix * vec4(p, 1.0);
+            vViewPos = mv.xyz;
+            vNormal = normalize(normalMatrix * nrm);
+            vUv = aUV;
+            vEdge = abs(c);
+            gl_Position = projectionMatrix * mv;
+        }
+    `;
+
+    /* Reflejos de un estudio fotográfico procedural + refracción cromática. */
+    const RIBBON_FRAG = `
+        uniform vec3 uAccent;
+        uniform vec3 uGlow;
+        uniform vec3 uBody;
+        uniform vec3 uDeep;
+        uniform vec3 uSpec;
+        uniform float uIsLight;
+        uniform float uIntensity;
+        uniform float uBackface;
+        uniform float uPulse;
+        uniform float uTime;
+
+        varying vec3 vNormal;
+        varying vec3 vViewPos;
+        varying vec2 vUv;
+        varying float vEdge;
+
+        float strip(float x, float halfW, float soft) {
+            return 1.0 - smoothstep(halfW, halfW + soft, abs(x));
+        }
+
+        vec3 studioEnv(vec3 d) {
+            vec3 col = uDeep * 0.05;
+            float key  = strip(d.x - 0.62, 0.04, 0.12) * smoothstep(-0.4, 0.3, d.y);
+            float fill = strip(d.x + 0.58, 0.05, 0.16) * (1.0 - smoothstep(-0.3, 0.55, d.y));
+            float top  = strip(d.y - 0.80, 0.02, 0.10) * (1.0 - smoothstep(0.2, 0.95, abs(d.x)));
+            float rim  = exp(-pow((d.y + 0.15) * 4.5, 2.0)) * smoothstep(-0.3, 0.7, -d.z);
+            float back = pow(max(-d.z, 0.0), 3.0);
+
+            col += uSpec * (key * 1.3 + top * 0.5);
+            col += uAccent * fill * 2.1 + vec3(1.0) * pow(fill, 8.0) * 0.35;
+            col += uGlow * rim * 1.15;
+            col += mix(uDeep, uAccent, 0.4) * back * 0.6;
+            return col;
+        }
+
+        void main() {
+            vec3 N = normalize(vNormal);
+            vec3 V = normalize(vViewPos);
+            if (dot(N, V) > 0.0) N = -N;
+
+            float cosT = clamp(dot(-V, N), 0.0, 1.0);
+            float facing = 1.0 - cosT;
+            float fres = 0.04 + 0.96 * pow(facing, 4.0);
+
+            vec3 R = reflect(V, N);
+            vec3 refl = studioEnv(R);
+
+            float eta = 1.0 / 1.46;
+            float disp = 0.018;
+            vec3 refr = vec3(
+                studioEnv(refract(V, N, eta - disp)).r,
+                studioEnv(refract(V, N, eta)).g,
+                studioEnv(refract(V, N, eta + disp)).b
+            );
+
+            float thick = pow(facing, 1.4);
+            vec3 absorb = mix(vec3(1.0), uBody * 1.6, 0.45 + 0.55 * thick);
+            vec3 bodyCol = refr * absorb * 0.75;
+
+            float edge = pow(vEdge, 10.0);
+            float shimmer = 0.5 + 0.5 * sin(vUv.x * 18.0 - uTime * 1.3 + vUv.y);
+            bodyCol += uAccent * edge * (0.12 + 0.35 * shimmer);
+            bodyCol += uBody * (0.22 + thick * 0.6);
+
+            vec3 col = mix(bodyCol, refl, fres);
+
+            vec3 L1 = normalize(vec3(0.55, 0.7, 0.45));
+            vec3 L2 = normalize(vec3(-0.6, -0.25, 0.75));
+            float g1 = pow(max(dot(R, L1), 0.0), 160.0);
+            float g2 = pow(max(dot(R, L2), 0.0), 70.0);
+            col += uSpec * g1 * 2.4 + uGlow * g2 * 1.4;
+
+            col *= uIntensity * (1.0 + uPulse * 0.55);
+
+            float lum = dot(col, vec3(0.299, 0.587, 0.114));
+            float alpha = clamp(0.1 + fres * 0.75 + lum * 0.9, 0.0, 1.0);
+
+            if (uIsLight > 0.5) {
+                vec3 tint = mix(vec3(1.0), uAccent, 0.3);
+                vec3 lc = mix(tint, uDeep, clamp(pow(facing, 1.8) * 0.9, 0.0, 1.0));
+                lc = mix(lc, uAccent, edge * 0.5);
+                lc += uSpec * g1 * 1.2;
+                col = lc;
+                alpha = clamp((0.16 + pow(facing, 1.6) * 0.72 + g1 * 0.5) * uIntensity, 0.0, 0.95);
+            }
+
+            if (!gl_FrontFacing) alpha *= uBackface;
+            gl_FragColor = vec4(col, alpha);
+        }
+    `;
+
+    const MAIN_SPINE = [
+        [10.5, 14.0, -4.0], [7.5, 9.5, -1.0], [2.2, 6.0, 2.0], [1.2, 2.5, 3.0],
+        [5.5, 0.0, 2.0], [10.0, -2.5, 0.0], [9.0, -6.5, -1.0], [4.0, -9.0, 1.0], [5.5, -14.0, -2.0]
+    ];
+    const SECONDARY_SPINE = [
+        [13.5, 12.0, -6.0], [9.5, 8.5, -4.0], [5.0, 7.5, -2.5], [3.2, 4.0, -1.0],
+        [7.2, 1.5, -2.0], [11.5, -1.0, -3.5], [12.0, -5.0, -4.0], [7.5, -8.0, -3.0], [9.0, -14.0, -5.0]
+    ];
+
+    let canvas = document.getElementById('nx-liquid-canvas');
+    if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.id = 'nx-liquid-canvas';
+        canvas.setAttribute('aria-hidden', 'true');
+        document.body.prepend(canvas);
+    }
+
+    const baseX = parseFloat(document.body.dataset.liquidX || '0.6');
+    const baseOpacity = parseFloat(document.body.dataset.liquidOpacity || '1');
+    const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    let renderer, scene, camera, group, particles, particleMat;
+    const layout = { x: baseX, scale: 1 };
+    const mouse = { x: 0, y: 0, tx: 0, ty: 0 };
+    const settings = { speed: 1 };
+    let scroll = 0;
+    let visible = true;
+
+    function ribbonGeometry(points, segments, radial) {
+        const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
+        const frames = curve.computeFrenetFrames(segments, false);
+        const count = (segments + 1) * (radial + 1);
+        const pos = new Float32Array(count * 3);
+        const nArr = new Float32Array(count * 3);
+        const bArr = new Float32Array(count * 3);
+        const uv = new Float32Array(count * 2);
+
+        let v = 0;
+        for (let i = 0; i <= segments; i++) {
+            const u = i / segments;
+            const p = curve.getPointAt(u);
+            const N = frames.normals[i];
+            const B = frames.binormals[i];
+            for (let j = 0; j <= radial; j++) {
+                pos[v * 3] = p.x; pos[v * 3 + 1] = p.y; pos[v * 3 + 2] = p.z;
+                nArr[v * 3] = N.x; nArr[v * 3 + 1] = N.y; nArr[v * 3 + 2] = N.z;
+                bArr[v * 3] = B.x; bArr[v * 3 + 1] = B.y; bArr[v * 3 + 2] = B.z;
+                uv[v * 2] = u;
+                uv[v * 2 + 1] = (j / radial) * Math.PI * 2;
+                v++;
+            }
+        }
+
+        const index = [];
+        for (let i = 0; i < segments; i++) {
+            for (let j = 0; j < radial; j++) {
+                const a = i * (radial + 1) + j;
+                const b = (i + 1) * (radial + 1) + j;
+                index.push(a, a + 1, b, b, a + 1, b + 1);
+            }
+        }
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('aN', new THREE.BufferAttribute(nArr, 3));
+        geo.setAttribute('aB', new THREE.BufferAttribute(bArr, 3));
+        geo.setAttribute('aUV', new THREE.BufferAttribute(uv, 2));
+        geo.setIndex(index);
+        return geo;
+    }
+
+    /* Dos pasadas (caras internas y luego externas) para dar profundidad de vidrio. */
+    function addRibbon(cfg) {
+        const geo = ribbonGeometry(cfg.spine.map(p => new THREE.Vector3(p[0], p[1], p[2])), cfg.segments, cfg.radial);
+        const own = {
+            uWidth: { value: cfg.width },
+            uThick: { value: cfg.thickness },
+            uTwist: { value: cfg.twist },
+            uTwistSpeed: { value: cfg.twistSpeed },
+            uWave: { value: cfg.wave },
+            uSeed: { value: cfg.seed }
+        };
+        const material = (side, backface) => new THREE.ShaderMaterial({
+            uniforms: Object.assign({}, uniforms, own, { uBackface: { value: backface } }),
+            vertexShader: RIBBON_VERT,
+            fragmentShader: RIBBON_FRAG,
+            transparent: true,
+            depthWrite: false,
+            side
+        });
+
+        const back = new THREE.Mesh(geo, material(THREE.BackSide, 0.55));
+        const front = new THREE.Mesh(geo, material(THREE.FrontSide, 1.0));
+        back.renderOrder = cfg.order;
+        front.renderOrder = cfg.order + 1;
+        back.frustumCulled = false;
+        front.frustumCulled = false;
+        group.add(back, front);
+    }
+
+    function addParticles(color) {
+        const count = 360;
+        const arr = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+            arr[i * 3] = (Math.random() - 0.5) * 44;
+            arr[i * 3 + 1] = (Math.random() - 0.5) * 30;
+            arr[i * 3 + 2] = (Math.random() - 0.5) * 16 - 4;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+        particleMat = new THREE.PointsMaterial({
+            color,
+            size: 0.055,
+            transparent: true,
+            opacity: 0.4,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+        particles = new THREE.Points(geo, particleMat);
+        scene.add(particles);
+    }
+
+    function relayout() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const aspect = w / h;
+        camera.aspect = aspect;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+
+        // En pantallas angostas el listón queda detrás del texto: se corre y se atenúa
+        if (aspect < 0.8) { layout.x = baseX - 3.0; layout.scale = 0.8; canvas.style.opacity = String(0.5 * baseOpacity); }
+        else if (aspect < 1.25) { layout.x = baseX - 2.2; layout.scale = 0.9; canvas.style.opacity = String(0.75 * baseOpacity); }
+        else { layout.x = baseX; layout.scale = 1; canvas.style.opacity = String(baseOpacity); }
+        group.scale.setScalar(layout.scale);
+    }
+
+    function applyPalette(p) {
+        uniforms.uAccent.value.set(p.accent);
+        uniforms.uGlow.value.set(p.glow);
+        uniforms.uBody.value.set(p.body);
+        uniforms.uDeep.value.set(p.deep);
+        uniforms.uSpec.value.set(p.spec);
+        if (particleMat) particleMat.color.set(p.glow);
+    }
+
+    function applyLiquid(s) {
+        uniforms.uIntensity.value = s.intensity;
+        uniforms.uTwistMul.value = s.twist;
+        settings.speed = s.speed;
+    }
+
+    function init() {
+        try {
+            renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'high-performance' });
+        } catch (e) {
+            canvas.style.display = 'none';
+            return;
+        }
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setClearColor(0x000000, 0);
+
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0, 22);
+
+        group = new THREE.Group();
+        scene.add(group);
+
+        addRibbon({ spine: SECONDARY_SPINE, width: 0.95, thickness: 0.22, twist: 9.0, twistSpeed: -0.35, wave: 0.8, seed: 2.1, segments: 240, radial: 48, order: 0 });
+        addRibbon({ spine: MAIN_SPINE, width: 1.75, thickness: 0.38, twist: 7.5, twistSpeed: 0.28, wave: 1.0, seed: 0.0, segments: 300, radial: 72, order: 2 });
+
+        const theme = window.NexoraTheme ? window.NexoraTheme.get() : null;
+        addParticles(theme ? theme.glow : '#FF6F8A');
+        if (theme) {
+            applyPalette(theme);
+            uniforms.uIsLight.value = theme.mode === 'light' ? 1 : 0;
+            applyLiquid(window.NexoraTheme.state);
+        }
+
+        relayout();
+        window.addEventListener('resize', relayout);
+        requestAnimationFrame(tick);
+    }
+
+    let last = performance.now();
+    let time = 0;
+
+    function tick(now) {
+        requestAnimationFrame(tick);
+        const dt = Math.min((now - last) / 1000, 0.05);
+        last = now;
+        if (!visible) return;
+
+        time += dt * settings.speed * (reducedMotion ? 0.25 : 1);
+        uniforms.uTime.value = time;
+        uniforms.uPulse.value *= Math.exp(-1.8 * dt);
+
+        const k = 1 - Math.exp(-dt * 3);
+        mouse.x += (mouse.tx - mouse.x) * k;
+        mouse.y += (mouse.ty - mouse.y) * k;
+        uniforms.uMouse.value.set(mouse.x, mouse.y);
+
+        group.position.set(layout.x + mouse.x * 0.4, scroll * 4.0 + mouse.y * 0.3, 0);
+        group.rotation.set(-mouse.y * 0.08, Math.sin(time * 0.18) * 0.14 + mouse.x * 0.2, scroll * 0.22);
+
+        if (particles) {
+            particles.rotation.y = time * 0.012;
+            particles.position.y = Math.sin(time * 0.2) * 0.4 + scroll * 2.0;
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    window.addEventListener('mousemove', (e) => {
+        mouse.tx = (e.clientX / window.innerWidth) * 2 - 1;
+        mouse.ty = -(e.clientY / window.innerHeight) * 2 + 1;
+    }, { passive: true });
+
+    function updateScroll() {
+        const max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+        scroll = Math.min(1, Math.max(0, window.scrollY / max));
+    }
+    window.addEventListener('scroll', updateScroll, { passive: true });
+    document.addEventListener('visibilitychange', () => { visible = !document.hidden; });
+
+    document.addEventListener('nexora:palette', (e) => applyPalette(e.detail));
+    document.addEventListener('nexora:mode', (e) => { uniforms.uIsLight.value = e.detail.mode === 'light' ? 1 : 0; });
+    document.addEventListener('nexora:liquid', (e) => applyLiquid(e.detail));
+
+    window.NexoraLiquid = {
+        pulse: () => { uniforms.uPulse.value = 1; }
+    };
+
+    updateScroll();
+    init();
+})();

@@ -1,0 +1,105 @@
+<template>
+  <div ref="root" class="nx-accent" @keydown.esc="close(true)">
+    <button ref="trigger" type="button" class="nx-round-btn" aria-haspopup="dialog" :aria-expanded="open"
+      :aria-controls="panelId" aria-label="Colour and background" title="Colour and background" @click="open ? close() : show()">
+      <span class="nx-accent-swatch" aria-hidden="true" />
+    </button>
+
+    <div v-if="open" :id="panelId" ref="panel" class="nx-accent-popover" role="dialog" aria-label="Colour and background">
+      <p class="nx-accent-title">Accent</p>
+
+      <div class="nx-accent-grid">
+        <button v-for="preset in PRESETS" :key="preset.name" type="button" class="nx-accent-option"
+          :aria-pressed="current === preset.accent" @click="choose(preset.accent)">
+          <span class="nx-orb" :style="{ background: orb(preset) }" aria-hidden="true" />
+          {{ preset.name }}
+        </button>
+      </div>
+
+      <label class="nx-accent-custom">
+        <span>Custom colour</span>
+        <input type="color" :value="current.toLowerCase()" @input="choose($event.target.value)" />
+      </label>
+
+      <div class="nx-accent-section">
+        <p class="nx-accent-title">Background</p>
+        <div class="nx-backdrop-grid">
+          <button v-for="option in BACKDROPS" :key="option.value" type="button" class="nx-accent-option"
+            :aria-pressed="backdrop === option.value" @click="chooseBackdrop(option.value)">
+            {{ option.label }}
+          </button>
+        </div>
+      </div>
+
+      <button type="button" class="btn-modern btn-ghost btn-sm nx-accent-reset" @click="reset">
+        Back to the default
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+
+import { PRESETS, currentAccent, resetAccent, setAccent } from '@/nexora/accent.js'
+import { BACKDROPS, currentBackdrop, resetBackdrop, setBackdrop } from '@/nexora/backdrop.js'
+
+// A non-modal popover: it does not trap focus, it closes on Escape, on a click
+// outside, and returns focus to the button that opened it. The colour itself
+// is applied by accent.js, which is also what index.html replays on reload.
+const root = ref(null)
+const trigger = ref(null)
+const panel = ref(null)
+const panelId = useId()
+const open = ref(false)
+const current = ref(currentAccent())
+const backdrop = ref(currentBackdrop())
+
+function orb(preset) {
+  return `radial-gradient(circle at 32% 28%, ${preset.glow ?? preset.accent} 0%, ${preset.accent} 45%, #000 100%)`
+}
+
+function choose(hex) {
+  setAccent(hex)
+  current.value = currentAccent()
+}
+
+// 3D, 2D or off. background.js hears it and loads or drops the ribbon.
+function chooseBackdrop(value) {
+  setBackdrop(value)
+  backdrop.value = currentBackdrop()
+}
+
+function reset() {
+  resetAccent()
+  resetBackdrop()
+  current.value = currentAccent()
+  backdrop.value = currentBackdrop()
+}
+
+async function show() {
+  open.value = true
+  await nextTick()
+  panel.value?.querySelector('button')?.focus()
+}
+
+function close(returnFocus = false) {
+  if (!open.value) return
+  open.value = false
+  if (returnFocus) trigger.value?.focus()
+}
+
+const onPointerDown = (event) => {
+  if (!root.value?.contains(event.target)) close()
+}
+
+// Listening only while open: a document listener per mounted picker that runs
+// on every click in the app, for a popover that is closed nearly all the time,
+// is cost for nothing.
+watch(open, (isOpen) => {
+  if (isOpen) document.addEventListener('pointerdown', onPointerDown)
+  else document.removeEventListener('pointerdown', onPointerDown)
+})
+
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown))
+</script>

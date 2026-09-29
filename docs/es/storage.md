@@ -228,17 +228,70 @@ que no se reconoce convertiría el chequeo en decoración.
 
 Dos consecuencias que conviene saber antes de configurar un disco:
 
-- **Faltan los formatos que solo se identifican parseando**: SVG, JSON, CSV,
-  texto plano. Un sniffer que declara `text/plain` porque el archivo está lleno
-  de caracteres imprimibles le dice que sí a un shell script, y un `.svg` subido
-  es un vector de XSS antes que una imagen. Un disco que guarda texto o JSON no
-  debería correr `validate`.
+- **Los formatos que se identifican parseando solo se reconocen donde un disco
+  los pide.** XML, JSON, CSV y texto plano no tienen magic number, y un sniffer
+  que llama `text/plain` a cualquier cosa imprimible le dice que sí a un shell
+  script. Así que nunca se adivinan: el disco que los lista en `allow` los
+  obtiene, verificados parseándolos, y ningún otro disco. Ver abajo.
 - **Todo archivo OOXML y OpenDocument es un zip.** Permitir `.docx` significa
   permitir `application/zip`, y eso permite cualquier otro zip. Esa decisión se
   toma en la revisión de la config, donde alguien puede verla.
 
 Listar un tipo que `validate` no puede reconocer es un error de arranque, no una
 regla que nunca coincide en silencio.
+
+### XML, JSON, CSV y texto
+
+Un disco para facturas CFDI guarda XML, y `validate` puede exigírselo:
+
+```toml
+[plugin.storage.disks.cfdi]
+driver = "local"
+root = "storage/cfdi"
+pipeline = ["validate"]
+
+[plugin.storage.disks.cfdi.validate]
+max_bytes = "5MB"
+allow = ["application/xml"]
+```
+
+| En `allow` | El archivo debe |
+| --- | --- |
+| `application/xml` | Ser XML bien formado **sin declaración DOCTYPE ni ENTITY** -- ahí viven XXE y las bombas de expansión de entidades, y un archivo de datos no necesita ninguna -- y no ser SVG ni HTML, que un navegador renderizaría y ejecutaría |
+| `application/json` | Parsearse a un objeto o un arreglo |
+| `text/csv` | Ser texto UTF-8 que el módulo `csv` lea en al menos una fila |
+| `text/plain` | Ser UTF-8 sin caracteres de control más allá de tabulador y saltos de línea |
+
+Se prueban solo cuando el archivo no coincidió con ningún magic number, y en ese
+orden, así que un XML en un disco que permite XML y texto es XML. Un disco que no
+los lista los rechaza exactamente como antes.
+
+## Archivos grandes: `put_stream`
+
+`put()` recibe bytes, así que el archivo entero está en memoria antes de revisar
+nada. Para un archivo de varios gigabytes, mándalo en streaming:
+
+```python
+disk = storage.disk("archives")
+stored = await disk.put_stream("2026/04/cfdi.zip", request.stream())
+```
+
+Sirve cualquier iterable asíncrono de bytes: el cuerpo de una request, un archivo
+leído por pedazos, una descarga desde otro lado. En el camino:
+
+- **`max_bytes` se aplica mientras llegan los bytes.** Un upload demasiado grande
+  se detiene en el límite, en vez de después de llenar el disco.
+- **El tipo se decide por la cabeza** -- los primeros 64 KB -- con las mismas
+  firmas, y para XML, JSON y texto con lo que la cabeza puede mostrar: el XML
+  abre con una etiqueta y no declara DOCTYPE ni ENTITY (un DTD va antes del
+  elemento raíz, así que estaría ahí), el JSON abre un objeto o un arreglo, el
+  texto se decodifica como UTF-8. Un archivo que falla se rechaza antes de que
+  nada llegue a S3.
+- **Nada es visible hasta escribir el último byte.** En local el stream va a un
+  archivo temporal que se renombra al final; en S3 es un multipart upload que se
+  aborta si algo falla, así que el bucket no guarda partes huérfanas.
+- **Un disco cuyo pipeline reescribe los uploads rechaza los streams.**
+  `optimise-image` necesita el archivo entero; ahí usa `put()`.
 
 ### Optimizar imágenes
 
@@ -486,10 +539,6 @@ debería seguir en el load balancer— así que se reporta como degradado.
 - **Sin miniaturas.** `optimise-image` reescribe *un* objeto en un objeto.
   Derivar un juego de tamaños a partir de un upload es un job, no un step del
   pipeline: un step que produce cuatro objetos no tiene dónde dejar tres.
-- **Sin uploads en streaming.** `put()` recibe bytes, y el pipeline los ve todos
-  juntos, así que `max_bytes` se aplica cuando el body ya está en memoria. Un
-  upload de varios gigabytes debería ir directo a S3 con un `upload_url()`
-  prefirmado y no pasar nunca por la aplicación.
 - **Sin descargas en streaming ni range requests.** La ruta de descarga lee el
   objeto entero en memoria antes de responder. Un PDF de 40 MB son 40 MB
   residentes por descarga concurrente, y un video servido por ahí no se puede

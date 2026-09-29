@@ -258,7 +258,10 @@ the exact failure the README argues against. Two scopes, two mechanisms.
       you lose independent deployability of the shared code. That is the
       monorepo bargain, and it is the right one at this size. Publishing shared
       packages to a private index is deliberately out of scope.
-- [ ] **`internal_client`.** A microservice framework without a
+- [ ] **`internal_client`.** *Partly done in 0.1.0a9:* `jfastframework.http`
+      has the timeouts, idempotent-only retries, breaker and `X-Request-ID`
+      propagation; tenant and trace context, resolution from the graph and
+      typed clients are still open. A microservice framework without a
       service-to-service client. Mandatory timeouts, retry with backoff and
       jitter on idempotent methods only, a circuit breaker, propagation of
       `X-Request-ID`, tenant and trace context — and destination resolution
@@ -521,16 +524,24 @@ packages tested together. Two of those are covered above; this is the CLI.
       already provides.
 - [ ] **`jfast worker run` and `jfast schedule run`** — the queue and scheduler
       need entry points, not a hand-written `__main__`.
-- [ ] **`scheduler`** — periodic tasks with leader election through a Redis or
-      PostgreSQL lock, so N replicas do not each fire the same cron. Reuses
-      `TaskRegistry`. Delayed jobs exist; recurring ones do not, and every SaaS
-      needs "charge subscriptions daily".
+- [x] **`scheduler`** (0.1.0a9) — periodic tasks on `TaskRegistry`. No leader:
+      every replica claims each tick in PostgreSQL or Redis before enqueueing,
+      so N replicas fire a cron once. See `docs/queues-and-events.md`.
 - [ ] **`jfast monitor`** — the dev inspector: the graph rendered, health,
       recent requests, slow queries, job outcomes. Telescope, scoped to
       development.
-- [ ] **Outbox** — `publish_in_transaction()` plus a relay, so `events` cannot
+- [x] **Outbox** (0.1.0a9) — `publish_in_transaction()` plus a relay, so `events` cannot
       commit a row and lose the event. The PostgreSQL queue backend already
-      avoids this by construction; Kafka needs it explicitly.
+      avoids this by construction; Kafka needs it explicitly. The PostgreSQL
+      queue does *not* avoid the other half: `enqueue` commits in its own
+      transaction, apart from the request's rows, so it needs
+      `enqueue(job, session=...)` writing through the request's session.
+- [x] **Idempotency keys** (0.1.0a9) — an `Idempotency-Key` dependency backed by a table
+      `(tenant_id, key, request_hash, status, response)`, inserted with
+      `ON CONFLICT` in the request's own transaction. The same key with the
+      same body replays the stored response; with a different body, 422. What
+      a client that retries a `POST` after a timeout needs when there is no
+      natural unique key to stop the second row.
 
 ---
 
@@ -557,9 +568,9 @@ the protocol that argument has been waiting for.
 
 ## Step 11 — Hardening and publication (0.7.0 → 1.0.0)
 
-- [ ] **PostgreSQL row-level security.** The single most important gap on the
-      original plan and still true: until it exists, tenancy is a convention the
-      repository enforces, not isolation the database enforces.
+- [x] **PostgreSQL row-level security.** Landed in 0.1.0a9, ahead of this step:
+      `enable_tenant_rls` and `[plugin.database] rls = true`. Left here: running
+      the suite behind PgBouncer in transaction mode.
 - [ ] Integration suites against real PostgreSQL, Redis, RabbitMQ, Kafka, MinIO —
       promoting five subsystems out of `unverified` in STATUS.md.
 - [ ] Apply the Kubernetes manifests to a kind cluster in CI. NetworkPolicies,

@@ -1,8 +1,8 @@
 """Finding an object without being told which disk it is on.
 
-The download route was `/storage/{disk}/{key}`, so the disk name was baked
-into every URL ever handed out. That makes moving a file from `local` to `s3`
-a 404 on every stored link, which is the whole reason a migration to S3 keeps
+A download route of `/storage/{disk}/{key}` bakes the disk name into every
+URL ever handed out. That makes moving a file from `local` to `s3` a 404 on
+every stored link, which is the whole reason a migration to S3 keeps
 getting postponed. `/storage/{key}` names only the object, and the app works
 out where it lives.
 

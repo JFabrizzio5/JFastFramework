@@ -26,9 +26,33 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
+
+#: The job the current handler is running. A handler receives only its
+#: payload; this is how it reaches the job id to deduplicate on
+#: (``claim_once(session, current_job().id)``) without every handler in every
+#: service changing signature.
+_current_job: ContextVar[Job | None] = ContextVar("jfast_current_job", default=None)
+
+
+def current_job() -> Job:
+    """The job whose handler is running. Raises outside a handler."""
+    job = _current_job.get()
+    if job is None:
+        raise RuntimeError("current_job() was called outside a queue handler")
+    return job
+
+
+def _context(name: str) -> str | None:
+    # Imported late: the observability plugin owns these variables, and the
+    # queue package must not import a plugin at module load.
+    from jfastframework.plugins.builtin import observability
+
+    value: str | None = getattr(observability, name).get()
+    return value
 
 
 @dataclass
@@ -42,9 +66,11 @@ class Job:
     max_attempts: int = 3
     # Set for delayed jobs; None means "as soon as a worker is free".
     available_at: datetime | None = None
-    # Carried so a job's logs correlate with the request that queued it.
-    request_id: str | None = None
-    tenant_id: str | None = None
+    # Taken from the request that queued the job, so its logs correlate with
+    # that request and the worker runs it as the same tenant. A job built
+    # outside a request carries neither unless it is given them.
+    request_id: str | None = field(default_factory=lambda: _context("request_id_var"))
+    tenant_id: str | None = field(default_factory=lambda: _context("tenant_id_var"))
     # Backend-specific handle needed to ack/nack this exact delivery.
     receipt: Any = field(default=None, repr=False, compare=False)
 

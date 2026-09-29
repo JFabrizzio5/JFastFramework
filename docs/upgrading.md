@@ -164,6 +164,45 @@ the real `packaging`, which is installed for development.
 
 ---
 
+## The one that stops a boot in `0.1.0a9`
+
+### A session that commits after the response
+
+```
+PluginError: these routes open a database session that would commit after the
+response is sent ...
+  POST /invoices -> session_dependency
+```
+
+Before: a commit that failed -- a deferred constraint, a serialisation
+failure, a connection dropped at the wrong moment -- had already been answered
+`201`, and a client that read its own write straight away could arrive before
+the commit. FastAPI runs a `yield` dependency's teardown after the response
+unless the dependency is function-scoped, and the session commits in its
+teardown. Every module `jfast new module` generated before `0.1.0a9` wires it
+that way.
+
+The fix is one line per dependency:
+
+```python
+# before
+def get_service(request: Request, session=Depends(session_dependency)) -> Service: ...
+
+# after
+from jfastframework.plugins.builtin.database import DbSession
+
+def get_service(request: Request, session: DbSession) -> Service: ...
+```
+
+`ReadSession` replaces `read_session_dependency` and `TenantSession` replaces
+`tenant_session_dependency`. `Depends(session_dependency, scope="function")` is
+the same thing spelled out. A generator dependency of your own that wraps a
+session has to be function-scoped as well -- FastAPI refuses the other order.
+
+`jfast upgrade --check` lists every line as `session-commits-after-response`.
+The framework also needs FastAPI 0.121 or later now; `pip install -U` takes
+care of it. [Transactions](transactions.md) explains the rest.
+
 ## The three that stop a boot in `0.1.0a8`
 
 Everything the command reports has a `remedy` in its own output, so this

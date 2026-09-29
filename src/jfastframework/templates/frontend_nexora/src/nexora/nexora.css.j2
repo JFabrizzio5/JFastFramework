@@ -1,0 +1,1352 @@
+/* ==========================================================================
+   Nexora -- the liquid-glass look.
+
+   A black photo studio, frosted-glass panels, an island top bar, Plus Jakarta
+   Sans with JetBrains Mono for figures, and one accent that everything takes
+   its colour from.
+
+   This file is imported by src/style.css into Tailwind's `components` layer.
+   That placement is load-bearing: unlayered CSS beats every layered rule, so
+   imported plainly, a class here would override the Tailwind utility written
+   next to it in a template (`class="card-panel p-2"` would keep the panel's
+   padding). Inside `components`, utilities still win.
+
+   Colour comes from two places, and only these two:
+
+   * the palette: five RGB triplets, `--c-*`, shared by both themes. Change the
+     accent here and every button, glow, badge and the WebGL ribbon follow;
+   * the theme tokens below it: surfaces, borders and text, defined once for
+     light on :root and redefined for dark.
+
+   A component never names a colour. If a value is missing, add a token.
+   ========================================================================== */
+
+:root {
+    /* The palette, as space-separated triplets so `rgb(var(--c-accent) / 0.2)`
+       can add alpha. nexora-suite's default, "Cherry". Its other presets, as
+       accent / glow / body, drop in the same way:
+
+         Ruby     225 29 46   / 255 77 94   / 122 7 20
+         Amber    245 158 11  / 255 181 71  / 74 34 4
+         Violet   139 92 246  / 196 181 253 / 46 11 102
+         Glacier  56 189 248  / 186 230 253 / 8 48 77
+         Emerald  16 185 129  / 110 231 183 / 5 61 46
+
+       `--c-accent-deep` is the accent mixed 78% towards black, and
+       `--c-on-accent` is the text on a solid accent: white, or near-black for
+       a light accent such as Obsidian's 212 212 216. The two `text` triplets
+       are the accent moved just far enough towards black (light studio) or
+       white (dark studio) to read as body text at 4.5:1.
+
+       These are the fallback. VITE_ACCENT in .env and the viewer's own choice
+       in the accent picker overwrite them on <html> at runtime, deriving all
+       seven from one colour -- see src/nexora/accent.js. */
+    --c-accent: 255 23 68;
+    --c-accent-deep: 56 5 15;
+    --c-glow: 255 111 138;
+    --c-body: 208 16 58;
+    --c-on-accent: 255 255 255;
+    --c-accent-text-light: 230 21 61;
+    --c-accent-text-dark: 255 111 138;
+
+    --success-light: rgba(52, 211, 153, 0.12);
+    --success-border: rgba(52, 211, 153, 0.3);
+    --warning-light: rgba(251, 191, 36, 0.12);
+    --warning-border: rgba(251, 191, 36, 0.3);
+    --danger-light: rgba(255, 77, 94, 0.12);
+    --danger-border: rgba(255, 77, 94, 0.3);
+    --info-light: rgba(56, 189, 248, 0.12);
+    --info-border: rgba(56, 189, 248, 0.3);
+
+    --radius-xs: 8px;
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+    --radius-xl: 26px;
+
+    --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-script: "Caveat", cursive;
+
+    --header-height: 64px;
+    --sidebar-width: 270px;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+    /* ---- Light studio ---- */
+    --bg-primary: #f8f9fd;
+    --nav-bg: rgba(255, 255, 255, 0.82);
+    --nav-border: rgba(0, 0, 0, 0.08);
+    --card-bg: rgba(255, 255, 255, 0.8);
+    --card-solid: #ffffff;
+    --card-border: rgba(0, 0, 0, 0.07);
+    --card-hover-border: rgb(var(--c-accent) / 0.4);
+    --card-specular: rgba(255, 255, 255, 0.95);
+    --card-shadow: 0 24px 50px -12px rgba(28, 35, 60, 0.08), 0 2px 6px rgba(0, 0, 0, 0.03);
+    --island-shadow: 0 16px 36px -12px rgba(28, 35, 60, 0.14);
+    --float-shadow: 0 30px 60px -18px rgba(28, 35, 60, 0.22);
+    --bg-surface: rgba(255, 255, 255, 0.86);
+    --bg-sidebar: rgba(255, 255, 255, 0.78);
+    --bg-muted: rgba(0, 0, 0, 0.035);
+    --bg-input: rgba(255, 255, 255, 0.9);
+    --input-inset: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+    --pill-bg: rgba(0, 0, 0, 0.04);
+    --pill-hover: rgba(0, 0, 0, 0.07);
+    --badge-border: rgba(0, 0, 0, 0.09);
+    --row-border: rgba(0, 0, 0, 0.06);
+    --scrim: rgba(240, 242, 248, 0.55);
+    --scrollbar: rgba(0, 0, 0, 0.18);
+    --vignette: 0;
+    --ambient: 0.6;
+
+    --text-main: #0b0d14;
+    --text-sub: rgba(11, 13, 20, 0.35);
+    --text-dim: #5e6578;
+    --text-light: rgba(11, 13, 20, 0.4);
+    /* Accent-coloured text: eyebrows, accent badges. Never the raw accent,
+       which fails contrast on white for half the colours anyone would pick. */
+    --accent-text: rgb(var(--c-accent-text-light));
+
+    --success: #059669;
+    --warning: #d97706;
+    --danger: #e11d48;
+    --info: #0284c7;
+
+    /* Native widgets -- scrollbars, date pickers, the caret -- are drawn by
+       the browser and never see a class. Without this the studio is black and
+       its scrollbar is white. */
+    color-scheme: light;
+}
+
+/* Dark is Nexora's own studio, and it is defined twice on purpose: once for a
+   system set to dark with no explicit choice, once for the explicit choice.
+   The `:not([data-theme="light"])` is what lets "light" beat a dark system. */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --bg-primary: #030305;
+        --nav-bg: rgba(12, 13, 18, 0.68);
+        --nav-border: rgba(255, 255, 255, 0.12);
+        --card-bg: rgba(14, 15, 20, 0.58);
+        --card-solid: #0c0d12;
+        --card-border: rgba(255, 255, 255, 0.09);
+        --card-specular: rgba(255, 255, 255, 0.16);
+        --card-shadow: 0 24px 60px -15px rgba(0, 0, 0, 0.38);
+        --island-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.35);
+        --float-shadow: 0 30px 70px -18px rgba(0, 0, 0, 0.7);
+        --bg-surface: rgba(16, 17, 23, 0.82);
+        --bg-sidebar: rgba(9, 10, 14, 0.78);
+        --bg-muted: rgba(255, 255, 255, 0.04);
+        --bg-input: rgba(255, 255, 255, 0.035);
+        --input-inset: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+        --pill-bg: rgba(255, 255, 255, 0.06);
+        --pill-hover: rgba(255, 255, 255, 0.1);
+        --badge-border: rgba(255, 255, 255, 0.12);
+        --row-border: rgba(255, 255, 255, 0.06);
+        --scrim: rgba(2, 2, 4, 0.62);
+        --scrollbar: rgba(255, 255, 255, 0.14);
+        --vignette: 1;
+        --ambient: 1;
+
+        --text-main: #ffffff;
+        --text-sub: rgba(255, 255, 255, 0.36);
+        --text-dim: #9aa0b2;
+        --text-light: rgba(255, 255, 255, 0.36);
+        --accent-text: rgb(var(--c-accent-text-dark));
+
+        --success: #34d399;
+        --warning: #fbbf24;
+        --danger: #ff4d5e;
+        --info: #38bdf8;
+
+        color-scheme: dark;
+    }
+}
+
+:root[data-theme="dark"] {
+    --bg-primary: #030305;
+    --nav-bg: rgba(12, 13, 18, 0.68);
+    --nav-border: rgba(255, 255, 255, 0.12);
+    --card-bg: rgba(14, 15, 20, 0.58);
+    --card-solid: #0c0d12;
+    --card-border: rgba(255, 255, 255, 0.09);
+    --card-specular: rgba(255, 255, 255, 0.16);
+    --card-shadow: 0 24px 60px -15px rgba(0, 0, 0, 0.38);
+    --island-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.35);
+    --float-shadow: 0 30px 70px -18px rgba(0, 0, 0, 0.7);
+    --bg-surface: rgba(16, 17, 23, 0.82);
+    --bg-sidebar: rgba(9, 10, 14, 0.78);
+    --bg-muted: rgba(255, 255, 255, 0.04);
+    --bg-input: rgba(255, 255, 255, 0.035);
+    --input-inset: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+    --pill-bg: rgba(255, 255, 255, 0.06);
+    --pill-hover: rgba(255, 255, 255, 0.1);
+    --badge-border: rgba(255, 255, 255, 0.12);
+    --row-border: rgba(255, 255, 255, 0.06);
+    --scrim: rgba(2, 2, 4, 0.62);
+    --scrollbar: rgba(255, 255, 255, 0.14);
+    --vignette: 1;
+    --ambient: 1;
+
+    --text-main: #ffffff;
+    --text-sub: rgba(255, 255, 255, 0.36);
+    --text-dim: #9aa0b2;
+    --text-light: rgba(255, 255, 255, 0.36);
+    --accent-text: rgb(var(--c-accent-text-dark));
+
+    --success: #34d399;
+    --warning: #fbbf24;
+    --danger: #ff4d5e;
+    --info: #38bdf8;
+
+    color-scheme: dark;
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+html {
+    font-size: 15px;
+    background: var(--bg-primary);
+    transition: background-color 0.4s var(--ease-out);
+}
+
+/* The colour lives on <html>, and body stays transparent, so the ambient
+   layer and the ribbon (both at z-index -1) show through the content. */
+body {
+    font-family: var(--font-sans);
+    background: transparent;
+    color: var(--text-main);
+    min-height: 100vh;
+    line-height: 1.55;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+}
+
+::selection {
+    background: rgb(var(--c-accent));
+    color: rgb(var(--c-on-accent));
+}
+
+h1, h2, h3, h4, h5 { letter-spacing: -0.025em; }
+code, pre, kbd { font-family: var(--font-mono); }
+
+/* One visible focus ring for keyboard users, in the accent, everywhere. The
+   browser default is close to invisible on a black studio. */
+:focus-visible {
+    outline: 2px solid rgb(var(--c-accent));
+    outline-offset: 2px;
+}
+
+* { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+
+/* ==========================================================================
+   Ambient studio light and the ribbon canvas
+
+   The ambient layer is pure CSS and is also the fallback: with reduced motion,
+   no WebGL, or before three.js has loaded, this still frame is what shows.
+   ========================================================================== */
+.nx-ambient {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.nx-ambient::before {
+    content: "";
+    position: absolute;
+    inset: -20%;
+    opacity: var(--ambient);
+    background:
+        radial-gradient(38% 42% at 82% 12%, rgb(var(--c-accent) / 0.16), transparent 70%),
+        radial-gradient(30% 36% at 8% 78%, rgb(var(--c-body) / 0.1), transparent 70%),
+        radial-gradient(26% 30% at 50% 110%, rgb(var(--c-glow) / 0.07), transparent 70%);
+    filter: blur(20px);
+}
+
+/* The photographic vignette. Dark studio only: on white it reads as dirt. */
+.nx-ambient::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: var(--vignette);
+    background: radial-gradient(ellipse at 70% 40%, transparent 35%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+.nx-ambient-glow {
+    position: absolute;
+    width: 680px;
+    height: 680px;
+    left: 72%;
+    top: 38%;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, rgb(var(--c-accent) / 0.22) 0%, rgb(var(--c-accent-deep) / 0.18) 40%, transparent 70%);
+    filter: blur(110px);
+    opacity: calc(0.15 + 0.25 * var(--ambient));
+}
+
+.nx-liquid-canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+}
+
+.nx-liquid-canvas.is-live { opacity: var(--liquid-opacity, 1); }
+
+/* The viewer's background choice (src/nexora/backdrop.js): "still" keeps the
+   2D frame and drops the ribbon, "none" drops both and leaves the plain page
+   colour. */
+html[data-backdrop="still"] .nx-liquid-canvas,
+html[data-backdrop="none"] .nx-liquid-canvas,
+html[data-backdrop="none"] .nx-ambient { display: none; }
+
+/* ==========================================================================
+   Brand type
+   ========================================================================== */
+.nx-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent-text);
+}
+
+.nx-mono { font-family: var(--font-mono); }
+.nx-dim { color: var(--text-dim); }
+
+.nx-logo {
+    font-family: var(--font-script);
+    font-size: 1.95rem;
+    font-weight: 700;
+    line-height: 1;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+    color: var(--text-main);
+    white-space: nowrap;
+}
+
+/* The accent full stop after the wordmark. */
+.nx-logo::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgb(var(--c-accent));
+    box-shadow: 0 0 10px rgb(var(--c-accent) / 0.8);
+}
+
+.nx-display {
+    font-weight: 900;
+    letter-spacing: -0.048em;
+    line-height: 0.98;
+    color: var(--text-main);
+}
+
+.nx-display-faded {
+    font-weight: 800;
+    letter-spacing: -0.042em;
+    line-height: 0.98;
+    color: var(--text-sub);
+}
+
+.nx-live-dot {
+    position: relative;
+    display: inline-flex;
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+}
+
+.nx-live-dot::before,
+.nx-live-dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--success);
+}
+
+.nx-live-dot::before { animation: nx-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite; opacity: 0.75; }
+.nx-live-dot.is-off::before,
+.nx-live-dot.is-off::after { background: var(--danger); }
+.nx-live-dot.is-off::before { animation: none; }
+
+@keyframes nx-ping {
+    75%, 100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* ==========================================================================
+   The application shell: a glass sidebar and an island top bar
+   ========================================================================== */
+.nx-shell { display: flex; min-height: 100vh; }
+
+.nx-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 100;
+    width: var(--sidebar-width);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-sidebar);
+    backdrop-filter: blur(28px) saturate(170%);
+    border-right: 1px solid var(--card-border);
+    box-shadow: inset -1px 0 0 var(--card-specular), 18px 0 50px -30px rgba(0, 0, 0, 0.45);
+    transition: transform 0.3s var(--ease-out);
+}
+
+.nx-sidebar-brand {
+    height: 76px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 24px;
+    flex-shrink: 0;
+}
+
+.nx-sidebar-sub {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-sub);
+    margin-top: 4px;
+}
+
+.nx-sidebar-menu {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.nx-nav-label {
+    padding: 12px 12px 6px;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-sub);
+}
+
+.nav-sublink {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 8px 12px;
+    border-radius: 9999px;
+    border: 1px solid transparent;
+    color: var(--text-dim);
+    font-size: 0.83rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.nav-sublink > :first-child { opacity: 0.85; }
+
+.nav-sublink:hover {
+    background: var(--pill-bg);
+    color: var(--text-main);
+}
+
+.nav-sublink.is-active {
+    background: var(--pill-bg);
+    border-color: var(--badge-border);
+    color: var(--text-main);
+    box-shadow: inset 0 1px 1px var(--card-specular);
+}
+
+.nav-sublink.is-active > :first-child {
+    color: rgb(var(--c-accent));
+    opacity: 1;
+    filter: drop-shadow(0 0 6px rgb(var(--c-accent) / 0.55));
+}
+
+.nav-sublink > span { overflow: hidden; text-overflow: ellipsis; }
+
+.nx-sidebar-footer {
+    margin: 10px 12px 14px;
+    padding: 10px 12px;
+    border-radius: 18px;
+    border: 1px solid var(--card-border);
+    background: var(--pill-bg);
+    box-shadow: inset 0 1px 1px var(--card-specular);
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    flex-shrink: 0;
+}
+
+.nx-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 0.8rem;
+    color: rgb(var(--c-on-accent));
+    background: radial-gradient(circle at 30% 25%, rgb(var(--c-glow)), rgb(var(--c-accent)) 50%, rgb(var(--c-accent-deep)));
+    box-shadow: inset -3px -3px 8px rgba(0, 0, 0, 0.4), inset 2px 2px 5px rgba(255, 255, 255, 0.3), 0 6px 14px -4px rgb(var(--c-accent) / 0.4);
+}
+
+.nx-user { min-width: 0; flex: 1; }
+.nx-user-name { font-size: 0.84rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-user-role { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.06em; color: var(--text-dim); white-space: nowrap; }
+
+.nx-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    background: var(--scrim);
+    backdrop-filter: blur(6px);
+}
+
+.nx-main {
+    flex: 1;
+    min-width: 0;
+    margin-left: var(--sidebar-width);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    transition: margin-left 0.3s var(--ease-out);
+}
+
+/* Folded away on a wide screen (src/nexora/sidebar.js): the sidebar slides
+   out and the page takes the full width. Below 960px the drawer rules below
+   apply instead. */
+@media (min-width: 961px) {
+    html[data-sidebar="collapsed"] .nx-sidebar { transform: translateX(-100%); visibility: hidden; transition: transform 0.3s var(--ease-out), visibility 0s 0.3s; }
+    html[data-sidebar="collapsed"] .nx-main { margin-left: 0; }
+}
+
+/* The island: a floating pill of glass, sticky a little below the edge. */
+.nx-topbar {
+    position: sticky;
+    top: 14px;
+    z-index: 90;
+    height: var(--header-height);
+    margin: 14px 28px 0;
+    padding: 0 10px 0 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border-radius: 9999px;
+    background: var(--nav-bg);
+    backdrop-filter: blur(24px) saturate(190%);
+    border: 1px solid var(--nav-border);
+    box-shadow: var(--island-shadow), inset 0 1px 1px var(--card-specular);
+}
+
+.nx-topbar-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+.nx-topbar-title {
+    font-size: 0.86rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-left: 6px;
+}
+
+.nx-content {
+    flex: 1;
+    min-width: 0;
+    padding: 30px 28px 48px;
+}
+
+/* Round glass buttons in the top bar: theme, menu, sign out. */
+.nx-round-btn {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: var(--pill-bg);
+    border: 1px solid var(--badge-border);
+    color: var(--text-main);
+    cursor: pointer;
+    transition: transform 0.2s var(--ease-out), background 0.2s ease, border-color 0.2s ease;
+}
+
+.nx-round-btn:hover {
+    transform: scale(1.06);
+    background: var(--pill-hover);
+    border-color: var(--card-hover-border);
+}
+
+.nx-round-btn:active { transform: scale(0.95); }
+
+/* ==========================================================================
+   Accent picker: a round button in the top bar and a glass popover
+   ========================================================================== */
+.nx-accent { position: relative; }
+
+.nx-accent-swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 32% 28%, rgb(var(--c-glow)) 0%, rgb(var(--c-accent)) 48%, rgb(var(--c-accent-deep)) 100%);
+    box-shadow: 0 0 10px rgb(var(--c-accent) / 0.6);
+}
+
+.nx-accent-popover {
+    position: absolute;
+    top: calc(100% + 12px);
+    right: 0;
+    z-index: 200;
+    width: 272px;
+    padding: 16px;
+    border-radius: 22px;
+    /* Solid, not glass. The popover lives inside the top bar, and an element
+       with a backdrop-filter is the backdrop root of everything in it: a
+       glass popover here would blur only the bar, and the page behind would
+       show through sharp. */
+    background: var(--card-solid);
+    border: 1px solid var(--nav-border);
+    box-shadow: var(--float-shadow), inset 0 1px 1.5px var(--card-specular);
+    animation: nx-pop 0.22s var(--ease-out);
+}
+
+.nx-accent-title {
+    margin-bottom: 10px;
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+
+.nx-accent-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.nx-accent-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 2px;
+    border-radius: 14px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-main);
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.nx-accent-option:hover { background: var(--pill-bg); }
+
+.nx-accent-option[aria-pressed="true"] {
+    border-color: rgb(var(--c-accent) / 0.6);
+    background: rgb(var(--c-accent) / 0.1);
+}
+
+.nx-orb {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    box-shadow: inset -3px -3px 8px rgba(0, 0, 0, 0.55), inset 2px 2px 5px rgba(255, 255, 255, 0.45);
+}
+
+.nx-accent-custom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--card-border);
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.nx-accent-custom input {
+    width: 44px;
+    height: 28px;
+    padding: 2px;
+    border: 1px solid var(--badge-border);
+    border-radius: 9px;
+    background: transparent;
+    cursor: pointer;
+}
+
+.nx-accent-reset { width: 100%; margin-top: 12px; }
+
+/* The background row: 3D, 2D, off. */
+.nx-accent-section {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--card-border);
+}
+
+.nx-backdrop-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.nx-backdrop-grid .nx-accent-option { padding: 9px 2px; font-size: 0.7rem; font-weight: 700; }
+
+/* ==========================================================================
+   Buttons
+   ========================================================================== */
+.btn-modern {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 20px;
+    font-size: 0.86rem;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    border-radius: 9999px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-main);
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.28s var(--ease-out), box-shadow 0.28s var(--ease-out), background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.btn-modern:active { transform: scale(0.97); }
+.btn-modern:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-modern.btn-sm { padding: 6px 14px; font-size: 0.76rem; gap: 6px; }
+
+/* Primary: a caustic mesh of the accent, with a moving sheen on hover. */
+.btn-primary {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    border: none;
+    color: rgb(var(--c-on-accent));
+    background: linear-gradient(135deg,
+        color-mix(in srgb, rgb(var(--c-glow)) 55%, rgb(var(--c-accent))) 0%,
+        rgb(var(--c-accent)) 38%,
+        color-mix(in srgb, rgb(var(--c-accent)) 62%, rgb(var(--c-accent-deep))) 100%);
+    box-shadow: 0 12px 30px -6px rgb(var(--c-accent) / 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+}
+
+.btn-primary::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    z-index: -1;
+    border-radius: inherit;
+    background: linear-gradient(90deg,
+        rgb(var(--c-accent)),
+        rgb(var(--c-glow)),
+        color-mix(in srgb, rgb(var(--c-accent)) 60%, rgb(var(--c-accent-deep))),
+        rgb(var(--c-accent)));
+    background-size: 300% 100%;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    animation: nx-accent-shift 3.5s linear infinite;
+}
+
+.btn-primary:not(:disabled):hover::before { opacity: 1; }
+
+.btn-primary:not(:disabled):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 38px -5px rgb(var(--c-accent) / 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+}
+
+@keyframes nx-accent-shift {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 300% 50%; }
+}
+
+.btn-outline {
+    background: var(--pill-bg);
+    border-color: var(--badge-border);
+    box-shadow: inset 0 1px 1px var(--card-specular);
+}
+
+.btn-outline:not(:disabled):hover {
+    background: var(--pill-hover);
+    border-color: var(--card-hover-border);
+}
+
+.btn-ghost { color: var(--text-dim); }
+
+.btn-ghost:not(:disabled):hover {
+    background: var(--pill-bg);
+    color: var(--text-main);
+}
+
+/* Outlined, not solid. Solid is already the primary button, and two solid
+   buttons on one screen say nothing about which one is the safe way out. */
+.btn-danger {
+    background: var(--danger-light);
+    border-color: var(--danger-border);
+    color: var(--danger);
+}
+
+.btn-danger:not(:disabled):hover {
+    background: var(--danger);
+    color: #fff;
+    box-shadow: 0 10px 26px -6px rgba(255, 77, 94, 0.55);
+}
+
+.nx-spinner {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    opacity: 0.85;
+    animation: nx-spin 0.6s linear infinite;
+}
+
+@keyframes nx-spin { to { transform: rotate(360deg); } }
+
+/* ==========================================================================
+   Glass panels
+   ========================================================================== */
+.liquid-panel,
+.card-panel {
+    background: var(--card-bg);
+    backdrop-filter: blur(28px) saturate(170%);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--card-shadow), inset 0 1px 1.5px var(--card-specular);
+    transition: border-color 0.25s ease, transform 0.25s var(--ease-out);
+}
+
+.liquid-panel { border-radius: var(--radius-xl); }
+
+.card-panel {
+    position: relative;
+    padding: 24px;
+    border-radius: var(--radius-lg);
+}
+
+.card-panel.is-hoverable:hover,
+.liquid-panel.is-hoverable:hover { border-color: var(--card-hover-border); }
+
+.page-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 26px;
+}
+
+.page-title { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+.page-title h1 {
+    font-size: clamp(1.8rem, 3vw, 2.4rem);
+    font-weight: 900;
+    letter-spacing: -0.045em;
+    line-height: 1.05;
+}
+
+.page-title h2 {
+    font-size: 1.3rem;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    line-height: 1.15;
+}
+
+.page-title p {
+    font-size: 0.92rem;
+    color: var(--text-dim);
+    max-width: 640px;
+}
+
+.page-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.panel-title { font-size: 1.08rem; font-weight: 800; letter-spacing: -0.03em; }
+.panel-sub { font-size: 0.8rem; color: var(--text-dim); margin-top: 3px; }
+
+/* ==========================================================================
+   Badges
+   ========================================================================== */
+.badge-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 9999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1.1;
+    white-space: nowrap;
+    border: 1px solid var(--badge-border);
+    background: var(--pill-bg);
+    color: var(--text-main);
+}
+
+.badge-status.is-success { background: var(--success-light); border-color: var(--success-border); color: var(--success); }
+.badge-status.is-warning { background: var(--warning-light); border-color: var(--warning-border); color: var(--warning); }
+.badge-status.is-danger { background: var(--danger-light); border-color: var(--danger-border); color: var(--danger); }
+.badge-status.is-info { background: var(--info-light); border-color: var(--info-border); color: var(--info); }
+.badge-status.is-accent { background: rgb(var(--c-accent) / 0.1); border-color: rgb(var(--c-accent) / 0.25); color: var(--accent-text); }
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: currentColor;
+    box-shadow: 0 0 8px currentColor;
+    flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Forms
+   ========================================================================== */
+.form-group { display: flex; flex-direction: column; gap: 7px; }
+
+.form-label {
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text-dim);
+}
+
+.form-input {
+    width: 100%;
+    padding: 11px 15px;
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    background-color: var(--bg-input);
+    color: var(--text-main);
+    font-size: 0.88rem;
+    box-shadow: var(--input-inset);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.form-input:hover { border-color: var(--badge-border); }
+.form-input::placeholder { color: var(--text-light); }
+
+/* The input draws its own focus as a soft accent halo, so the global outline
+   is replaced here rather than removed. */
+.form-input:focus,
+.form-input:focus-visible {
+    outline: none;
+    border-color: rgb(var(--c-accent) / 0.6);
+    box-shadow: 0 0 0 4px rgb(var(--c-accent) / 0.14);
+}
+
+.form-input[aria-invalid="true"] { border-color: var(--danger-border); }
+.form-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.form-hint { font-size: 0.74rem; color: var(--text-dim); }
+.form-error { font-size: 0.74rem; font-weight: 600; color: var(--danger); }
+
+/* ==========================================================================
+   Modal
+   ========================================================================== */
+.nx-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: var(--scrim);
+    backdrop-filter: blur(18px) saturate(160%);
+}
+
+.nx-modal {
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    background: var(--card-bg);
+    backdrop-filter: blur(32px) saturate(180%);
+    border: 1px solid var(--nav-border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--float-shadow), inset 0 1px 1.5px var(--card-specular);
+    animation: nx-pop 0.3s var(--ease-out);
+}
+
+.nx-modal:focus { outline: none; }
+
+.nx-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 22px 26px 16px;
+    border-bottom: 1px solid var(--card-border);
+}
+
+.nx-modal-header h2 { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.03em; }
+.nx-modal-body { padding: 24px 26px; font-size: 0.9rem; color: var(--text-dim); }
+
+.nx-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 26px;
+    background: var(--bg-muted);
+    border-top: 1px solid var(--card-border);
+}
+
+.nx-close-pill {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--pill-bg);
+    border: 1px solid var(--badge-border);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: transform 0.2s var(--ease-out), color 0.2s ease, border-color 0.2s ease;
+}
+
+.nx-close-pill:hover {
+    color: var(--text-main);
+    border-color: var(--card-hover-border);
+    transform: rotate(90deg);
+}
+
+@keyframes nx-pop {
+    from { opacity: 0; transform: scale(0.96) translateY(10px); }
+    to { opacity: 1; transform: none; }
+}
+
+/* ==========================================================================
+   Toasts: glass capsules, bottom right
+   ========================================================================== */
+.nx-toasts {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+    pointer-events: none;
+}
+
+.nx-toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: min(420px, calc(100vw - 32px));
+    padding: 12px 12px 12px 16px;
+    border-radius: 18px;
+    background: var(--card-bg);
+    backdrop-filter: blur(28px) saturate(170%);
+    border: 1px solid var(--nav-border);
+    box-shadow: var(--float-shadow), inset 0 1px 1.5px var(--card-specular);
+    animation: nx-toast-in 0.35s var(--ease-out);
+}
+
+@keyframes nx-toast-in {
+    from { transform: translateY(24px) scale(0.96); opacity: 0; }
+    to { transform: none; opacity: 1; }
+}
+
+.nx-toast-icon {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgb(var(--c-accent) / 0.12);
+    color: var(--accent-text);
+}
+
+.nx-toast.is-success .nx-toast-icon { background: var(--success-light); color: var(--success); }
+.nx-toast.is-error .nx-toast-icon { background: var(--danger-light); color: var(--danger); }
+.nx-toast.is-info .nx-toast-icon { background: var(--info-light); color: var(--info); }
+
+.nx-toast-body { flex: 1; min-width: 0; }
+.nx-toast-title { font-size: 0.84rem; font-weight: 700; }
+.nx-toast-message { font-size: 0.78rem; color: var(--text-dim); overflow-wrap: anywhere; }
+
+/* ==========================================================================
+   Tables
+   ========================================================================== */
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.erp-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.86rem;
+    text-align: left;
+}
+
+.erp-table th {
+    padding: 13px 16px;
+    background: var(--bg-muted);
+    border-bottom: 1px solid var(--card-border);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.erp-table th:first-child { border-top-left-radius: var(--radius-sm); }
+.erp-table th:last-child { border-top-right-radius: var(--radius-sm); }
+
+.erp-table td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--row-border);
+    vertical-align: middle;
+    transition: background-color 0.15s ease;
+}
+
+.erp-table tbody tr:last-child td { border-bottom: none; }
+.erp-table tbody tr:hover td { background: rgb(var(--c-accent) / 0.05); }
+
+.cell-title { font-weight: 700; }
+.cell-sub { font-size: 0.74rem; color: var(--text-dim); margin-top: 2px; }
+.cell-mono { font-family: var(--font-mono); font-size: 0.8rem; }
+
+/* ==========================================================================
+   KPI cards
+   ========================================================================== */
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 16px;
+}
+
+.kpi-card {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px 20px 18px;
+    border-radius: var(--radius-lg);
+    background: var(--card-bg);
+    backdrop-filter: blur(28px) saturate(170%);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--card-shadow), inset 0 1px 1.5px var(--card-specular);
+    transition: border-color 0.25s ease, transform 0.25s var(--ease-out);
+}
+
+/* The accent's fill light, caught in the corner of every card. */
+.kpi-card::before {
+    content: "";
+    position: absolute;
+    top: -60px;
+    right: -60px;
+    width: 160px;
+    height: 160px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgb(var(--c-accent) / 0.16), transparent 70%);
+    pointer-events: none;
+    opacity: 0.7;
+    transition: opacity 0.3s ease;
+}
+
+.kpi-card:hover { transform: translateY(-3px); border-color: var(--card-hover-border); }
+.kpi-card:hover::before { opacity: 1; }
+
+.kpi-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+.kpi-label {
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+
+.kpi-value {
+    font-family: var(--font-mono);
+    font-size: 1.7rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+}
+
+.kpi-value small {
+    margin-left: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text-sub);
+}
+
+.kpi-foot { font-size: 0.76rem; color: var(--text-dim); overflow-wrap: anywhere; }
+
+/* ==========================================================================
+   Dashboard grid and the activity column
+   ========================================================================== */
+.nx-grid-main {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.nx-stack { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+
+.nx-list { display: flex; flex-direction: column; gap: 8px; }
+
+.nx-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--card-border);
+    background: var(--pill-bg);
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.nx-list-item:hover { border-color: var(--card-hover-border); background: var(--pill-hover); }
+.nx-list-title { font-size: 0.84rem; font-weight: 700; }
+.nx-list-meta { font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-dim); margin-top: 2px; overflow-wrap: anywhere; }
+
+/* ==========================================================================
+   Loading and empty states
+   ========================================================================== */
+.nx-skeleton {
+    background:
+        linear-gradient(90deg, transparent, rgb(var(--c-glow) / 0.08), transparent) 0 0 / 200% 100% no-repeat,
+        var(--pill-bg);
+    animation: nx-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes nx-shimmer {
+    from { background-position: 150% 0, 0 0; }
+    to { background-position: -50% 0, 0 0; }
+}
+
+.nx-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 36px 24px;
+}
+
+.nx-empty-orb {
+    width: 52px;
+    height: 52px;
+    margin-bottom: 16px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: rgb(var(--c-on-accent));
+    background: radial-gradient(circle at 32% 25%, color-mix(in srgb, rgb(var(--c-glow)) 60%, white) 0%, rgb(var(--c-accent)) 40%, rgb(var(--c-accent-deep)) 80%, #050505 100%);
+    box-shadow: inset -6px -6px 16px rgba(0, 0, 0, 0.7), inset 5px 5px 12px rgba(255, 255, 255, 0.45), 0 14px 32px -8px rgb(var(--c-accent) / 0.5);
+}
+
+.nx-empty h3 { font-size: 1.05rem; font-weight: 800; letter-spacing: -0.03em; }
+.nx-empty p { max-width: 380px; margin-top: 6px; font-size: 0.86rem; color: var(--text-dim); }
+
+/* ==========================================================================
+   Sign-in: a statement on the left, the glass card on the right
+   ========================================================================== */
+.nx-auth {
+    position: relative;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 440px);
+    align-items: center;
+    gap: 48px;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 96px 32px 48px;
+}
+
+.nx-auth-corner { position: absolute; top: 22px; right: 22px; }
+.nx-auth-hero { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.nx-auth-hero h1 { font-size: clamp(2.6rem, 6vw, 4.6rem); }
+.nx-auth-hero p { max-width: 460px; font-size: 1rem; color: var(--text-dim); }
+.nx-auth-card { padding: 34px 30px 30px; }
+.nx-auth-card h2 { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.04em; }
+.nx-auth-form { display: flex; flex-direction: column; gap: 16px; margin-top: 24px; }
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+@media (max-width: 1180px) {
+    .nx-grid-main { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Below this the sidebar becomes a drawer. The number is repeated in
+   LayoutAuthenticated's matchMedia, which closes the drawer past it. */
+@media (max-width: 960px) {
+    .nx-sidebar { transform: translateX(-100%); }
+    .nx-sidebar.is-open { transform: none; }
+    .nx-main { margin-left: 0; }
+    .nx-auth { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 88px; }
+}
+
+@media (max-width: 720px) {
+    .nx-topbar { margin: 12px 16px 0; top: 12px; padding: 0 8px; }
+    .nx-content { padding: 24px 16px 40px; }
+    .nx-hide-sm { display: none; }
+    .kpi-value { font-size: 1.5rem; }
+    .nx-toasts { left: 16px; right: 16px; bottom: 16px; align-items: stretch; }
+    .nx-toast { width: auto; }
+    .nx-auth { padding: 80px 16px 32px; }
+}
+
+/* An indefinite loop is exactly what this setting exists to stop. The ribbon
+   is not even loaded under it -- see src/nexora/background.js. */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

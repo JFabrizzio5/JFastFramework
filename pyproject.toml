@@ -38,7 +38,10 @@ classifiers = [
 # which is the point of having one. `typer` and `tzdata` are tools rather than
 # API surface and keep floors only.
 dependencies = [
-    "fastapi>=0.115,<1",
+    # 0.121 is the first with `Depends(..., scope="function")`, which is what
+    # lets a request-scoped session commit before the response is sent. Below
+    # it the commit runs after, and a failed one has already answered 2xx.
+    "fastapi>=0.121,<1",
     # Imported directly by nine modules here -- middleware, the proxy headers,
     # the error responses -- and it was never declared, so the version this
     # framework runs on was whatever FastAPI happened to pull. FastAPI's own
@@ -66,7 +69,9 @@ dependencies = [
 
 [project.optional-dependencies]
 server = ["uvicorn[standard]>=0.32"]
-db = ["sqlalchemy[asyncio]>=2.0", "asyncpg>=0.30", "alembic>=1.14"]
+# 2.0.16 for `postgresql_nulls_not_distinct`, which the generated unique
+# constraints use so they hold on rows with no tenant.
+db = ["sqlalchemy[asyncio]>=2.0.16", "asyncpg>=0.30", "alembic>=1.14"]
 cache = ["redis>=5.2"]
 metrics = ["prometheus-client>=0.21"]
 sentry = ["sentry-sdk>=2.19"]
@@ -105,7 +110,14 @@ validation = ["email-validator>=2.2", "phonenumbers>=8.13"]
 locale = ["babel>=2.16"]
 retry = ["tenacity>=9.0"]
 gateway = ["httpx>=0.28"]
+# The client for sibling services: deadlines, retries, breakers, bulkheads.
+http = ["httpx>=0.28"]
 auth = ["pyjwt[crypto]>=2.10", "httpx>=0.28"]
+# Login, users and roles on top of `auth`. argon2id is the password hash
+# OWASP recommends; the cffi binding is the reference implementation.
+accounts = ["argon2-cffi>=23.1", "pyjwt[crypto]>=2.10", "httpx>=0.28"]
+# Reversible encryption for business secrets (jfastframework.encryption).
+encryption = ["cryptography>=43"]
 queue = []
 rabbitmq = ["aio-pika>=9.5"]
 # Local disks need nothing: the standard library can write a file.
@@ -144,7 +156,7 @@ dev = [
     "jfastframework[all]",
 ]
 all = [
-    "jfastframework[server,db,cache,metrics,sentry,mongo,qdrant,rag,web,gateway,auth,queue,rabbitmq,kafka,worker,storage,images,s3,fcm,oidc,aws,mail,exports,xml,validation,locale,retry]",
+    "jfastframework[server,db,cache,metrics,sentry,mongo,qdrant,rag,web,gateway,http,auth,accounts,encryption,queue,rabbitmq,kafka,worker,storage,images,s3,fcm,oidc,aws,mail,exports,xml,validation,locale,retry]",
 ]
 
 [project.scripts]
@@ -173,6 +185,10 @@ notifications = "jfastframework.plugins.builtin.notifications:NotificationsPlugi
 mail = "jfastframework.plugins.builtin.mail:MailPlugin"
 channels = "jfastframework.plugins.builtin.channels:ChannelsPlugin"
 websocket = "jfastframework.plugins.builtin.websocket:WebSocketPlugin"
+outbox = "jfastframework.plugins.builtin.outbox:OutboxPlugin"
+idempotency = "jfastframework.plugins.builtin.idempotency:IdempotencyPlugin"
+accounts = "jfastframework.plugins.builtin.accounts:AccountsPlugin"
+http = "jfastframework.plugins.builtin.http:HttpPlugin"
 
 [project.urls]
 Homepage = "https://github.com/JFabrizzio5/JFastFramework"
@@ -203,7 +219,9 @@ ignore = ["ASYNC109"]
 "src/jfastframework/cli/ui.py" = ["RUF001"]
 # glyphs.py is nothing but those characters: it is the table of them.
 "src/jfastframework/cli/glyphs.py" = ["RUF001"]
-"src/jfastframework/cli/main.py" = ["B008", "RUF001"]
+# Typer declares options as call-in-default; the command modules are written
+# in that style rather than binding every option to a module constant.
+"src/jfastframework/cli/commands/*" = ["B008"]
 # FastAPI dependencies are declared as call-in-default; that is the API.
 "src/jfastframework/plugins/builtin/*" = ["B008"]
 "tests/*" = ["B008"]

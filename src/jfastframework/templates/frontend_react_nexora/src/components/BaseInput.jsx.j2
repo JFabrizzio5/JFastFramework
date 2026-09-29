@@ -1,0 +1,52 @@
+import { forwardRef, useId } from 'react'
+
+// `label` is required rather than optional: a placeholder disappears the
+// moment someone types, and a screen reader never had it to begin with.
+//
+// forwardRef so react-hook-form and friends can register the field; a form
+// library that cannot reach the DOM node cannot focus the first error.
+const BaseInput = forwardRef(function BaseInput(
+  { label, id, type = 'text', error = '', hint = '', disabled = false, className = '', ...rest },
+  ref,
+) {
+  const generatedId = useId()
+  const inputId = id ?? generatedId
+  const errorId = `${inputId}-error`
+  const hintId = `${inputId}-hint`
+
+  const hasError = Boolean(error)
+  // The error replaces the hint rather than stacking with it, so the hint
+  // drops out of aria-describedby too: it may only name nodes that exist.
+  const showHint = !hasError && Boolean(hint)
+  const describedBy = [hasError && errorId, showHint && hintId].filter(Boolean).join(' ')
+
+  return (
+    <div className={`form-group ${className}`}>
+      <label htmlFor={inputId} className="form-label">
+        {label}
+      </label>
+      <input
+        {...rest}
+        ref={ref}
+        id={inputId}
+        type={type}
+        disabled={disabled}
+        aria-invalid={hasError || undefined}
+        aria-describedby={describedBy || undefined}
+        className="form-input"
+      />
+      {hasError ? (
+        <p id={errorId} className="form-error">
+          {error}
+        </p>
+      ) : null}
+      {showHint ? (
+        <p id={hintId} className="form-hint">
+          {hint}
+        </p>
+      ) : null}
+    </div>
+  )
+})
+
+export default BaseInput

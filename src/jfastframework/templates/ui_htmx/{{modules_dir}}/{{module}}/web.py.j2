@@ -10,9 +10,9 @@ One handler, one context, no duplicated markup.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request, Response, status
+from fastapi import APIRouter, Form, Query, Request, Response, status
 
-from jfastframework.plugins.builtin.database import session_dependency
+from jfastframework.plugins.builtin.database import DbSession
 
 from . import CreatePayload, build_service
 
@@ -35,9 +35,9 @@ def _services(request: Request, session):
 @router.get("", response_class=Response, summary="{{ module_title }} page")
 async def index(
     request: Request,
-    limit: int = 50,
-    offset: int = 0,
-    session=Depends(session_dependency),
+    session: DbSession,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ) -> Response:
     service, render = _services(request, session)
     page = await service.list(limit=limit, offset=offset)
@@ -47,9 +47,9 @@ async def index(
 @router.post("", response_class=Response, summary="Create from the form")
 async def create(
     request: Request,
+    session: DbSession,
     name: str = Form(...),
     description: str = Form(""),
-    session=Depends(session_dependency),
 ) -> Response:
     service, render = _services(request, session)
     # The validated model, not a dict. Every layout's service reads attributes
@@ -64,8 +64,8 @@ async def create(
 @router.delete("/{item_id}", response_class=Response, summary="Delete from the table")
 async def delete(
     request: Request,
+    session: DbSession,
     item_id: int,
-    session=Depends(session_dependency),
 ) -> Response:
     service, _ = _services(request, session)
     await service.delete(item_id)

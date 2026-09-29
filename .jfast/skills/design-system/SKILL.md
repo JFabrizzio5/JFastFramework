@@ -37,15 +37,33 @@ For each: anatomy, states (default / hover / active / disabled / loading /
 empty / error), and what it must never do.
 ```
 
+## The user's look wins
+
+A generated frontend starts in one of two looks — `nexora` (the default) or
+`classic`, chosen with `--template` and recorded in the project's
+`.jfast-template`. That is a starting point. When the user asks for another
+look, produce it: `--template classic` for the other shipped one, or a restyle
+of the tokens and components for anything else. The rules below keep a look
+consistent; none of them is a reason to keep the default.
+
+The pages the nexora look was drawn from -- JFast Suite: dashboard, CRM,
+payments, social feed, tables, widgets -- are copied into
+`src/jfastframework/templates/agent_design_nexora/.jfast/skills/nexora-reference/suite/`,
+and every nexora frontend generated with `--agent-docs` gets them as the
+`nexora-reference` skill. Look there before designing a screen from nothing.
+
 ## Steps
 
 1. **Find the DESIGN.md.** Check the frontend root, then the module, then the
    repository root. If none exists, write one *before* writing components —
    otherwise the tokens get invented per file and never converge.
 
-2. **Emit tokens once.** In a generated SPA that means `@theme` in
+2. **Emit tokens once.** In a classic SPA that means `@theme` in
    `src/style.css` (Tailwind v4), whose surface tokens are declared
    `@theme inline` so one variable swap flips the whole interface. In a
+   nexora SPA the tokens are in `src/nexora/nexora.css` and `src/style.css`
+   maps them onto the same utilities; the accent is derived from one colour
+   by `src/nexora/accent.js`. In a
    server-rendered service it means custom properties on `:root` in
    `static/app.css`. Either way: define every token on the light `:root` and
    only *redefine* it in the dark block. A colour whose single definition is

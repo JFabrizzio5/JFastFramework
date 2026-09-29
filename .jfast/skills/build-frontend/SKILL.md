@@ -3,7 +3,7 @@ name: build-frontend
 description: Build a UI for a JFast backend — server-rendered with HTMX, or a
   Vue/React SPA — and generate its modules.
 when_to_use: The user wants a UI, an admin panel, a dashboard, a CRUD screen,
-  or "a frontend for this API".
+  "a frontend for this API", or a different look for one.
 when_not_to_use: They want Angular (not generated — see the bottom), or the
   surface is machine-to-machine and needs no UI at all.
 ---
@@ -83,6 +83,27 @@ npm install
 npm run dev
 ```
 
+### Pick the look
+
+`--template` chooses what the frontend looks like. Same components, router,
+stores and generator markers either way — only the files that draw differ.
+
+| `--template` | Looks like |
+| --- | --- |
+| `nexora` (default) | Liquid glass: frosted panels over a black studio, glass sidebar, island top bar, a WebGL ribbon (three.js, lazy-loaded), an accent picker |
+| `classic` | Plain Tailwind panels, one crimson accent, no WebGL |
+
+```bash
+jfast new service admin --kind spa --frontend react --template classic
+```
+
+**The user's requested look wins.** If they ask for classic, pass
+`--template classic`; for a look jfast does not ship, generate the closer one
+and restyle its tokens and `src/components/`. Never keep nexora because it is
+the default, and never refuse because a design skill describes the current
+look — "use a token, not a raw colour" means consistency within the look they
+chose. `jfast start` and `jfast init` take the same choice.
+
 `VITE_API_URL` is already written from `jfast.workspace.toml` — the gateway if
 there is one, the single backend if not. The home page calls `/health` through
 it on load, so a wrong value shows up immediately.
@@ -103,8 +124,10 @@ Creates `src/ModuloFacturas/{Components/{Modals,Tables},Pages,Routes,Services}`
 and registers it in `src/router/index.js` at `/*nuevaRuta*/` and in
 `src/menuAside.js` at `/*nuevoModulo*/`.
 
-The framework is detected from the project — do not pass `--frontend` again
-inside an existing project.
+The framework and the look are detected from the project — the look from the
+`.jfast-template` stamp — so the page matches the screens around it. Do not
+pass `--frontend` or `--template` again inside an existing project unless you
+mean to override them.
 
 **Never remove those markers.** With them, re-running is idempotent and a
 missing marker raises with the file path. Without them, the generator has
@@ -115,8 +138,10 @@ nowhere to write and the failure is a blank page.
 - HTTP lives in `Services/`, never in a component. Everything goes through the
   single axios instance in `src/services/api.js`, which already turns the
   backend's RFC 7807 `detail` into `error.message`.
-- Tailwind v4 utilities only. Tokens live in `@theme` in `src/style.css` — add
-  a token before using a value, never a raw hex in a component.
+- Colours come from tokens, never a raw hex in a component. Classic: `@theme`
+  in `src/style.css`. Nexora: `src/nexora/nexora.css`, exposed to Tailwind in
+  `src/style.css`; the accent is one colour, set with `VITE_ACCENT` or the
+  in-app picker.
 - Vue: `<script setup>`, Composition API, pages end in `View.vue`.
 - React: function components and hooks, pages end in `View.jsx`.
 
@@ -125,9 +150,10 @@ nowhere to write and the failure is a blank page.
 ## Design
 
 Before writing components, read `.jfast/skills/design-system/SKILL.md` and the
-project's `DESIGN.md`. The generated stylesheet is a token baseline so the
-first screen is not unstyled — it is meant to be replaced, not extended
-ad hoc.
+project's `DESIGN.md`. A project generated with `--agent-docs` carries its own
+copy of that skill, describing the look it was generated with. Either look is
+a baseline so the first screen is not unstyled — it is meant to be replaced
+when the user wants something else, not extended ad hoc.
 
 ## Verification
 
@@ -172,6 +198,8 @@ user needs Angular: `ng new` the project, then keep the same `Modulo<Name>`
 structure by hand. Generator support is PLAN.md phase 3, gated on a CI job that
 actually builds the output.
 
-**Also be honest about Vue and React:** the scaffolds are verified in CI to
-render, patch and structure correctly, but `npm install` and `vite build` have
-never run against them. Say so when handing one over.
+**Also be honest about Vue and React:** CI runs `npm install` and
+`vite build` on both frameworks in both looks, with a generated view
+(`scripts/smoke_frontend.sh`). It does not open a browser: nothing automated
+checks how a screen looks, and the WebGL ribbon is only ever seen by a person.
+Say so when handing one over.

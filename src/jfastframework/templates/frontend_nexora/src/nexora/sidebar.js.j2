@@ -1,0 +1,33 @@
+// Whether the sidebar is folded away on a wide screen.
+//
+// Below 960px the sidebar is a drawer, closed at load, and this does not
+// apply. Above it, the menu button folds the sidebar out of the way so the
+// page gets the full width -- and the choice is remembered, because someone
+// who wanted the room once wants it on the next page too.
+//
+// The state is `data-sidebar="collapsed"` on <html>, which nexora.css reads.
+// index.html sets it before the first paint, so a folded sidebar does not
+// slide in and out again on every reload.
+
+export const SIDEBAR_KEY = '{{ service_slug }}:sidebar'
+
+// The drawer breakpoint, repeated from nexora.css.
+export const DESKTOP_QUERY = '(min-width: 961px)'
+
+export function isCollapsed() {
+  return document.documentElement.getAttribute('data-sidebar') === 'collapsed'
+}
+
+export function setCollapsed(collapsed) {
+  if (collapsed) {
+    document.documentElement.setAttribute('data-sidebar', 'collapsed')
+  } else {
+    document.documentElement.removeAttribute('data-sidebar')
+  }
+  try {
+    if (collapsed) localStorage.setItem(SIDEBAR_KEY, 'collapsed')
+    else localStorage.removeItem(SIDEBAR_KEY)
+  } catch {
+    // Not remembered, but still applied for this visit.
+  }
+}

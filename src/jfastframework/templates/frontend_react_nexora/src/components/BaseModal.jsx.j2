@@ -1,0 +1,121 @@
+import { mdiClose } from '@mdi/js'
+import { useEffect, useId, useRef } from 'react'
+import { createPortal } from 'react-dom'
+
+import BaseIcon from '@/components/BaseIcon.jsx'
+
+const SIZES = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl' }
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+export default function BaseModal({
+  open,
+  onClose,
+  title,
+  size = 'md',
+  footer = null,
+  children,
+}) {
+  const panelRef = useRef(null)
+  const pressStartedOnBackdrop = useRef(false)
+  const onCloseRef = useRef(onClose)
+  const titleId = useId()
+
+  // onClose goes through a ref so an inline arrow from the caller does not
+  // re-run the effect below on every render -- re-running it would re-lock the
+  // body and pull focus back to the first field while someone is typing.
+  useEffect(() => {
+    onCloseRef.current = onClose
+  })
+
+  useEffect(() => {
+    if (!open) return undefined
+
+    const panel = panelRef.current
+    const previouslyFocused = document.activeElement
+    const previousOverflow = document.body.style.overflow
+
+    // Restoring the previous value rather than clearing it: a layout that was
+    // already locking scroll stays locked when this dialog closes.
+    document.body.style.overflow = 'hidden'
+
+    const focusable = () => Array.from(panel?.querySelectorAll(FOCUSABLE) ?? [])
+    const initial = focusable()[0] ?? panel
+    initial?.focus()
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        onCloseRef.current?.()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const items = focusable()
+      if (items.length === 0) {
+        event.preventDefault()
+        return
+      }
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement
+
+      // Tab off either end wraps back inside. Without this, focus walks into
+      // the page the dialog is covering and the user is editing a form they
+      // cannot see.
+      if (event.shiftKey && (active === first || active === panel)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousOverflow
+      // Focus returns to whatever opened the dialog; dropping it sends the
+      // caret to <body> and a keyboard user restarts from the top of the page.
+      if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus()
+    }
+  }, [open])
+
+  if (!open) return null
+
+  // A selection that starts inside the panel and ends on the backdrop still
+  // fires a click on the backdrop, so the press has to have started there too.
+  function handleMouseDown(event) {
+    pressStartedOnBackdrop.current = event.target === event.currentTarget
+  }
+
+  function handleClick(event) {
+    if (event.target === event.currentTarget && pressStartedOnBackdrop.current) onClose()
+  }
+
+  return createPortal(
+    <div className="nx-modal-backdrop" onMouseDown={handleMouseDown} onClick={handleClick}>
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className={`nx-modal ${SIZES[size] ?? SIZES.md}`}
+      >
+        <div className="nx-modal-header">
+          <h2 id={titleId}>{title}</h2>
+          <button type="button" className="nx-close-pill" aria-label="Close dialog" onClick={onClose}>
+            <BaseIcon path={mdiClose} size="sm" />
+          </button>
+        </div>
+
+        <div className="nx-modal-body">{children}</div>
+
+        {footer ? <div className="nx-modal-footer">{footer}</div> : null}
+      </div>
+    </div>,
+    document.body,
+  )
+}

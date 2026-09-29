@@ -1,0 +1,606 @@
+/**
+ * NEXORA SUITE — utilidades comunes
+ * Paleta de vidrio líquido, modo claro/oscuro, fondo ambiental, panel de
+ * paleta, toasts, modales, tilt 3D y navegación móvil.
+ *
+ * API pública: window.NexoraTheme (setPreset, setColors, setMode, toggleMode, get)
+ * Se conservan los nombres viejos (toggleTheme, showToast, openAppleModal…)
+ * porque las páginas los llaman desde atributos onclick.
+ */
+
+/* ===========================================================
+   1. PALETAS
+   Solo accent, glow y body son obligatorios; lo demás se deriva.
+     accent -> acento de la UI y luz de relleno del vidrio
+     glow   -> brillo de los bordes
+     body   -> tinte del líquido (casi negro = vidrio ahumado)
+   =========================================================== */
+const NX_PALETTES = {
+    cherry:   { name: 'Cherry',   accent: '#FF1744', glow: '#FF6F8A', body: '#D0103A' },
+    ruby:     { name: 'Ruby',     accent: '#E11D2E', glow: '#FF4D5E', body: '#7A0714' },
+    onyx:     { name: 'Onyx Red', accent: '#EF2B3F', glow: '#FF6B76', body: '#0E0E10' },
+    obsidian: { name: 'Obsidian', accent: '#D4D4D8', glow: '#FFFFFF', body: '#131316' },
+    amber:    { name: 'Amber',    accent: '#F59E0B', glow: '#FFB547', body: '#4A2204' },
+    violet:   { name: 'Violet',   accent: '#8B5CF6', glow: '#C4B5FD', body: '#2E0B66' },
+    glacier:  { name: 'Glacier',  accent: '#38BDF8', glow: '#BAE6FD', body: '#08304D' },
+    emerald:  { name: 'Emerald',  accent: '#10B981', glow: '#6EE7B7', body: '#053D2E' }
+};
+const NX_DEFAULT_PRESET = 'cherry';
+const NX_STORAGE_KEY = 'nexora_liquid_v1';
+
+function nxHexToRgb(hex) {
+    let h = String(hex).replace('#', '').trim();
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h, 16);
+    if (Number.isNaN(n)) return { r: 0, g: 0, b: 0 };
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function nxRgbToHex({ r, g, b }) {
+    return '#' + [r, g, b]
+        .map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0'))
+        .join('').toUpperCase();
+}
+
+function nxMix(a, b, t) {
+    const A = nxHexToRgb(a), B = nxHexToRgb(b);
+    return nxRgbToHex({ r: A.r + (B.r - A.r) * t, g: A.g + (B.g - A.g) * t, b: A.b + (B.b - A.b) * t });
+}
+
+function nxLuminance(hex) {
+    const { r, g, b } = nxHexToRgb(hex);
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function nxTriplet(hex, sep = ' ') {
+    const { r, g, b } = nxHexToRgb(hex);
+    return [r, g, b].join(sep);
+}
+
+function nxResolvePalette(p) {
+    const accent = (p.accent || NX_PALETTES[NX_DEFAULT_PRESET].accent).toUpperCase();
+    const glow = (p.glow || nxMix(accent, '#FFFFFF', 0.35)).toUpperCase();
+    const body = (p.body || nxMix(accent, '#000000', 0.6)).toUpperCase();
+    return {
+        name: p.name || 'Custom',
+        accent,
+        glow,
+        body,
+        deep: (p.deep || nxMix(accent, '#000000', 0.78)).toUpperCase(),
+        spec: (p.spec || nxMix('#FFFFFF', glow, 0.12)).toUpperCase(),
+        onAccent: nxLuminance(accent) > 0.62 ? '#0A0A0C' : '#FFFFFF'
+    };
+}
+
+/* ===========================================================
+   2. ESTADO PERSISTENTE
+   =========================================================== */
+const nxState = {
+    preset: NX_DEFAULT_PRESET,
+    palette: nxResolvePalette(NX_PALETTES[NX_DEFAULT_PRESET]),
+    mode: 'dark',
+    radius: 'std',
+    density: 'standard',
+    intensity: 1,
+    speed: 1,
+    twist: 1
+};
+
+function nxSave() {
+    try {
+        const { name, accent, glow, body } = nxState.palette;
+        localStorage.setItem(NX_STORAGE_KEY, JSON.stringify({
+            preset: nxState.preset,
+            palette: { name, accent, glow, body },
+            mode: nxState.mode,
+            radius: nxState.radius,
+            density: nxState.density,
+            intensity: nxState.intensity,
+            speed: nxState.speed,
+            twist: nxState.twist
+        }));
+    } catch (e) { /* sin storage: solo en memoria */ }
+}
+
+function nxLoad() {
+    try {
+        const raw = localStorage.getItem(NX_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+}
+
+/* ===========================================================
+   3. APLICAR PALETA / MODO
+   =========================================================== */
+function nxApplyPalette(raw, presetKey, silent) {
+    const p = nxResolvePalette(raw);
+    nxState.palette = p;
+    nxState.preset = presetKey || null;
+
+    const root = document.documentElement.style;
+    root.setProperty('--c-accent', nxTriplet(p.accent));
+    root.setProperty('--c-accent-deep', nxTriplet(p.deep));
+    root.setProperty('--c-glow', nxTriplet(p.glow));
+    root.setProperty('--c-body', nxTriplet(p.body));
+    root.setProperty('--c-on-accent', nxTriplet(p.onAccent));
+    // Formato con comas para el código viejo que hace rgba(var(--primary-rgb), a)
+    root.setProperty('--primary-rgb', nxTriplet(p.accent, ', '));
+    root.setProperty('--secondary-rgb', nxTriplet(p.glow, ', '));
+
+    nxSyncPanel();
+    nxSave();
+    document.dispatchEvent(new CustomEvent('nexora:palette', { detail: Object.assign({}, p) }));
+    if (!silent) showToast('Paleta', `${p.name} aplicada`, 'success');
+}
+
+function nxApplyMode(mode, silent) {
+    nxState.mode = mode === 'light' ? 'light' : 'dark';
+    const isDark = nxState.mode === 'dark';
+    document.documentElement.classList.toggle('nx-light', !isDark);
+    if (document.body) {
+        document.body.classList.toggle('dark-mode', isDark);
+        document.body.classList.toggle('light-mode', !isDark);
+    }
+    updateThemeIcon(isDark);
+    nxSyncPanel();
+    nxSave();
+    document.dispatchEvent(new CustomEvent('nexora:mode', { detail: { mode: nxState.mode } }));
+    if (!silent) showToast('Modo de pantalla', isDark ? 'Estudio oscuro' : 'Estudio claro', 'info');
+}
+
+const NX_RADII = { min: ['12px', '16px'], std: ['20px', '26px'], soft: ['26px', '32px'] };
+const NX_DENSITY = { compact: ['1120px', '14px'], standard: ['1240px', '15px'], generous: ['1360px', '16px'] };
+
+function nxApplyRadius(key) {
+    const r = NX_RADII[key] || NX_RADII.std;
+    nxState.radius = NX_RADII[key] ? key : 'std';
+    document.documentElement.style.setProperty('--radius-lg', r[0]);
+    document.documentElement.style.setProperty('--radius-xl', r[1]);
+}
+
+function nxApplyDensity(key) {
+    const d = NX_DENSITY[key] || NX_DENSITY.standard;
+    nxState.density = NX_DENSITY[key] ? key : 'standard';
+    document.documentElement.style.setProperty('--container-max', d[0]);
+    document.documentElement.style.fontSize = d[1];
+}
+
+window.NexoraTheme = {
+    presets: NX_PALETTES,
+    setPreset: (key) => { if (NX_PALETTES[key]) nxApplyPalette(NX_PALETTES[key], key); },
+    setColors: (colors) => nxApplyPalette(Object.assign({}, nxState.palette, { name: 'Custom' }, colors), null),
+    setMode: (mode) => nxApplyMode(mode),
+    toggleMode: () => nxApplyMode(nxState.mode === 'dark' ? 'light' : 'dark'),
+    get: () => Object.assign({ mode: nxState.mode }, nxState.palette),
+    state: nxState,
+    save: nxSave
+};
+
+/* ---- Nombres heredados que llaman las páginas ---- */
+function toggleTheme() { window.NexoraTheme.toggleMode(); }
+function setThemeModeDirect(isDark) { nxApplyMode(isDark ? 'dark' : 'light'); }
+function setAppleAccent(hex, rgb, name) { nxApplyPalette({ name: name || 'Custom', accent: hex }, null); }
+function setAppleRadius(val, label) {
+    const key = parseInt(val, 10) <= 10 ? 'min' : parseInt(val, 10) >= 26 ? 'soft' : 'std';
+    nxApplyRadius(key); nxSyncPanel(); nxSave();
+    showToast('Bordes', label || key, 'info');
+}
+function setAppleDensity(val, label) {
+    nxApplyDensity(val); nxSyncPanel(); nxSave();
+    showToast('Densidad', label || val, 'info');
+}
+
+function updateThemeIcon(isDark) {
+    document.querySelectorAll('.theme-toggle-btn').forEach(btn => {
+        btn.innerHTML = isDark
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-2.93 1.41-1.41m11.32-11.32 1.41-1.41M2 12h2m16 0h2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41"/></svg>';
+        btn.setAttribute('title', isDark ? 'Cambiar a estudio claro' : 'Cambiar a estudio oscuro');
+        btn.setAttribute('aria-label', btn.getAttribute('title'));
+    });
+}
+
+/* ===========================================================
+   4. FONDO AMBIENTAL + BRILLO QUE SIGUE AL MOUSE
+   =========================================================== */
+function nxInjectAmbient() {
+    if (document.querySelector('.nx-ambient')) return;
+    const amb = document.createElement('div');
+    amb.className = 'nx-ambient';
+    amb.setAttribute('aria-hidden', 'true');
+    amb.innerHTML = '<div class="nx-mouse-glow"></div>';
+    document.body.prepend(amb);
+
+    const glow = amb.firstElementChild;
+    let raf = 0;
+    window.addEventListener('mousemove', (e) => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+            glow.style.left = `${e.clientX}px`;
+            glow.style.top = `${e.clientY}px`;
+            raf = 0;
+        });
+    }, { passive: true });
+}
+
+/* ===========================================================
+   5. PANEL DE PALETA (antes "cajón de personalización")
+   =========================================================== */
+const NX_ICON_SLIDERS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>';
+
+function nxInjectPanel() {
+    if (document.getElementById('globalCustomizationDrawer')) return;
+
+    const presets = Object.entries(NX_PALETTES).map(([key, p]) => `
+        <button type="button" class="nx-preset-btn" data-nx-preset="${key}" aria-label="${p.name}">
+            <span class="nx-orb" style="background: radial-gradient(circle at 32% 28%, ${p.glow} 0%, ${p.accent} 42%, ${p.body} 80%, #000 100%);"></span>
+            <span>${p.name}</span>
+        </button>`).join('');
+
+    const html = `
+        <div class="customization-drawer-overlay" id="globalCustomizationOverlay"></div>
+        <aside class="customization-drawer" id="globalCustomizationDrawer" role="dialog" aria-label="Paleta líquida">
+            <div class="customization-header">
+                <div>
+                    <h3>Paleta líquida</h3>
+                    <span class="nx-mono" id="nxPaletteName" style="font-size:0.68rem;color:var(--text-dim);">Cherry</span>
+                </div>
+                <button type="button" class="apple-modal-close-pill" data-nx-close aria-label="Cerrar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="customization-body">
+                <div class="nx-preset-grid">${presets}</div>
+
+                <div style="border-top:1px solid var(--card-border);padding-top:14px;">
+                    <div class="customization-section-title">Colores propios</div>
+                    <label class="nx-color-row"><span>Acento<small>Botones, luz de relleno, destellos</small></span><span><span class="nx-hex" id="nxHexAccent"></span><input type="color" class="color-swatch-input" id="nxPickAccent"></span></label>
+                    <label class="nx-color-row"><span>Brillo de borde<small>Aristas del vidrio</small></span><span><span class="nx-hex" id="nxHexGlow"></span><input type="color" class="color-swatch-input" id="nxPickGlow"></span></label>
+                    <label class="nx-color-row"><span>Cuerpo<small>Tinte del líquido (oscuro = ahumado)</small></span><span><span class="nx-hex" id="nxHexBody"></span><input type="color" class="color-swatch-input" id="nxPickBody"></span></label>
+                </div>
+
+                <div style="border-top:1px solid var(--card-border);padding-top:14px;display:flex;flex-direction:column;gap:12px;">
+                    <div>
+                        <div class="customization-section-title">Estudio</div>
+                        <div class="nx-seg" data-nx-seg="mode">
+                            <button type="button" data-value="dark">Oscuro</button>
+                            <button type="button" data-value="light">Claro</button>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="customization-section-title">Curvatura</div>
+                        <div class="nx-seg" data-nx-seg="radius">
+                            <button type="button" data-value="min">Mínima</button>
+                            <button type="button" data-value="std">Estándar</button>
+                            <button type="button" data-value="soft">Suave</button>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="customization-section-title">Densidad</div>
+                        <div class="nx-seg" data-nx-seg="density">
+                            <button type="button" data-value="compact">Compacta</button>
+                            <button type="button" data-value="standard">Estándar</button>
+                            <button type="button" data-value="generous">Amplia</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="nxLiquidControls" style="border-top:1px solid var(--card-border);padding-top:14px;display:none;flex-direction:column;gap:12px;">
+                    <div class="customization-section-title" style="margin:0;">Vidrio 3D</div>
+                    <div class="nx-slider-row"><div><span>Intensidad</span><b id="nxLblIntensity">100%</b></div><input type="range" min="40" max="160" value="100" data-nx-liquid="intensity"></div>
+                    <div class="nx-slider-row"><div><span>Velocidad</span><b id="nxLblSpeed">100%</b></div><input type="range" min="0" max="200" value="100" data-nx-liquid="speed"></div>
+                    <div class="nx-slider-row"><div><span>Torsión</span><b id="nxLblTwist">100%</b></div><input type="range" min="0" max="200" value="100" data-nx-liquid="twist"></div>
+                </div>
+
+                <button type="button" class="btn-modern btn-outline" id="nxResetPalette" style="width:100%;font-family:var(--font-mono);font-size:0.72rem;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;stroke-width:2;"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    Restablecer
+                </button>
+            </div>
+        </aside>`;
+
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    while (wrap.firstElementChild) document.body.appendChild(wrap.firstElementChild);
+
+    // Botón flotante solo si la página no trae su propio disparador
+    const hasTrigger = document.querySelector('[onclick*="openCustomizationDrawer"], [onclick*="openThemeDrawer"], [data-open-palette]');
+    if (!hasTrigger) {
+        const fab = document.createElement('button');
+        fab.type = 'button';
+        fab.className = 'floating-customize-btn';
+        fab.setAttribute('data-open-palette', '');
+        fab.innerHTML = `${NX_ICON_SLIDERS}<span>Paleta</span>`;
+        document.body.appendChild(fab);
+    }
+
+    const panel = document.getElementById('globalCustomizationDrawer');
+    panel.addEventListener('click', (e) => {
+        const preset = e.target.closest('[data-nx-preset]');
+        if (preset) { window.NexoraTheme.setPreset(preset.dataset.nxPreset); return; }
+
+        const segBtn = e.target.closest('.nx-seg button');
+        if (segBtn) {
+            const kind = segBtn.parentElement.dataset.nxSeg;
+            const val = segBtn.dataset.value;
+            if (kind === 'mode') nxApplyMode(val);
+            if (kind === 'radius') { nxApplyRadius(val); nxSyncPanel(); nxSave(); }
+            if (kind === 'density') { nxApplyDensity(val); nxSyncPanel(); nxSave(); }
+            return;
+        }
+        if (e.target.closest('[data-nx-close]')) closeCustomizationDrawer();
+    });
+
+    const onPick = () => nxApplyPalette({
+        name: 'Custom',
+        accent: document.getElementById('nxPickAccent').value,
+        glow: document.getElementById('nxPickGlow').value,
+        body: document.getElementById('nxPickBody').value
+    }, null, true);
+    ['nxPickAccent', 'nxPickGlow', 'nxPickBody'].forEach(id => document.getElementById(id).addEventListener('input', onPick));
+
+    panel.querySelectorAll('[data-nx-liquid]').forEach(input => {
+        input.addEventListener('input', () => {
+            const key = input.dataset.nxLiquid;
+            nxState[key] = input.value / 100;
+            nxSyncPanel();
+            nxSave();
+            document.dispatchEvent(new CustomEvent('nexora:liquid', { detail: { intensity: nxState.intensity, speed: nxState.speed, twist: nxState.twist } }));
+        });
+    });
+
+    document.getElementById('nxResetPalette').addEventListener('click', () => {
+        nxState.intensity = 1; nxState.speed = 1; nxState.twist = 1;
+        nxApplyRadius('std');
+        nxApplyDensity('standard');
+        document.dispatchEvent(new CustomEvent('nexora:liquid', { detail: { intensity: 1, speed: 1, twist: 1 } }));
+        nxApplyPalette(NX_PALETTES[NX_DEFAULT_PRESET], NX_DEFAULT_PRESET, true);
+        showToast('Paleta', 'Valores de fábrica restablecidos', 'info');
+    });
+
+    document.getElementById('globalCustomizationOverlay').addEventListener('click', closeCustomizationDrawer);
+}
+
+function nxSyncPanel() {
+    const p = nxState.palette;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('nxPaletteName', p.name);
+    set('nxHexAccent', p.accent);
+    set('nxHexGlow', p.glow);
+    set('nxHexBody', p.body);
+    const pick = (id, v) => { const el = document.getElementById(id); if (el) el.value = v.toLowerCase(); };
+    pick('nxPickAccent', p.accent);
+    pick('nxPickGlow', p.glow);
+    pick('nxPickBody', p.body);
+
+    document.querySelectorAll('[data-nx-preset]').forEach(el => {
+        el.dataset.active = String(el.dataset.nxPreset === nxState.preset);
+    });
+    const segVals = { mode: nxState.mode, radius: nxState.radius, density: nxState.density };
+    document.querySelectorAll('.nx-seg[data-nx-seg]').forEach(seg => {
+        seg.querySelectorAll('button').forEach(b => { b.dataset.active = String(b.dataset.value === segVals[seg.dataset.nxSeg]); });
+    });
+
+    ['intensity', 'speed', 'twist'].forEach(k => {
+        const input = document.querySelector(`[data-nx-liquid="${k}"]`);
+        if (input) input.value = Math.round(nxState[k] * 100);
+        set('nxLbl' + k.charAt(0).toUpperCase() + k.slice(1), `${Math.round(nxState[k] * 100)}%`);
+    });
+    const liquidBox = document.getElementById('nxLiquidControls');
+    if (liquidBox) liquidBox.style.display = window.NexoraLiquid ? 'flex' : 'none';
+}
+
+function openCustomizationDrawer() {
+    const drawer = document.getElementById('globalCustomizationDrawer');
+    const overlay = document.getElementById('globalCustomizationOverlay');
+    if (!drawer) return;
+    nxSyncPanel();
+    drawer.classList.add('active');
+    overlay.classList.add('active');
+}
+
+function closeCustomizationDrawer() {
+    const drawer = document.getElementById('globalCustomizationDrawer');
+    const overlay = document.getElementById('globalCustomizationOverlay');
+    if (drawer) drawer.classList.remove('active');
+    if (overlay) overlay.classList.remove('active');
+}
+
+function toggleCustomizationDrawer() {
+    const drawer = document.getElementById('globalCustomizationDrawer');
+    if (drawer && drawer.classList.contains('active')) closeCustomizationDrawer();
+    else openCustomizationDrawer();
+}
+
+document.addEventListener('click', (e) => {
+    const trigger = e.target.closest('[data-open-palette]');
+    if (trigger) { e.stopPropagation(); toggleCustomizationDrawer(); }
+});
+
+/* ===========================================================
+   6. TOASTS
+   =========================================================== */
+const NX_TOAST_ICONS = {
+    success: '<path d="M20 6 9 17l-5-5"/>',
+    warning: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/>',
+    danger: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>',
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>'
+};
+
+function showToast(title, message, type = 'info') {
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.setAttribute('role', 'status');
+    toast.innerHTML = `
+        <span class="toast-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.2;">${NX_TOAST_ICONS[type] || NX_TOAST_ICONS.info}</svg></span>
+        <div class="toast-body">
+            <div class="toast-title"></div>
+            <div class="toast-message"></div>
+        </div>
+        <button type="button" class="toast-close" aria-label="Cerrar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;stroke-width:2.2;"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>`;
+    toast.querySelector('.toast-title').textContent = title;
+    toast.querySelector('.toast-message').innerHTML = message || '';
+    toast.querySelector('.toast-close').addEventListener('click', () => toast.remove());
+
+    container.appendChild(toast);
+    while (container.children.length > 4) container.firstElementChild.remove();
+
+    setTimeout(() => {
+        toast.classList.add('hiding');
+        setTimeout(() => toast.remove(), 280);
+    }, 3600);
+}
+
+/* ===========================================================
+   7. MODALES (.modal-overlay y .apple-modal-overlay)
+   =========================================================== */
+function openModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (!modal) return;
+    modal.style.display = 'flex';
+    void modal.offsetHeight; // reflow para que la transición arranque
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (!modal) return;
+    modal.classList.remove('active');
+    setTimeout(() => {
+        if (!modal.classList.contains('active')) modal.style.display = 'none';
+    }, 280);
+    document.body.style.overflow = '';
+}
+
+function openAppleModal(modalId) { openModal(modalId); }
+function closeAppleModal(modalId) { closeModal(modalId); }
+
+document.addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-overlay') || e.target.classList.contains('apple-modal-overlay')) {
+        closeModal(e.target.id);
+    }
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const activeModal = document.querySelector('.modal-overlay.active, .apple-modal-overlay.active');
+    if (activeModal) closeModal(activeModal.id);
+    closeCustomizationDrawer();
+});
+
+/* ===========================================================
+   8. TILT 3D (data-tilt) Y TARJETAS DE AUTOS EN TÁCTIL
+   =========================================================== */
+function nxInitTilt(root = document) {
+    if (window.matchMedia('(hover: none)').matches) return;
+    root.querySelectorAll('[data-tilt]').forEach(card => {
+        if (card.dataset.tiltReady) return;
+        card.dataset.tiltReady = '1';
+        card.addEventListener('mousemove', (e) => {
+            const r = card.getBoundingClientRect();
+            const rotX = ((e.clientY - r.top - r.height / 2) / (r.height / 2)) * -5;
+            const rotY = ((e.clientX - r.left - r.width / 2) / (r.width / 2)) * 5;
+            card.style.transform = `perspective(1000px) rotateX(${rotX}deg) rotateY(${rotY}deg) scale3d(1.012, 1.012, 1.012)`;
+        });
+        card.addEventListener('mouseleave', () => {
+            card.style.transform = '';
+        });
+    });
+}
+
+// En pantallas táctiles no hay hover: el toque alterna el estado activo
+document.addEventListener('click', (e) => {
+    const card = e.target.closest('.reveal-card');
+    if (!card || !window.matchMedia('(hover: none)').matches) return;
+    const wasActive = card.classList.contains('is-active');
+    document.querySelectorAll('.reveal-card.is-active').forEach(c => c.classList.remove('is-active'));
+    if (!wasActive) card.classList.add('is-active');
+});
+
+/* ===========================================================
+   9. MENÚ MÓVIL DE LA NAVBAR
+   =========================================================== */
+function nxInitMobileNav() {
+    const nav = document.querySelector('.nexora-navbar');
+    const menu = document.getElementById('navLinksMenu');
+    const actions = nav && nav.querySelector('.navbar-actions');
+    if (!nav || !menu || !actions || actions.querySelector('.nx-nav-toggle')) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'nx-round-btn nx-nav-toggle';
+    btn.setAttribute('aria-label', 'Abrir menú');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M4 7h16M4 12h16M4 17h10"/></svg>';
+    actions.appendChild(btn);
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = menu.classList.toggle('mobile-open');
+        btn.setAttribute('aria-expanded', String(open));
+    });
+    document.addEventListener('click', (e) => {
+        if (!menu.contains(e.target)) {
+            menu.classList.remove('mobile-open');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    });
+}
+
+/* ===========================================================
+   10. ARRANQUE
+   =========================================================== */
+function initNexoraTheme() {
+    const stored = nxLoad();
+    if (stored) {
+        const key = stored.preset && NX_PALETTES[stored.preset] ? stored.preset : null;
+        nxState.intensity = Number(stored.intensity) || 1;
+        nxState.speed = stored.speed === 0 ? 0 : (Number(stored.speed) || 1);
+        nxState.twist = stored.twist === 0 ? 0 : (Number(stored.twist) || 1);
+        nxApplyRadius(stored.radius || 'std');
+        nxApplyDensity(stored.density || 'standard');
+        nxInjectAmbient();
+        nxInjectPanel();
+        nxApplyPalette(key ? NX_PALETTES[key] : (stored.palette || NX_PALETTES[NX_DEFAULT_PRESET]), key, true);
+        nxApplyMode(stored.mode || 'dark', true);
+    } else {
+        nxInjectAmbient();
+        nxInjectPanel();
+        nxApplyPalette(NX_PALETTES[NX_DEFAULT_PRESET], NX_DEFAULT_PRESET, true);
+        nxApplyMode('dark', true);
+    }
+
+    // Los modales arrancan ocultos salvo que estén activos
+    document.querySelectorAll('.apple-modal-overlay, .modal-overlay').forEach(m => {
+        if (!m.classList.contains('active')) m.style.display = 'none';
+    });
+
+    nxInitTilt();
+    nxInitMobileNav();
+    document.dispatchEvent(new CustomEvent('nexora:liquid', { detail: { intensity: nxState.intensity, speed: nxState.speed, twist: nxState.twist } }));
+}
+
+// Aplica el modo antes del primer pintado para evitar el destello claro/oscuro
+(function nxEarlyMode() {
+    const stored = nxLoad();
+    if (stored && stored.mode === 'light') document.documentElement.classList.add('nx-light');
+})();
+
+// El script va al final del <body>: se arranca de inmediato para que la
+// paleta guardada se aplique antes del primer pintado.
+if (document.body) {
+    initNexoraTheme();
+} else {
+    document.addEventListener('DOMContentLoaded', initNexoraTheme);
+}

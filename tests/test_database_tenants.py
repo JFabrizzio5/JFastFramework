@@ -210,7 +210,9 @@ def _tenant_app(tmp_path: Path, **overrides: Any) -> Any:
     DatabasePlugin(config).register(app.state.jfast)
 
     @app.get("/who")
-    async def who(session: Any = Depends(tenant_session_dependency)) -> dict[str, str]:
+    async def who(
+        session: Any = Depends(tenant_session_dependency, scope="function"),
+    ) -> dict[str, str]:
         return {"bind": str(session.get_bind().url)}
 
     return app

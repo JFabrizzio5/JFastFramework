@@ -1,0 +1,49 @@
+import BaseIcon from '@/components/BaseIcon.jsx'
+
+// The classes live in src/nexora/nexora.css. `danger` is tinted, not solid:
+// solid is the primary button, and two solid buttons on one screen say
+// nothing about which one is the safe way out.
+const VARIANTS = {
+  primary: 'btn-primary',
+  outline: 'btn-outline',
+  ghost: 'btn-ghost',
+  danger: 'btn-danger',
+}
+
+const SIZES = { sm: 'btn-sm', md: '' }
+
+// An icon with no `children` gives the button no accessible name -- pass
+// aria-label through the rest props in that case.
+export default function BaseButton({
+  variant = 'primary',
+  size = 'md',
+  type = 'button',
+  icon = null,
+  loading = false,
+  disabled = false,
+  className = '',
+  children,
+  ...rest
+}) {
+  return (
+    <button
+      // Spread first so the guarantees below win: a caller cannot hand back a
+      // clickable button while it is loading, or turn a plain button into a
+      // form submit by accident.
+      {...rest}
+      type={type}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      className={`btn-modern ${VARIANTS[variant] ?? VARIANTS.primary} ${SIZES[size] ?? ''} ${className}`}
+    >
+      {/* The spinner takes the icon's place rather than adding to the row, so
+          the button keeps its width and nothing shifts under the cursor. */}
+      {loading ? (
+        <span className="nx-spinner" aria-hidden="true" />
+      ) : icon ? (
+        <BaseIcon path={icon} size="sm" />
+      ) : null}
+      {children}
+    </button>
+  )
+}

@@ -42,9 +42,9 @@ if TYPE_CHECKING:
     from jfastframework.settings import JFastConfig
     from jfastframework.workspace import ServiceEntry, Workspace
 
-# Datastore images and offsets live in `jfastframework.resources` now, so
-# the compose generator and the workspace model cannot disagree about what
-# a `postgres` resource is.
+# Datastore images and offsets live in `jfastframework.resources`, so the
+# compose generator and the workspace model cannot disagree about what a
+# `postgres` resource is.
 
 CADDY_HTTP_PORT = 80
 CADDY_HTTPS_PORT = 443
@@ -55,14 +55,14 @@ CADDY_HTTPS_PORT = 443
 SERVICE_CONFIG_FILE = "jfast.toml"
 
 # The plugins whose containers the resource graph already owns. Their
-# `infra()` is the per-service version of what the workspace now declares by
+# `infra()` is the per-service version of what the workspace declares by
 # name, so emitting it as well would stand a second, anonymous PostgreSQL
 # beside the one every generated DSN points at.
 RESOURCE_OWNED_PLUGINS = frozenset(spec.plugin for spec in RESOURCE_TYPES.values())
 
 
 def _warn(message: str) -> None:
-    """A generator that silently drops a container is the defect being fixed.
+    """Warn whenever a container is left out: dropping one silently hides the gap.
 
     ``stacklevel=3`` points the warning at whoever asked for the compose file
     rather than at this module, which is not where anything can be done.
@@ -136,10 +136,10 @@ def _plugins_of(root: Path, service: ServiceEntry) -> tuple[JFastConfig | None, 
 def _scan_plugins(workspace: Workspace) -> _PluginGraph:
     """Everything the plugin graph contributes, service by service.
 
-    This is what the workspace generator could not express: `events` declares a
+    This is what the resource graph alone cannot express: `events` declares a
     broker, `storage` declares MinIO, `queue` on RabbitMQ declares a broker of
-    its own. None of them is a datastore the resource graph can name, so all of
-    them were dropped without a word.
+    its own. None of them is a datastore the resource graph can name, so
+    without this scan all of them would be dropped without a word.
     """
     graph = _PluginGraph()
     if workspace.file is None:
@@ -206,7 +206,7 @@ def _resource_services(workspace: Workspace) -> dict[str, Any]:
 
     The difference is the point of the resource graph: two services that bind
     the same resource share one database, and a service that binds two
-    databases gets two. Neither was expressible while a service owned its
+    databases gets two. Neither is expressible when a service owns its
     datastores by type.
     """
     return {r.container: r.compose_service() for r in workspace.all_resources()}

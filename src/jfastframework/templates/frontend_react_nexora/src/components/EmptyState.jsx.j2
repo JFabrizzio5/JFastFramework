@@ -1,0 +1,19 @@
+import BaseIcon from '@/components/BaseIcon.jsx'
+
+// title and description are both required. "Nothing matches this filter" and
+// "we could not load this" look identical when both are a blank panel, and the
+// blank panel is the one the user reads as a broken screen.
+export default function EmptyState({ title, description, icon = null, className = '', children }) {
+  return (
+    <div className={`nx-empty ${className}`}>
+      {icon ? (
+        <span className="nx-empty-orb" aria-hidden="true">
+          <BaseIcon path={icon} size="md" />
+        </span>
+      ) : null}
+      <h3>{title}</h3>
+      <p>{description}</p>
+      {children ? <div className="mt-6">{children}</div> : null}
+    </div>
+  )
+}

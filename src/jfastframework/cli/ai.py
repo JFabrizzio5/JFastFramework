@@ -7,9 +7,9 @@ unfinished", ordered so the steps can actually be done in that order.
 Both are compositions. Nothing here re-reads the filesystem or re-implements a
 check: :mod:`jfastframework.project` already knows what a module is,
 :mod:`jfastframework.contracts` already knows what the rules are, and
-:mod:`jfastframework.cli.insight` already knows how to draw both. What was
-missing was a single entry point, because the alternative -- five commands and
-a guess about which of them to run first -- is exactly the thing an agent gets
+:mod:`jfastframework.cli.insight` already knows how to draw both. What these
+add is a single entry point, because the alternative -- five commands and a
+guess about which of them to run first -- is exactly the thing an agent gets
 wrong.
 
 **The size is the design.** The obvious implementation of "everything a model
@@ -276,8 +276,8 @@ def _contract_steps(found: Survey) -> list[Step]:
 
     Three sources say the same thing about a contract aimed at another layout:
     `analyze` files one `contract-governs-nothing` per empty layer, `contracts
-    check` files one `layer-unmatched` per empty layer, and both are true. Four
-    layers therefore used to produce four steps *plus* a
+    check` files one `layer-unmatched` per empty layer, and both are true.
+    Listed separately, four layers would produce four steps *plus* a
     `contracts check fails (4 violations)` summary of the same four -- five
     lines, one fact, and a remedy (`jfast analyze`) that only re-prints what
     the reader is already looking at.

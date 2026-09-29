@@ -124,10 +124,10 @@ tenant_max_overflow = 2
 ```
 
 ```python
-from jfastframework.plugins.builtin.database import tenant_session_dependency
+from jfastframework.plugins.builtin.database import TenantSession
 
 @router.get("/invoices")
-async def list_invoices(session = Depends(tenant_session_dependency)):
+async def list_invoices(session: TenantSession):
     ...
 ```
 
@@ -206,20 +206,136 @@ ilegible, porque a esa altura todavía no existe ningún principal. El plugin en
 cambio lo agrega al final, así que toda fuente — incluido el token — está
 disponible cuando resuelve.
 
-## Lo que esto no es
+## Aislamiento que impone la base: row-level security
 
 El tenant resuelto llega a `BaseRepository`, así que una query que se olvida de
-filtrar igual queda filtrada por el repositorio. **Eso es una convención, no
-aislamiento.**
+filtrar igual queda filtrada por el repositorio. Eso es una convención: SQL
+crudo, un join a través de una tabla sin scope o un bug en un método de
+repositorio leen las filas de todos los tenants. Row-level security mueve la
+regla a PostgreSQL, donde una query que olvida el filtro no recibe filas en vez
+de recibir las de otro.
 
-Cualquiera de estas cosas lo rompe: SQL crudo, un join a través de una tabla
-sin scope, un bug en un método de repositorio, un background job que corre sin
-request. La garantía que quieres es row-level security de PostgreSQL, donde la
-base de datos rechaza la lectura sin importar lo que haya pedido la query. Eso
-todavía no se genera — ver PLAN.md fase 2.
+**1. Pon cada tabla de tenant bajo una política**, en una migración:
 
-Hasta entonces, trata a tenancy como defensa en profundidad sobre queries
-correctas, no como un reemplazo de ellas.
+```python
+from jfastframework.db.rls import enable_tenant_rls, disable_tenant_rls
+
+def upgrade() -> None:
+    enable_tenant_rls(op, "invoices")
+
+def downgrade() -> None:
+    disable_tenant_rls(op, "invoices")
+```
+
+**2. Actívalo**, y cada transacción le dice a PostgreSQL su tenant -- el de la
+request, o el de un job de la cola, que el worker restaura:
+
+```toml
+[plugin.database]
+rls = true
+```
+
+Es `set_config('jfast.tenant_id', ..., true)` al empezar cada transacción: local
+a la transacción, así que una conexión del pool nunca lleva un tenant a la
+siguiente request, y funciona detrás de PgBouncer en modo transacción.
+
+**3. Conéctate con un rol al que apliquen las políticas.** Un superusuario, o un
+rol con `BYPASSRLS`, ignora toda política -- y el compose generado se conecta
+como el superusuario de la base. Dale al servicio un rol propio:
+
+```sql
+CREATE ROLE app LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO app;
+```
+
+Corre las migraciones como el dueño y el servicio como `app`. Con `rls = true`
+el plugin de base de datos revisa el rol al arrancar: en producción no arranca
+con un superusuario o un rol `BYPASSRLS`; en cualquier otro entorno avisa.
+
+Lo que eso consigue, cada punto verificado contra PostgreSQL en
+`tests/test_rls.py`:
+
+| | |
+| --- | --- |
+| `SELECT * FROM invoices`, sin ningún `WHERE` | solo las filas de este tenant |
+| Una transacción sin tenant | ninguna fila, y ninguna escritura |
+| `INSERT` con el id de otro tenant | lo rechaza la política |
+| La siguiente transacción en la misma conexión | empieza sin tenant |
+
+El trabajo que por definición abarca a todos los tenants -- un reporte, una
+corrección de datos -- lo dice: crea la política de esa tabla con
+`allow_bypass=True` y corre el trabajo dentro de `with bypass_rls():`. Las tablas
+sin esa opción siguen cerradas incluso ahí.
+
+El filtro del repositorio se queda: es lo que hace que las queries usen el
+índice, y es la primera línea. Row-level security es la que aguanta cuando la
+primera falla.
+
+### Más que el tenant: `transaction_setting`
+
+A veces el tenant no es toda la regla. Dentro de un tenant, un usuario puede ver
+solo algunas de sus empresas, sucursales o almacenes -- y ese valor tiene que
+llegar a PostgreSQL igual que el tenant, por transacción, o una conexión del pool
+lleva las empresas de un usuario al request de otro.
+
+Registra una función que regrese el valor para el request o job actual, y cada
+sesión con tenant lo pone junto al tenant:
+
+```python
+from jfastframework.auth import current_principal
+from jfastframework.db.rls import transaction_setting
+
+@transaction_setting("app.companies")
+def companies() -> str | None:
+    principal = current_principal()
+    if principal is None:
+        return None
+    return "{" + ",".join(principal.claims.get("companies", [])) + "}"
+```
+
+Después escribe tú la policy, con los valores que necesita, en una migración:
+
+```python
+from jfastframework.db.rls import disable_rls_policy, enable_rls_policy
+
+def upgrade() -> None:
+    enable_rls_policy(
+        op,
+        "invoices",
+        predicate="tenant_id = current_setting('jfast.tenant_id', true) "
+        "AND company = ANY(current_setting('app.companies', true)::text[])",
+    )
+
+def downgrade() -> None:
+    disable_rls_policy(op, "invoices")
+```
+
+Las reglas que respeta:
+
+- **El nombre se valida.** `prefijo.nombre`, en minúsculas, porque va dentro de
+  `set_config`. `jfast.tenant_id` y `jfast.rls_bypass` son del framework y se
+  rechazan.
+- **`None` significa cero filas.** El valor queda sin poner en esa transacción,
+  la policy lee NULL y nada coincide -- igual que una transacción sin tenant no
+  ve nada.
+- **Regístralo al importar**, junto a las policies que lo leen. El registro es
+  de todo el proceso.
+- **El predicado es SQL que escribe el autor de la migración**, sin escapar:
+  nunca lo armes con datos del request. Los valores le llegan por
+  `current_setting`, que sí va escapado.
+
+`tests/test_rls.py` corre esta forma contra PostgreSQL: un tenant con dos
+empresas, un usuario que ve una, luego las dos, luego ninguna.
+
+Esto es lo que puede usar un servicio que abría su propia sesión solo para poner
+un segundo valor -- ve [`@transactional`](transactions.md) para los que todavía
+necesitan la suya.
 
 ## Ver también
 

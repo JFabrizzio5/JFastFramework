@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import uuid
+from collections.abc import AsyncIterable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -28,7 +30,7 @@ from jfastframework.storage.base import (
     guess_content_type,
     normalise_key,
 )
-from jfastframework.storage.pipeline import Upload, UploadPipeline
+from jfastframework.storage.pipeline import StreamCheck, Upload, UploadPipeline, guard_stream
 
 
 class LocalStorage:
@@ -117,6 +119,40 @@ class LocalStorage:
             key=normalise_key(key),
             size=len(data),
             content_type=content_type or guess_content_type(key),
+            modified_at=datetime.now(UTC),
+            metadata=metadata or {},
+        )
+
+    async def put_stream(
+        self,
+        key: str,
+        chunks: AsyncIterable[bytes],
+        *,
+        content_type: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> StoredFile:
+        safe = normalise_key(key)
+        path = self._path(safe)
+        check = StreamCheck()
+        guarded = guard_stream(self._pipeline, disk=self.name, key=safe, chunks=chunks, check=check)
+        # A name of its own per upload: two streams to one key must not write
+        # into the same temporary file.
+        temporary = path.with_suffix(path.suffix + f".{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+        handle = await asyncio.to_thread(temporary.open, "wb")
+        try:
+            async for chunk in guarded:
+                await asyncio.to_thread(handle.write, chunk)
+            await asyncio.to_thread(handle.close)
+            await asyncio.to_thread(temporary.replace, path)
+        except BaseException:
+            await asyncio.to_thread(handle.close)
+            await asyncio.to_thread(temporary.unlink, True)
+            raise
+        return StoredFile(
+            key=safe,
+            size=check.size,
+            content_type=check.content_type or content_type or guess_content_type(safe),
             modified_at=datetime.now(UTC),
             metadata=metadata or {},
         )

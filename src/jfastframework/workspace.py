@@ -113,12 +113,10 @@ class Workspace:
     def find(start: Path | None = None) -> Path | None:
         """Nearest ``jfast.workspace.toml`` at or above ``start``, bounded.
 
-        The walk used to continue to the root of the filesystem. Someone who
-        ran ``jfast start`` once in their home directory got a workspace
-        file there, and from then on *every* project underneath joined it:
-        one compose file, one port space, services from unrelated work
-        registering against each other. Nothing failed, which is what made
-        it bad.
+        A walk to the root of the filesystem would let a workspace file
+        left in the home directory by one ``jfast start`` capture *every*
+        project underneath: one compose file, one port space, services from
+        unrelated work registering against each other, and nothing failing.
 
         So the search stops at two boundaries. It never considers the home
         directory itself -- a workspace file there is an accident, not a
@@ -390,9 +388,8 @@ class Workspace:
     def environment_for(self, service: ServiceEntry, *, internal: bool = True) -> dict[str, str]:
         """The variables this service needs to reach what it is bound to.
 
-        This is the file that used to be written by hand while the containers
-        beside it were generated. Now both come from the same declaration, so
-        they cannot drift apart.
+        It comes from the same declaration as the containers it points at,
+        so the two cannot drift apart.
         """
         env: dict[str, str] = {}
         for binding, resource in self.bindings_for(service):

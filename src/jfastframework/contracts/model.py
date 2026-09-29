@@ -116,8 +116,8 @@ def match_path(relative: str, pattern: str) -> bool:
     ``modules/invoice/infrastructure/repository.py``, so the layered contract's
     ``storage`` layer silently claims a hexagonal project's adapters and
     ``layer-unmatched`` -- the finding that exists to catch a contract
-    governing nothing -- never fires. Three separate readings of that behaviour
-    were filed as bugs before it was traced back to here.
+    governing nothing -- never fires, and the symptom shows up far from its
+    cause.
 
     Matching is case-sensitive on every platform. ``fnmatch`` normalises case
     on Windows, which would let a contract pass on a laptop and fail in CI; a

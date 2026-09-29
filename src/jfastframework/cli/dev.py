@@ -207,9 +207,9 @@ def spawn(
     """
     merged = {**os.environ, **(env or {})}
     # `sys.platform`, not `os.name`: mypy narrows on the first and does not on
-    # the second, so with `os.name` the POSIX-only calls below were checked
-    # against a Windows stdlib and `mypy src` failed on any Windows machine --
-    # five errors in code that never runs there.
+    # the second, so with `os.name` the POSIX-only calls below are checked
+    # against a Windows stdlib and `mypy src` fails on any Windows machine, on
+    # code that never runs there.
     if sys.platform != "win32":
         popen = subprocess.Popen(  # nosec B603
             command, cwd=str(cwd), env=merged, start_new_session=True

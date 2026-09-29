@@ -125,10 +125,10 @@ class BodySizeLimitMiddleware:
                     return {"type": "http.request", "body": b"", "more_body": False}
             return message  # type: ignore[no-any-return]
 
-        # Two different things, and conflating them is what made an oversized
-        # body look like a successful request: `started` is the application's
-        # own status line going out, `answered` is this middleware having
-        # replaced it with a 413.
+        # Two different things, and conflating them makes an oversized body
+        # look like a successful request: `started` is the application's own
+        # status line going out, `answered` is this middleware having replaced
+        # it with a 413.
         started = False
         answered = False
 
@@ -259,10 +259,9 @@ def build_default_csp(*, docs_enabled: bool, html_enabled: bool = True) -> str:
     environment rather than with an edit somebody has to remember.
 
     ``html_enabled`` is the same rule applied to the other half. A JSON API
-    serves no page, so the HTMX CDN and the inline allowance were permissions
-    granted to a service that renders nothing -- and a deployed API kept both
-    with `/docs` already closed. The permission now follows the plugin that
-    needs it.
+    serves no page, so the HTMX CDN and the inline allowance would be
+    permissions granted to a service that renders nothing, kept even with
+    `/docs` closed. The permission follows the plugin that needs it.
     """
     inline = ["'unsafe-inline'"] if html_enabled or docs_enabled else []
     script = ["'self'", *inline, *([CSP_HTMX_CDN] if html_enabled else [])]
@@ -494,7 +493,7 @@ def _peer_came_from_the_chain(peer: str | None, forwarded_for: str | None) -> bo
     direct client naming itself.
 
     Those two are byte-identical in the scope and cannot be told apart, which
-    is the whole reason the rewrite was invisible. Both are handled as the
+    is the whole reason the rewrite is invisible. Both are handled as the
     dangerous one.
 
     The one legitimate topology this costs is two proxies sharing an address --

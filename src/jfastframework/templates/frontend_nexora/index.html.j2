@@ -1,0 +1,71 @@
+[# Scaffold-time values use the square-bracket delimiters. #]
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>[[ service_title ]]</title>
+    <!-- Nexora's type: Plus Jakarta Sans for text, JetBrains Mono for figures,
+         Caveat for the wordmark. One stylesheet request, and `swap` so text
+         paints in the fallback font instead of waiting for it. Self-host the
+         files if the app must not call a third party. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=JetBrains+Mono:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap"
+    />
+    <script>
+      // Runs before the first paint: reading the choice after mount would paint
+      // one frame in the other theme on every reload -- on a black studio that
+      // is a white flash. Wrapped because storage throws outright in some
+      // privacy modes rather than returning null.
+      try {
+        var stored = localStorage.getItem('[[ service_slug ]]:theme')
+        if (stored === 'dark' || stored === 'light') {
+          document.documentElement.setAttribute('data-theme', stored)
+        }
+      } catch (e) {}
+      // The accent picked in the app, replayed the same way. accent.js stored
+      // the variables it derived, so this applies them without the maths;
+      // only the palette's own `--c-*` names are accepted from storage.
+      try {
+        var accent = JSON.parse(localStorage.getItem('[[ service_slug ]]:accent'))
+        var variables = (accent && accent.variables) || {}
+        for (var name in variables) {
+          if (name.indexOf('--c-') === 0 && /^[0-9 ]+$/.test(variables[name])) {
+            document.documentElement.style.setProperty(name, variables[name])
+          }
+        }
+      } catch (e) {}
+      // The background: the viewer's choice, else VITE_BACKGROUND, which
+      // Vite writes into this file at build time. backdrop.js has the rules;
+      // this only avoids painting the ribbon's still frame before "off".
+      var backdrops = ['liquid', 'still', 'none']
+      var backdrop = '%VITE_BACKGROUND%'.trim().toLowerCase()
+      try {
+        var chosen = localStorage.getItem('[[ service_slug ]]:backdrop')
+        if (backdrops.indexOf(chosen) !== -1) backdrop = chosen
+      } catch (e) {}
+      document.documentElement.setAttribute(
+        'data-backdrop',
+        backdrops.indexOf(backdrop) !== -1 ? backdrop : 'liquid'
+      )
+      // A sidebar folded away on a wide screen stays folded across reloads.
+      try {
+        if (localStorage.getItem('[[ service_slug ]]:sidebar') === 'collapsed') {
+          document.documentElement.setAttribute('data-sidebar', 'collapsed')
+        }
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+[% if frontend == "vue" %]
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+[% else %]
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+[% endif %]
+  </body>
+</html>

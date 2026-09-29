@@ -30,8 +30,8 @@ capability with real rules earns a different shape from a table with a router
 on top:
 
 ```bash
-jfast new module order                       # layered: one file per layer
-jfast new module order --layout modular      # one folder per layer
+jfast new module order                       # modular (default): one folder per layer
+jfast new module order --layout layered      # one file per layer
 jfast new module order --layout screaming    # one file per use case
 jfast new module order --layout hexagonal    # ports and adapters
 ```
@@ -96,6 +96,24 @@ jfast contracts check
   `modules/` or `shared/`, that is a design question, not a filing question.
 - **Do not disable a contract rule to make a check pass.** Waive one line with
   `# contracts: allow <reason>` and say why in the pull request.
+
+## A frontend for this service
+
+A UI is a service of its own, generated beside this one rather than inside it:
+
+```bash
+jfast new service admin --kind spa --frontend vue                     # the nexora look
+jfast new service admin --kind spa --frontend vue --template classic  # plain Tailwind
+```
+
+Two looks ship: `nexora`, the default — liquid glass, an island top bar, a
+WebGL ribbon, an accent picker — and `classic`. **If the user asked for a look,
+generate that one**; the default is what you use when nobody said. Inside the
+frontend, `jfast new view <Name>` draws each new page in the look the project
+was generated with.
+With `--agent-docs`, a `nexora` frontend also gets the `nexora-reference`
+skill: a copy of JFast Suite, the pages the look was drawn from, to look at
+before building a screen it does not have yet.
 
 ## Commands
 

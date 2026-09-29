@@ -18,13 +18,22 @@ Delivery is **at-least-once**. A worker can die after doing the work and
 before acknowledging, so a handler that charges a card twice is a bug in the
 handler, not in the queue. Make them idempotent.
 
+Recurring tasks are declared on the same registry and run by a scheduler loop
+in the service when ``scheduler = true``; see
+:mod:`jfastframework.queues.scheduler`::
+
+    @tasks.task("refresh_rates", every=timedelta(minutes=5))
+    async def refresh_rates(payload: dict) -> None: ...
+
 Requires the backend's extra: ``[db]``, ``[cache]`` or ``[rabbitmq]``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import importlib
-from typing import TYPE_CHECKING, Any
+from datetime import timedelta
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter
 from pydantic import SecretStr
@@ -43,6 +52,7 @@ from jfastframework.queues.worker import TaskRegistry
 
 if TYPE_CHECKING:
     from jfastframework.context import AppContext
+    from jfastframework.queues.scheduler import Scheduler, TickStore
 
 BACKENDS = ("postgres", "redis", "rabbitmq")
 
@@ -66,6 +76,18 @@ class QueueSettings(PluginSettings):
     # Exposes GET /queue/stats. Handy in development, noise in production.
     expose_stats: bool = True
 
+    # Run the scheduler loop in this process, enqueueing the recurring tasks
+    # declared on the registry. Safe in every replica and every worker: each
+    # tick is claimed in a shared store before it is enqueued.
+    scheduler: bool = False
+    # Where ticks are claimed. "auto" is the database when the database
+    # plugin is enabled and the cache when only that one is. "memory" claims
+    # per process, so every process fires every tick; production refuses it.
+    scheduler_store: Literal["auto", "database", "cache", "memory"] = "auto"
+    # Claims older than this are pruned, keeping each schedule's latest --
+    # which is what catch-up reads after a restart.
+    scheduler_retention_days: int = 7
+
 
 class QueuePlugin(Plugin):
     meta = PluginMeta(
@@ -87,6 +109,9 @@ class QueuePlugin(Plugin):
         self._registry = TaskRegistry()
         self._connection: Any = None
         self._setup_error: str | None = None
+        self._scheduler: Scheduler | None = None
+        self._scheduler_task: asyncio.Task[None] | None = None
+        self._scheduler_stop = asyncio.Event()
 
     def _build_backend(self, ctx: AppContext) -> QueueBackend:
         settings: QueueSettings = self.settings
@@ -143,10 +168,65 @@ class QueuePlugin(Plugin):
         backend: QueueBackend = cls(ctx)
         return backend
 
+    def _build_tick_store(self, ctx: AppContext) -> TickStore:
+        settings: QueueSettings = self.settings
+        choice = settings.scheduler_store
+        if choice == "auto":
+            if ctx.has("db.engine"):
+                choice = "database"
+            elif ctx.has("cache.client"):
+                choice = "cache"
+            else:
+                choice = "memory"
+
+        if choice == "database":
+            if not ctx.has("db.engine"):
+                raise PluginError(
+                    "scheduler_store = \"database\" needs the 'database' plugin enabled."
+                )
+            from jfastframework.queues.sql_ticks import SqlTickStore
+
+            return SqlTickStore(ctx.require("db.engine"))
+
+        if choice == "cache":
+            if not ctx.has("cache.client"):
+                raise PluginError("scheduler_store = \"cache\" needs the 'cache' plugin enabled.")
+            from jfastframework.queues.scheduler import RedisTickStore
+
+            # The service name in the key: two services sharing a Redis may
+            # each have a schedule called "cleanup".
+            prefix = f"{ctx.settings.app_name}:{settings.name}:schedule"
+            return RedisTickStore(ctx.require("cache.client"), prefix=prefix)
+
+        from jfastframework.queues.scheduler import MemoryTickStore
+
+        if ctx.settings.is_production:
+            raise PluginError(
+                "[plugin.queue] scheduler = true with nothing shared to claim ticks in: every "
+                "replica and every worker process would enqueue every tick. Enable the "
+                "'database' or 'cache' plugin, or set scheduler = false and run the scheduler "
+                "in exactly one process."
+            )
+        ctx.logger.warning(
+            "queue scheduler claims ticks in memory: correct for one process only; "
+            "enable the database or cache plugin before running more than one"
+        )
+        return MemoryTickStore()
+
     def register(self, ctx: AppContext) -> None:
         self._backend = self._build_backend(ctx)
         ctx.provide("queue", self._backend)
         ctx.provide("tasks", self._registry)
+
+        if self.settings.scheduler:
+            from jfastframework.queues.scheduler import Scheduler
+
+            self._scheduler = Scheduler(
+                self._backend,
+                self._registry,
+                self._build_tick_store(ctx),
+                retention=timedelta(days=self.settings.scheduler_retention_days),
+            )
 
         if self.settings.expose_stats:
             ctx.app.include_router(self._build_router(), prefix="/queue", tags=["queue"])
@@ -189,7 +269,23 @@ class QueuePlugin(Plugin):
         else:
             self._setup_error = None
 
+        # Started even when setup failed: the loop retries its own store and
+        # reports through /ready, and a broker that comes up later is used.
+        if self._scheduler is not None:
+            self._scheduler_stop.clear()
+            self._scheduler_task = asyncio.create_task(
+                self._scheduler.run(self._scheduler_stop), name="jfast-queue-scheduler"
+            )
+
     async def shutdown(self, ctx: AppContext) -> None:
+        # The scheduler first: it enqueues through the backend closed below.
+        self._scheduler_stop.set()
+        if self._scheduler_task is not None:
+            try:
+                await asyncio.wait_for(self._scheduler_task, timeout=10)
+            except TimeoutError:
+                self._scheduler_task.cancel()
+            self._scheduler_task = None
         if self._backend is not None:
             await self._backend.close()
         if self._connection is not None:
@@ -198,12 +294,13 @@ class QueuePlugin(Plugin):
     async def health(self, ctx: AppContext) -> HealthReport:
         if self._backend is None:
             return HealthReport.fail("queue not initialised")
+        meta: dict[str, Any] = {"backend": self.settings.backend}
+        if self._scheduler is not None:
+            meta["scheduler"] = self._scheduler.status()
         if self._setup_error is not None:
-            return HealthReport.fail(
-                f"queue setup failed: {self._setup_error}", backend=self.settings.backend
-            )
+            return HealthReport.fail(f"queue setup failed: {self._setup_error}", **meta)
         healthy, detail = await self._backend.health()
-        meta = {"backend": self.settings.backend, "tasks": list(self._registry.names)}
+        meta["tasks"] = list(self._registry.names)
         if not healthy:
             return HealthReport.fail(detail, **meta)
 
@@ -217,6 +314,11 @@ class QueuePlugin(Plugin):
                 depths=depths,
                 **meta,
             )
+        # Likewise a scheduler that stopped: recurring work is late, and the
+        # requests this replica serves are not.
+        if self._scheduler is not None and not self._scheduler.healthy:
+            error = self._scheduler.status()["error"] or "the scheduler loop is not running"
+            return HealthReport.fail(f"scheduler: {error}", critical=False, depths=depths, **meta)
         return HealthReport.ok(detail, depths=depths, **meta)
 
     def infra(self, ctx: AppContext | None = None) -> list[InfraService]:
@@ -259,7 +361,7 @@ class _LazyConnection:
     def __init__(self, plugin: QueuePlugin) -> None:
         self._plugin = plugin
 
-    async def channel(self) -> Any:
+    async def channel(self, **options: Any) -> Any:
         if self._plugin._connection is None:
             raise PluginError("RabbitMQ connection is not open yet")
-        return await self._plugin._connection.channel()
+        return await self._plugin._connection.channel(**options)

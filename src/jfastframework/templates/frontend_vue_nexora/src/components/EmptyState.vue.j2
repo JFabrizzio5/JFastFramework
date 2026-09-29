@@ -1,0 +1,27 @@
+<template>
+  <div class="nx-empty">
+    <span v-if="icon" class="nx-empty-orb" aria-hidden="true">
+      <BaseIcon :path="icon" size="md" />
+    </span>
+    <h3>{{ title }}</h3>
+    <p>{{ description }}</p>
+
+    <div v-if="$slots.default" class="mt-6">
+      <slot />
+    </div>
+  </div>
+</template>
+
+<script setup>
+import BaseIcon from '@/components/BaseIcon.vue'
+
+// Both strings are required. An empty list that only says "No results" is the
+// blank page this component exists to replace: the sentence has to say what
+// would be here, and the slot has to offer the action that creates the first
+// one. Keep the sentence to one -- this is a signpost, not documentation.
+defineProps({
+  title: { type: String, required: true },
+  description: { type: String, required: true },
+  icon: { type: String, default: null },
+})
+</script>

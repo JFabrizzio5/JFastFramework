@@ -1,0 +1,2540 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JFast Suite | Widgets con Distintos Selects</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet">
+    
+    <!-- Unified CSS -->
+    <link rel="stylesheet" href="assets/css/nexora.css">
+
+    <style>
+        /* Texto de acento legible: brillo en oscuro, acento pleno en claro */
+        :root { --w-accent-text: rgb(var(--c-glow)); }
+        html.nx-light { --w-accent-text: rgb(var(--c-accent)); }
+
+        /* ---------- Encabezado de página ---------- */
+        .widgets-hero {
+            margin-top: 44px;
+            margin-bottom: 8px;
+            align-items: flex-end;
+        }
+
+        .widgets-hero .page-title h1 {
+            font-size: clamp(2rem, 4.2vw, 3.1rem);
+            margin-top: 10px;
+        }
+
+        .widgets-hero .page-title p { margin-top: 14px; }
+
+        .widgets-hero .page-title h1 .hero-title-faded { display: block; }
+
+        .widgets-hero-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .widgets-hero-badges .badge-status { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.02em; }
+
+        /* ---------- Rejilla y tarjetas ---------- */
+        .widgets-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+            gap: 22px;
+            margin: 32px 0 80px;
+        }
+
+        .widgets-grid > .card-panel {
+            min-width: 0;
+            padding: 26px;
+            border-radius: 24px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* backdrop-filter crea contexto de apilamiento: la tarjeta con un
+           menú abierto (o con foco) sube para que el menú flote encima de sus vecinas */
+        .widgets-grid > .card-panel:focus-within,
+        .widgets-grid > .card-panel:has(.multi-select-wrap.open) { z-index: 30; }
+        .widgets-grid > .card-panel:has(.multi-select-wrap.open) { z-index: 40; }
+
+        .widget-head { margin-bottom: 20px; }
+
+        .widget-kicker {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        .widget-num {
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            opacity: 0.85;
+        }
+
+        .widget-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 10px;
+            border-radius: 9999px;
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            background: rgb(var(--c-accent) / 0.1);
+            color: var(--w-accent-text);
+            border: 1px solid rgb(var(--c-accent) / 0.22);
+            white-space: nowrap;
+        }
+
+        .widget-head h3 {
+            font-size: 1.28rem;
+            font-weight: 800;
+            letter-spacing: -0.035em;
+            line-height: 1.2;
+            color: var(--text-main);
+        }
+
+        .widget-desc {
+            font-size: 0.86rem;
+            line-height: 1.55;
+            color: var(--text-dim);
+            margin-top: 6px;
+        }
+
+        .widget-desc code,
+        .widget-desc kbd {
+            font-family: var(--font-mono);
+            font-size: 0.76rem;
+            padding: 2px 7px;
+            border-radius: 7px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            color: var(--w-accent-text);
+        }
+
+        .widget-sub-label {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-dim);
+        }
+
+        .widget-empty {
+            font-size: 0.8rem;
+            color: var(--text-sub);
+            font-style: italic;
+        }
+
+        /* Caja de lectura (valor seleccionado) */
+        .widget-readout {
+            margin-top: auto;
+            padding: 13px 15px;
+            border-radius: 16px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            font-size: 0.84rem;
+        }
+
+        .widget-readout-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .widget-readout-value {
+            font-weight: 700;
+            color: var(--w-accent-text);
+            margin-top: 4px;
+            overflow-wrap: anywhere;
+        }
+
+        .widget-spacer { margin-top: 18px; }
+
+        /* ---------- Select personalizado ---------- */
+        .multi-select-wrap {
+            position: relative;
+            width: 100%;
+        }
+
+        .multi-select-trigger {
+            min-height: 46px;
+            padding: 10px 14px 10px 16px;
+            background: var(--bg-input);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            user-select: none;
+            color: var(--text-main);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+
+        html.nx-light .multi-select-trigger { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04); }
+
+        .multi-select-trigger > span,
+        .multi-select-trigger > div {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .multi-select-trigger:hover { border-color: var(--badge-border); }
+
+        .multi-select-wrap.open .multi-select-trigger {
+            border-color: rgb(var(--c-accent) / 0.6);
+            box-shadow: 0 0 0 4px rgb(var(--c-accent) / 0.14);
+        }
+
+        .multi-select-trigger > svg {
+            color: var(--text-dim);
+            transition: transform 0.25s var(--ease-out), color 0.2s ease;
+        }
+
+        .multi-select-wrap.open .multi-select-trigger > svg {
+            transform: rotate(180deg);
+            color: rgb(var(--c-accent));
+        }
+
+        .trigger-placeholder { color: var(--text-dim); font-size: 0.88rem; }
+        .trigger-value { font-size: 0.88rem; font-weight: 600; }
+
+        .trigger-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            object-fit: cover;
+            box-shadow: 0 0 0 2px var(--card-solid), 0 0 0 3.5px rgb(var(--c-accent) / 0.55);
+        }
+
+        .multi-select-dropdown {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            width: 100%;
+            background: var(--card-solid);
+            border: 1px solid var(--nav-border);
+            border-radius: 16px;
+            box-shadow: 0 34px 70px -18px rgba(0, 0, 0, 0.8), 0 10px 24px -10px rgba(0, 0, 0, 0.5), inset 0 1px 1.5px var(--card-specular);
+            display: none;
+            flex-direction: column;
+            z-index: 200;
+            overflow: hidden;
+            animation: dropdownSlide 0.24s var(--ease-out) forwards;
+        }
+
+        html.nx-light .multi-select-dropdown {
+            box-shadow: 0 30px 60px -18px rgba(28, 35, 60, 0.28), 0 6px 16px -6px rgba(28, 35, 60, 0.12), inset 0 1px 1px #fff;
+        }
+
+        @keyframes dropdownSlide {
+            from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .multi-select-wrap.open .multi-select-dropdown { display: flex; }
+
+        .multi-select-search-bar {
+            width: 100%;
+            padding: 13px 14px 13px 40px;
+            border: none;
+            border-bottom: 1px solid var(--card-border);
+            outline: none;
+            background-color: transparent;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%239aa0b2' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: 15px center;
+            color: var(--text-main);
+            font-size: 0.86rem;
+        }
+
+        .multi-select-search-bar::placeholder { color: var(--text-sub); }
+
+        .multi-select-actions-bar {
+            padding: 8px 14px;
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--card-border);
+            background: var(--bg-muted);
+            font-family: var(--font-mono);
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .action-link {
+            color: var(--w-accent-text);
+            cursor: pointer;
+            font-weight: 700;
+            transition: opacity 0.15s ease;
+        }
+
+        .action-link:hover { opacity: 0.75; }
+
+        .multi-select-options-list {
+            max-height: 232px;
+            overflow-y: auto;
+            padding: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .multi-select-item,
+        .user-option-row {
+            position: relative;
+            padding: 9px 12px;
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            cursor: pointer;
+            border-radius: 11px;
+            font-size: 0.86rem;
+            color: var(--text-main);
+            user-select: none;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        .multi-select-item:hover,
+        .user-option-row:hover { background: rgb(var(--c-accent) / 0.1); }
+
+        .multi-select-item:has(input:checked) { color: var(--text-main); }
+
+        .user-option-row.selected {
+            background: rgb(var(--c-accent) / 0.1);
+            font-weight: 600;
+            padding-right: 34px;
+        }
+
+        /* check de acento en la opción activa */
+        .user-option-row.selected::after {
+            content: "";
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            width: 14px;
+            height: 14px;
+            transform: translateY(-50%);
+            background: rgb(var(--c-accent));
+            -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+                    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+        }
+
+        /* En tags el icono de la izquierda ya marca la selección */
+        .user-option-row.selected:has(> .opt-icon) { padding-right: 12px; }
+        .user-option-row.selected:has(> .opt-icon)::after { display: none; }
+
+        /* Casilla propia */
+        .multi-select-item input[type="checkbox"] {
+            -webkit-appearance: none;
+            appearance: none;
+            flex-shrink: 0;
+            width: 17px;
+            height: 17px;
+            margin: 0;
+            border-radius: 5px;
+            border: 1.5px solid var(--badge-border);
+            background: var(--pill-bg);
+            cursor: pointer;
+            display: grid;
+            place-content: center;
+            transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .multi-select-item input[type="checkbox"]::before {
+            content: "";
+            width: 10px;
+            height: 10px;
+            background: rgb(var(--c-on-accent));
+            -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+                    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+            transform: scale(0);
+            transition: transform 0.15s var(--ease-out);
+        }
+
+        .multi-select-item input[type="checkbox"]:checked {
+            background: rgb(var(--c-accent));
+            border-color: rgb(var(--c-accent));
+            box-shadow: 0 0 10px rgb(var(--c-accent) / 0.45);
+        }
+
+        .multi-select-item input[type="checkbox"]:checked::before { transform: scale(1); }
+
+        .multi-select-item input[type="checkbox"]:focus-visible { outline: 2px solid rgb(var(--c-accent) / 0.6); outline-offset: 2px; }
+
+        .opt-icon {
+            width: 15px;
+            height: 15px;
+            flex-shrink: 0;
+            color: var(--text-dim);
+        }
+
+        .user-option-row.selected .opt-icon { color: rgb(var(--c-accent)); }
+
+        .opt-code {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--text-dim);
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            flex-shrink: 0;
+        }
+
+        .user-option-row.selected .opt-code {
+            color: var(--w-accent-text);
+            border-color: rgb(var(--c-accent) / 0.3);
+        }
+
+        .opt-empty {
+            padding: 14px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            text-align: center;
+        }
+
+        /* Encabezados de grupo */
+        .group-header {
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-dim);
+            font-weight: 700;
+            padding: 10px 12px 5px;
+            margin-top: 4px;
+            border-top: 1px solid var(--card-border);
+        }
+
+        .group-header:first-child {
+            border-top: none;
+            margin-top: 0;
+        }
+
+        /* Avatares */
+        .user-opt-avatar-wrap {
+            position: relative;
+            width: 34px;
+            height: 34px;
+            flex-shrink: 0;
+        }
+
+        .user-opt-avatar {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            object-fit: cover;
+            box-shadow: 0 0 0 1px var(--badge-border);
+        }
+
+        .user-presence {
+            position: absolute;
+            right: -1px;
+            bottom: -1px;
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            border: 2px solid var(--card-solid);
+            background: var(--success);
+        }
+
+        .user-presence.is-busy { background: var(--danger); }
+        .user-presence.is-meeting { background: var(--warning); }
+
+        .user-opt-status {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        /* ---------- Chips ---------- */
+        .chips-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+            margin-top: 10px;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 5px 6px 5px 12px;
+            background: rgb(var(--c-accent) / 0.12);
+            color: var(--w-accent-text);
+            border: 1px solid rgb(var(--c-accent) / 0.24);
+            border-radius: 9999px;
+            font-size: 0.76rem;
+            font-weight: 600;
+            max-width: 100%;
+            animation: chipIn 0.25s var(--ease-out);
+        }
+
+        @keyframes chipIn {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .chip-tag {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            background: var(--pill-bg);
+            color: var(--text-main);
+            border-color: var(--badge-border);
+        }
+
+        .chip-tag::before {
+            content: "#";
+            color: rgb(var(--c-accent));
+            font-weight: 800;
+            margin-right: -3px;
+        }
+
+        .chip-remove {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: rgb(var(--c-accent) / 0.18);
+            color: inherit;
+            flex-shrink: 0;
+            transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+        }
+
+        .chip-tag .chip-remove { background: var(--pill-hover); color: var(--text-dim); }
+
+        .chip-remove svg { width: 10px; height: 10px; }
+
+        .chip-remove:hover {
+            background: rgb(var(--c-accent));
+            color: rgb(var(--c-on-accent));
+            transform: rotate(90deg);
+        }
+
+        /* ---------- Búsqueda remota ---------- */
+        .async-field { position: relative; }
+
+        .async-field .form-input { padding-left: 40px; padding-right: 40px; }
+
+        .async-field-icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 15px;
+            height: 15px;
+            color: var(--text-dim);
+            pointer-events: none;
+        }
+
+        #asyncSpinner.btn-spinner {
+            border-color: var(--badge-border);
+            border-top-color: rgb(var(--c-accent));
+        }
+
+        .async-results {
+            margin-top: 8px;
+            padding: 6px;
+            border: 1px solid var(--nav-border);
+            border-radius: 16px;
+            background: var(--card-solid);
+            box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.6);
+            max-height: 176px;
+            overflow-y: auto;
+        }
+
+        html.nx-light .async-results { box-shadow: 0 18px 40px -16px rgba(28, 35, 60, 0.2); }
+
+        .async-results .user-option-row svg { color: rgb(var(--c-accent)); }
+
+        .async-latency {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            color: var(--text-dim);
+            margin-left: auto;
+        }
+
+        /* ---------- Controles ---------- */
+        .segmented-control {
+            display: flex;
+            background: var(--pill-bg);
+            padding: 4px;
+            border-radius: 14px;
+            border: 1px solid var(--badge-border);
+            gap: 4px;
+        }
+
+        .segment-btn {
+            flex: 1;
+            min-width: 0;
+            padding: 8px 6px;
+            border-radius: 10px;
+            border: none;
+            background: transparent;
+            color: var(--text-dim);
+            font-weight: 600;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: var(--transition-fast);
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .segment-btn:hover { color: var(--text-main); }
+
+        .segment-btn.active {
+            background: rgb(var(--c-accent));
+            color: rgb(var(--c-on-accent));
+            box-shadow: 0 6px 16px -4px rgb(var(--c-accent) / 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+        }
+
+        .rate-value {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--w-accent-text);
+            font-size: 0.76rem;
+        }
+
+        .rate-range {
+            width: 100%;
+            cursor: pointer;
+            margin: 10px 0 4px;
+            background: linear-gradient(90deg, rgb(var(--c-accent)) 0%, rgb(var(--c-glow)) var(--fill, 47%), var(--card-border) var(--fill, 47%)) !important;
+        }
+
+        .rate-scale {
+            display: flex;
+            justify-content: space-between;
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            color: var(--text-sub);
+        }
+
+        .switch-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 14px 0 2px;
+            border-top: 1px solid var(--card-border);
+            margin-top: auto;
+        }
+
+        .switch-row strong { display: block; font-size: 0.88rem; font-weight: 700; }
+        .switch-row small { display: block; font-size: 0.74rem; color: var(--text-dim); margin-top: 1px; }
+
+        /* ---------- Multi-empresa ---------- */
+        .empresa-list-box {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 196px;
+            overflow-y: auto;
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 6px;
+            background: var(--bg-muted);
+        }
+
+        .empresa-card-btn {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 9px 12px;
+            border-radius: 12px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-main);
+            text-align: left;
+            cursor: pointer;
+            transition: var(--transition-fast);
+            width: 100%;
+        }
+
+        .empresa-card-btn:hover { background: rgb(var(--c-accent) / 0.07); }
+
+        .empresa-card-btn.active {
+            background: rgb(var(--c-accent) / 0.1);
+            border-color: rgb(var(--c-accent) / 0.32);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+        }
+
+        .empresa-main { display: flex; align-items: center; gap: 11px; min-width: 0; }
+
+        .empresa-initials {
+            width: 34px;
+            height: 34px;
+            border-radius: 11px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            font-weight: 700;
+            color: var(--text-dim);
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+        }
+
+        .empresa-card-btn.active .empresa-initials {
+            color: #fff;
+            border-color: transparent;
+            background: radial-gradient(circle at 30% 25%, rgb(var(--c-glow)), rgb(var(--c-accent)) 50%, rgb(var(--c-accent-deep)));
+            box-shadow: inset -3px -3px 8px rgba(0, 0, 0, 0.35), inset 2px 2px 5px rgba(255, 255, 255, 0.3), 0 6px 14px -4px rgb(var(--c-accent) / 0.45);
+        }
+
+        .empresa-name { font-weight: 700; font-size: 0.84rem; line-height: 1.3; }
+
+        .empresa-meta {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            margin-top: 1px;
+        }
+
+        .empresa-meta .rfc {
+            font-family: var(--font-mono);
+            font-weight: 600;
+            color: var(--text-main);
+            letter-spacing: 0.02em;
+        }
+
+        .empresa-card-btn .badge-status { font-size: 0.62rem; font-family: var(--font-mono); }
+
+        .rfc-mono { font-family: var(--font-mono); font-size: 0.8em; color: var(--text-dim); font-weight: 600; }
+
+        /* ---------- Rango de fechas ---------- */
+        .date-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .date-grid .form-input {
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            min-width: 0;
+        }
+
+        .date-range-presets {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .preset-btn {
+            border: 1px solid var(--badge-border);
+            background: var(--pill-bg);
+            color: var(--text-dim);
+            border-radius: 9999px;
+            padding: 6px 13px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            transition: var(--transition-fast);
+        }
+
+        .preset-btn:hover {
+            background: var(--pill-hover);
+            color: var(--text-main);
+            border-color: var(--card-hover-border);
+        }
+
+        .preset-btn.active {
+            background: rgb(var(--c-accent));
+            color: rgb(var(--c-on-accent));
+            border-color: rgb(var(--c-accent));
+            box-shadow: 0 6px 16px -4px rgb(var(--c-accent) / 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+        }
+
+        .date-readout-range {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 0.92rem;
+            color: var(--w-accent-text);
+            margin-top: 6px;
+            letter-spacing: -0.01em;
+        }
+
+        #dateRangeDaysCount { font-family: var(--font-mono); }
+
+        /* ---------- Centro de reportes ---------- */
+        .report-types-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .report-type-card {
+            position: relative;
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 12px 12px 12px;
+            background: var(--pill-bg);
+            cursor: pointer;
+            transition: var(--transition-fast);
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            text-align: left;
+        }
+
+        .report-type-card:hover {
+            border-color: var(--card-hover-border);
+            background: var(--pill-hover);
+        }
+
+        .report-type-card.active {
+            border-color: rgb(var(--c-accent) / 0.55);
+            background: rgb(var(--c-accent) / 0.09);
+            box-shadow: 0 0 0 3px rgb(var(--c-accent) / 0.1);
+        }
+
+        .report-type-card .rt-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            color: var(--text-dim);
+            margin-bottom: 6px;
+        }
+
+        .report-type-card.active .rt-icon {
+            background: rgb(var(--c-accent));
+            border-color: rgb(var(--c-accent));
+            color: rgb(var(--c-on-accent));
+        }
+
+        .report-type-card .rt-icon svg { width: 14px; height: 14px; }
+
+        .report-type-card strong { font-size: 0.84rem; font-weight: 700; }
+        .report-type-card span.rt-desc { font-size: 0.72rem; color: var(--text-dim); line-height: 1.4; }
+
+        .format-pills {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .format-pill {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 7px 14px;
+            border-radius: 9999px;
+            border: 1px solid var(--badge-border);
+            background: var(--pill-bg);
+            color: var(--text-dim);
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: var(--transition-fast);
+        }
+
+        .format-pill input {
+            position: absolute;
+            opacity: 0;
+            width: 1px;
+            height: 1px;
+            pointer-events: none;
+        }
+
+        .format-pill svg { width: 14px; height: 14px; }
+
+        .format-pill:hover { color: var(--text-main); border-color: var(--card-hover-border); }
+
+        .format-pill:has(input:checked) {
+            color: var(--w-accent-text);
+            background: rgb(var(--c-accent) / 0.12);
+            border-color: rgb(var(--c-accent) / 0.5);
+        }
+
+        .format-pill:has(input:focus-visible) { outline: 2px solid rgb(var(--c-accent) / 0.6); outline-offset: 2px; }
+
+        .report-progress-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.75rem;
+            margin-bottom: 7px;
+            color: var(--text-dim);
+        }
+
+        #reportProgressPercent {
+            font-family: var(--font-mono);
+            color: var(--w-accent-text);
+            font-weight: 700;
+        }
+
+        .report-progress-track {
+            position: relative;
+            width: 100%;
+            height: 8px;
+            border-radius: 9999px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            overflow: hidden;
+        }
+
+        .report-progress-bar {
+            position: relative;
+            width: 0%;
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, rgb(var(--c-accent-deep)) 0%, rgb(var(--c-accent)) 45%, rgb(var(--c-glow)) 100%);
+            box-shadow: 0 0 14px rgb(var(--c-accent) / 0.75), 0 0 4px rgb(var(--c-glow) / 0.9);
+            transition: width 0.18s ease;
+            overflow: hidden;
+        }
+
+        .report-progress-bar::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+            transform: translateX(-100%);
+            animation: barShine 1.1s linear infinite;
+        }
+
+        @keyframes barShine { to { transform: translateX(100%); } }
+
+        #btnGenerateReport { width: 100%; margin-top: auto; padding: 12px 20px; white-space: normal; text-align: center; }
+        #btnGenerateReport .btn-spinner { width: 14px; height: 14px; }
+
+        /* ---------- Feed de alertas ---------- */
+        .alerts-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .alerts-filters {
+            display: flex;
+            gap: 4px;
+            padding: 3px;
+            border-radius: 9999px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+        }
+
+        .alerts-filters .btn-modern {
+            padding: 5px 12px;
+            font-size: 0.72rem;
+            border-color: transparent;
+            background: transparent;
+            box-shadow: none;
+            color: var(--text-dim);
+        }
+
+        .alerts-filters .btn-modern:hover { color: var(--text-main); background: var(--pill-hover); }
+
+        .alerts-filters .btn-modern.active {
+            background: rgb(var(--c-accent) / 0.14);
+            border-color: rgb(var(--c-accent) / 0.4);
+            color: var(--w-accent-text);
+        }
+
+
+        .btn-xs {
+            padding: 6px 12px !important;
+            font-size: 0.72rem !important;
+            gap: 6px !important;
+        }
+
+        .btn-xs svg { width: 12px; height: 12px; }
+
+        .alerts-feed-box {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 272px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+
+        .widget-alert-item {
+            position: relative;
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 12px 14px 12px 16px;
+            background: var(--pill-bg);
+            transition: var(--transition-fast);
+            animation: chipIn 0.3s var(--ease-out);
+        }
+
+        .widget-alert-item::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 14px;
+            bottom: 14px;
+            width: 3px;
+            border-radius: 0 3px 3px 0;
+            background: var(--badge-border);
+        }
+
+        .widget-alert-item:hover { border-color: var(--badge-border); }
+
+        .widget-alert-item.urgent {
+            border-color: var(--danger-border);
+            background: var(--danger-light);
+        }
+
+        .widget-alert-item.urgent::before {
+            background: var(--danger);
+            box-shadow: 0 0 10px var(--danger);
+        }
+
+        .widget-alert-item .badge-status { font-family: var(--font-mono); font-size: 0.6rem !important; }
+
+        .alert-time {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .alert-title { font-weight: 700; font-size: 0.84rem; margin-top: 6px; }
+        .alert-body { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; line-height: 1.45; }
+        .alert-actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+        /* Badge de peligro (no existe en nexora.css) */
+        .status-danger {
+            background: var(--danger-light);
+            color: var(--danger);
+            border-color: var(--danger-border);
+        }
+
+        /* ---------- Suite de modales ---------- */
+        .modals-suite {
+            grid-column: 1 / -1;
+            overflow: hidden;
+        }
+
+        /* Con 3 columnas, la suite comparte fila con el feed de alertas */
+        @media (min-width: 1172px) {
+            .modals-suite { grid-column: span 2; }
+        }
+
+        .modals-suite-orb {
+            position: absolute;
+            width: 220px;
+            height: 220px;
+            right: -70px;
+            top: -90px;
+            opacity: 0.5;
+            filter: blur(1px);
+            pointer-events: none;
+        }
+
+        html.nx-light .modals-suite-orb { opacity: 0.3; }
+
+        .modals-suite > * { position: relative; }
+        .modals-suite > .modals-suite-orb { position: absolute; }
+
+        .modals-suite-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-bottom: 8px;
+        }
+
+        .modals-suite-top .widget-head { margin-bottom: 0; max-width: 780px; }
+
+        .modal-demo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+            gap: 14px;
+            margin-top: 18px;
+        }
+
+        .modal-demo-card {
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            border-radius: 20px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 16px;
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            transition: border-color 0.2s ease, transform 0.25s var(--ease-out);
+        }
+
+        .modal-demo-card:hover { border-color: var(--card-hover-border); transform: translateY(-2px); }
+
+        .modal-demo-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+
+        .modal-demo-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            background: rgb(var(--c-accent) / 0.12);
+            color: rgb(var(--c-accent));
+            border: 1px solid rgb(var(--c-accent) / 0.25);
+        }
+
+        .modal-demo-icon.is-danger { background: var(--danger-light); color: var(--danger); border-color: var(--danger-border); }
+        .modal-demo-icon.is-success { background: var(--success-light); color: var(--success); border-color: var(--success-border); }
+        .modal-demo-icon svg { width: 17px; height: 17px; }
+
+        .modal-demo-card h4 { font-size: 1rem; font-weight: 800; letter-spacing: -0.03em; }
+        .modal-demo-card h4 small { display: block; font-family: var(--font-mono); font-size: 0.6rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); }
+        .modal-demo-card p { font-size: 0.82rem; color: var(--text-dim); line-height: 1.55; }
+        .modal-demo-card .btn-modern { width: 100%; font-size: 0.84rem; }
+
+        /* ---------- Piezas de modal que nexora.css no define ---------- */
+        .apple-modal-title {
+            font-size: 1.2rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1.25;
+            color: var(--text-main);
+        }
+
+        .apple-modal-subtitle {
+            font-size: 0.82rem;
+            color: var(--text-dim);
+            margin-top: 4px;
+            line-height: 1.5;
+        }
+
+        .apple-modal-header { align-items: flex-start; }
+        .apple-modal-header .nx-eyebrow { font-size: 0.62rem; margin-bottom: 8px; }
+
+        .modal-note {
+            padding: 12px 14px;
+            background: rgb(var(--c-accent) / 0.08);
+            border-radius: 14px;
+            border: 1px solid rgb(var(--c-accent) / 0.22);
+            font-size: 0.82rem;
+            color: var(--text-main);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .modal-note svg { width: 16px; height: 16px; color: rgb(var(--c-accent)); }
+
+        .alert-dialog-body { padding: 30px 26px 24px; text-align: center; }
+
+        .alert-dialog-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: var(--danger-light);
+            border: 1px solid var(--danger-border);
+            color: var(--danger);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+            box-shadow: 0 0 30px -4px var(--danger-light);
+        }
+
+        .alert-dialog-icon svg { width: 24px; height: 24px; }
+
+        .alert-dialog-actions { display: flex; gap: 10px; justify-content: center; margin-top: 24px; }
+        .alert-dialog-actions .btn-modern { flex: 1; }
+
+        .apple-action-sheet {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            transform: translateY(20px);
+            transition: transform 0.35s var(--ease-out);
+        }
+
+        .apple-modal-overlay.active .apple-action-sheet { transform: none; }
+
+        .apple-action-group,
+        .apple-action-cancel {
+            background: var(--card-solid);
+            border: 1px solid var(--nav-border);
+            border-radius: 22px;
+            box-shadow: 0 30px 70px -18px rgba(0, 0, 0, 0.7), inset 0 1px 1.5px var(--card-specular);
+            overflow: hidden;
+        }
+
+        html.nx-light .apple-action-group,
+        html.nx-light .apple-action-cancel { box-shadow: 0 30px 60px -20px rgba(28, 35, 60, 0.25), inset 0 1px 1px #fff; }
+
+        .action-sheet-head {
+            padding: 16px 18px 14px;
+            text-align: center;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .action-sheet-head .nx-eyebrow { font-size: 0.62rem; color: var(--text-dim); }
+        .action-sheet-head div { font-size: 0.86rem; color: var(--text-main); margin-top: 4px; }
+
+        .apple-action-btn {
+            width: 100%;
+            padding: 15px 18px;
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid var(--card-border);
+            font-size: 0.92rem;
+            font-weight: 600;
+            color: var(--text-main);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        .apple-action-btn:last-child { border-bottom: none; }
+        .apple-action-btn svg { width: 16px; height: 16px; color: rgb(var(--c-accent)); }
+        .apple-action-btn:hover { background: rgb(var(--c-accent) / 0.1); color: var(--w-accent-text); }
+
+        .apple-action-cancel {
+            width: 100%;
+            padding: 15px;
+            font-size: 0.94rem;
+            font-weight: 800;
+            color: var(--text-main);
+            cursor: pointer;
+            transition: border-color 0.15s ease;
+        }
+
+        .apple-action-cancel:hover { border-color: var(--card-hover-border); }
+
+        .modal-seg { margin-top: 2px; }
+        .modal-seg button { font-family: var(--font-mono); font-size: 0.72rem; padding: 9px 6px; }
+
+        /* ---------- Responsive ---------- */
+        @media (max-width: 520px) {
+            .widgets-hero { margin-top: 30px; }
+            .widgets-grid > .card-panel { padding: 20px; border-radius: 22px; }
+            .date-grid { grid-template-columns: 1fr; gap: 0; }
+            .report-types-grid { grid-template-columns: 1fr; }
+            .segment-btn { font-size: 0.72rem; padding: 8px 2px; }
+            .alert-dialog-actions { flex-direction: column-reverse; }
+            .widget-kicker { gap: 8px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main Navigation Bar -->
+    <header class="nexora-navbar">
+        <div class="brand-wrapper">
+            <a href="index.html" aria-label="JFast Suite, inicio">
+                <div class="brand-info">
+                    <h1>JFast <span>Suite</span></h1>
+                </div>
+            </a>
+        </div>
+
+        <nav class="nav-links-menu" id="navLinksMenu" aria-label="Módulos">
+            <a href="index.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+                <span>Inicio</span>
+            </a>
+            <a href="crm.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M9 3v18M15 9l3 3-3 3"/></svg>
+                <span>CRM</span>
+            </a>
+            <a href="social.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                <span>Red Social</span>
+            </a>
+            <a href="pagos.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="20" height="14" x="2" y="5" rx="3"/><path d="M2 10h20"/></svg>
+                <span>Pagos</span>
+            </a>
+            <a href="widgets.html" class="nav-pill-link active" aria-current="page">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="7" height="7" x="3" y="3" rx="2"/><rect width="7" height="7" x="14" y="3" rx="2"/><rect width="7" height="7" x="14" y="14" rx="2"/><rect width="7" height="7" x="3" y="14" rx="2"/></svg>
+                <span>Widgets</span>
+            </a>
+            <a href="tablas.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+                <span>Tablas ERP</span>
+            </a>
+        </nav>
+
+        <div class="navbar-actions">
+            <button type="button" class="btn-modern btn-outline nx-hide-sm" onclick="resetAllSelects()" style="padding: 9px 16px; font-size: 0.78rem;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>Restablecer</button>
+            <button type="button" class="nx-round-btn" data-open-palette aria-label="Personalizar paleta" title="Personalizar paleta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;color:rgb(var(--c-accent));"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+            </button>
+            <button type="button" class="nx-round-btn theme-toggle-btn" onclick="toggleTheme()" aria-label="Cambiar tema"></button>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Encabezado de página -->
+        <div class="page-header-row widgets-hero">
+            <div class="page-title">
+                <span class="nx-eyebrow">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;stroke-width:2.2;"><rect width="7" height="7" x="3" y="3" rx="2"/><rect width="7" height="7" x="14" y="3" rx="2"/><rect width="7" height="7" x="14" y="14" rx="2"/><rect width="7" height="7" x="3" y="14" rx="2"/></svg>
+                    Componentes de interfaz
+                </span>
+                <h1><span class="hero-title-main">Catálogo de widgets</span> <span class="hero-title-faded">y selects empresariales.</span></h1>
+                <p>Componentes interactivos con filtrado en tiempo real, inspirados en E-Cont ERP y CRM Suite.</p>
+            </div>
+            <div class="widgets-hero-badges">
+                <span class="badge-status status-completed">
+                    <span class="nx-live-dot"></span> 11 widgets activos
+                </span>
+                <span class="badge-status status-processing">Inspirado en E-Cont ERP</span>
+            </div>
+        </div>
+
+        <div class="widgets-grid">
+
+            <!-- WIDGET 1: Select Múltiple con Buscador y Checkboxes -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">01 &bull; Select múltiple</span>
+                        <span class="widget-tag">Checkboxes</span>
+                    </div>
+                    <h3>Select múltiple con casillas</h3>
+                    <p class="widget-desc">Filtra y selecciona varios departamentos corporativos con acciones de selección rápida.</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Asignar departamentos operativos</label>
+                    <div class="multi-select-wrap" id="multiSelectDept">
+                        <div class="multi-select-trigger" onclick="toggleSelect('multiSelectDept')">
+                            <span id="labelDeptSelect" class="trigger-placeholder">Seleccionar departamentos...</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2.5;"><path d="m6 9 6 6 6-6"/></svg>
+                        </div>
+                        <div class="multi-select-dropdown" onclick="event.stopPropagation()">
+                            <input type="text" class="multi-select-search-bar" id="searchDeptInput" placeholder="Buscar departamento..." oninput="filterDeptOptions(this.value)">
+                            <div class="multi-select-actions-bar">
+                                <span class="action-link" onclick="selectAllDepts(true)">Seleccionar todos</span>
+                                <span class="action-link" onclick="selectAllDepts(false)">Limpiar selección</span>
+                            </div>
+                            <div class="multi-select-options-list" id="deptOptionsList">
+                                <!-- Se genera dinámicamente -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="widget-spacer">
+                    <div class="widget-sub-label">Departamentos seleccionados</div>
+                    <div class="chips-container" id="deptChipsOutput">
+                        <span class="widget-empty">Ninguno seleccionado aún</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- WIDGET 2: Multi-Select con Tags / Chips Dinámicos -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">02 &bull; Tags</span>
+                        <span class="widget-tag">Enter crea tag</span>
+                    </div>
+                    <h3>Select con tags removibles</h3>
+                    <p class="widget-desc">Selecciona y retira etiquetas de competencias técnicas con un clic. Escribe una nueva y pulsa Enter para crearla.</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Stack tecnológico y habilidades</label>
+                    <div class="multi-select-wrap" id="multiSelectSkills">
+                        <div class="multi-select-trigger" onclick="toggleSelect('multiSelectSkills')">
+                            <span id="labelSkillSelect" class="trigger-placeholder">Agregar tecnología o framework...</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2.5;"><path d="m6 9 6 6 6-6"/></svg>
+                        </div>
+                        <div class="multi-select-dropdown" onclick="event.stopPropagation()">
+                            <input type="text" class="multi-select-search-bar" id="searchSkillInput" placeholder="Buscar o crear habilidad..." oninput="filterSkillOptions(this.value)">
+                            <div class="multi-select-options-list" id="skillOptionsList">
+                                <!-- Se genera dinámicamente -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="widget-spacer">
+                    <div class="widget-sub-label">Tags activos</div>
+                    <div class="chips-container" id="skillChipsOutput">
+                        <!-- Chips -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- WIDGET 3: Select Agrupado por Categorías -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">03 &bull; Select agrupado</span>
+                        <span class="widget-tag">Centros de costo</span>
+                    </div>
+                    <h3>Select agrupado por categorías</h3>
+                    <p class="widget-desc">Cabeceras de sección para centros de costos y partidas contables.</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Centro de costo / partida contable</label>
+                    <div class="multi-select-wrap" id="selectCategorized">
+                        <div class="multi-select-trigger" onclick="toggleSelect('selectCategorized')">
+                            <span id="labelCatSelect" class="trigger-value">[IT-101] Servidores &amp; Infraestructura</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2.5;"><path d="m6 9 6 6 6-6"/></svg>
+                        </div>
+                        <div class="multi-select-dropdown" onclick="event.stopPropagation()">
+                            <input type="text" class="multi-select-search-bar" id="searchCatInput" placeholder="Buscar partida..." oninput="filterCategoryOptions(this.value)">
+                            <div class="multi-select-options-list" id="catOptionsList">
+                                <!-- Opciones agrupadas -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="widget-readout widget-spacer">
+                    <div class="widget-sub-label">Partida seleccionada</div>
+                    <div id="catDebugOutput" class="widget-readout-value">[IT-101] Servidores &amp; Infraestructura</div>
+                </div>
+            </div>
+
+            <!-- WIDGET 4: Combobox con Avatares de Colaborador -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">04 &bull; Avatares</span>
+                        <span class="widget-tag">Combobox</span>
+                    </div>
+                    <h3>Select con avatares</h3>
+                    <p class="widget-desc">Asigna tareas a miembros del equipo con foto, cargo e indicador de disponibilidad.</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Responsable del proyecto</label>
+                    <div class="multi-select-wrap" id="selectUserCombobox">
+                        <div class="multi-select-trigger" onclick="toggleSelect('selectUserCombobox')">
+                            <div style="display: flex; align-items: center; gap: 10px;" id="selectedUserPreview">
+                                <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&h=100&q=80" class="trigger-avatar" alt="">
+                                <span class="trigger-value">Elena Valenzuela (Administradora)</span>
+                            </div>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2.5;"><path d="m6 9 6 6 6-6"/></svg>
+                        </div>
+                        <div class="multi-select-dropdown" onclick="event.stopPropagation()">
+                            <input type="text" class="multi-select-search-bar" id="searchUserInput" placeholder="Buscar colaborador..." oninput="filterUserOptions(this.value)">
+                            <div class="multi-select-options-list" id="userOptionsList">
+                                <!-- Colaboradores -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="widget-readout widget-spacer widget-readout-row">
+                    <span class="widget-sub-label">Estado del colaborador</span>
+                    <span class="badge-status status-completed" id="userStatusBadge"><span class="status-dot"></span> Disponible</span>
+                </div>
+            </div>
+
+            <!-- WIDGET 5: Select Asíncrono / Remoto con Debounce -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">05 &bull; Búsqueda remota</span>
+                        <span class="widget-tag">Debounce 300 ms</span>
+                    </div>
+                    <h3>Select remoto simulado</h3>
+                    <p class="widget-desc">Simula una consulta a una API con retraso de red, debounce y spinner de carga.</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Buscar proveedor o cliente mayorista</label>
+                    <div class="async-field">
+                        <svg class="async-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.2;"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                        <input type="text" id="asyncSearchBox" class="form-input" placeholder="Escribe 'Logística', 'Cisco', 'Dell'..." oninput="handleAsyncSearch(this.value)">
+                        <div id="asyncSpinner" class="btn-spinner" style="position: absolute; right: 14px; top: 50%; margin-top: -8px; display: none;"></div>
+                    </div>
+                    <div id="asyncResultsBox" class="async-results" style="display: none;">
+                        <!-- Resultados -->
+                    </div>
+                </div>
+
+                <div class="widget-readout widget-spacer">
+                    <div class="widget-sub-label">Seleccionado</div>
+                    <div id="asyncSelectedLabel" class="widget-readout-value">Ninguno</div>
+                </div>
+            </div>
+
+            <!-- WIDGET 6: Controles Complementarios (Segmented & Range Sliders) -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">06 &bull; Controles</span>
+                        <span class="widget-tag">Segmented &bull; Range</span>
+                    </div>
+                    <h3>Controles y rangos</h3>
+                    <p class="widget-desc">Selector segmentado, límite de frecuencia y switch de auditoría.</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Frecuencia de conciliación</label>
+                    <div class="segmented-control">
+                        <button type="button" class="segment-btn active" onclick="setSegment(this, 'Diario')">Diario</button>
+                        <button type="button" class="segment-btn" onclick="setSegment(this, 'Semanal')">Semanal</button>
+                        <button type="button" class="segment-btn" onclick="setSegment(this, 'Mensual')">Mensual</button>
+                        <button type="button" class="segment-btn" onclick="setSegment(this, 'Trimestral')">Trimestral</button>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-top: 6px;">
+                    <label class="form-label">
+                        <span>Límite de peticiones API (rate limit)</span>
+                        <span id="sliderValueNum" class="rate-value">5,000 req/s</span>
+                    </label>
+                    <input type="range" id="rateLimitRange" class="rate-range" min="500" max="10000" step="500" value="5000" oninput="updateRateLimit(this.value)" aria-label="Límite de peticiones por segundo">
+                    <div class="rate-scale"><span>500</span><span>10,000</span></div>
+                </div>
+
+                <div class="switch-row">
+                    <div>
+                        <strong>Modo estricto de seguridad</strong>
+                        <small>2FA obligatorio en transacciones</small>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" checked onchange="showToast('Seguridad', this.checked ? 'Modo estricto 2FA activado para transacciones.' : 'Modo estricto desactivado.', this.checked ? 'success' : 'warning')">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- WIDGET 7: Selector Multi-Empresa & Sucursales (Inspirado en Econt-JFast EmpresaSelector.vue) -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">07 &bull; Multi-empresa</span>
+                        <span class="widget-tag">E-Cont ERP</span>
+                    </div>
+                    <h3>Selector multi-empresa y sucursal</h3>
+                    <p class="widget-desc">Filtra entidades por razón social o RFC y cambia entre matriz y sucursales.</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Buscar y cambiar entidad activa</label>
+                    <input type="text" id="widgetEmpresaSearch" class="form-input" placeholder="RFC o razón social (ej: 'CNE', 'Logística')..." oninput="filterWidgetEmpresas(this.value)" style="margin-bottom: 8px;">
+
+                    <div class="empresa-list-box" id="widgetEmpresasContainer">
+                        <!-- Se genera dinámicamente (renderWidgetEmpresas) -->
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Sucursal asignada</label>
+                    <select id="widgetSucursalSelect" class="form-select" onchange="onWidgetSucursalChange(this.value)">
+                        <option value="Matriz Central CDMX">Matriz Central CDMX (Corporativo)</option>
+                        <option value="Sucursal Monterrey">Sucursal Monterrey (Planta Norte)</option>
+                        <option value="Sucursal Guadalajara">Sucursal Guadalajara (Hub Occidente)</option>
+                    </select>
+                </div>
+
+                <div class="widget-readout widget-readout-row">
+                    <div style="min-width: 0;">
+                        <div class="widget-sub-label">Contexto activo</div>
+                        <strong id="widgetActiveEmpresaText" style="display: block; font-size: 0.86rem; margin-top: 4px;">Consorcio JFast S.A. de C.V. <span class="rfc-mono">(CNE200915AB4)</span></strong>
+                    </div>
+                    <span class="badge-status status-processing" id="widgetActiveSucursalBadge">Matriz Central CDMX</span>
+                </div>
+            </div>
+
+            <!-- WIDGET 8: Selector de Rango de Fechas Fiscal con Presets (Inspirado en Econt-JFast DateRange.vue) -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">08 &bull; Rango de fechas</span>
+                        <span class="widget-tag">ISO 8601</span>
+                    </div>
+                    <h3>Rango de fechas con presets fiscales</h3>
+                    <p class="widget-desc">Calcula ventanas contables en formato ISO con accesos rápidos a periodos del ejercicio.</p>
+                </div>
+
+                <div class="date-grid">
+                    <div class="form-group">
+                        <label class="form-label">Desde</label>
+                        <input type="date" id="datePickerDesde" class="form-input" onchange="updateDateRangeDisplay()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Hasta</label>
+                        <input type="date" id="datePickerHasta" class="form-input" onchange="updateDateRangeDisplay()">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Presets contables</label>
+                    <div class="date-range-presets">
+                        <button type="button" class="preset-btn" onclick="applyFiscalDatePreset('hoy', this)">Hoy</button>
+                        <button type="button" class="preset-btn" onclick="applyFiscalDatePreset('7d', this)">Últimos 7 días</button>
+                        <button type="button" class="preset-btn active" onclick="applyFiscalDatePreset('mes', this)">Este mes</button>
+                        <button type="button" class="preset-btn" onclick="applyFiscalDatePreset('mesAnterior', this)">Mes anterior</button>
+                        <button type="button" class="preset-btn" onclick="applyFiscalDatePreset('anio', this)">Este año</button>
+                    </div>
+                </div>
+
+                <div class="widget-readout">
+                    <div class="widget-readout-row">
+                        <span class="widget-sub-label">Periodo seleccionado</span>
+                        <span class="badge-status status-completed" id="dateRangeDaysCount">28 días</span>
+                    </div>
+                    <div id="dateRangeFormatted" class="date-readout-range">01/09/2026 → 28/09/2026</div>
+                </div>
+            </div>
+
+            <!-- WIDGET 9: Centro de Reportes Ejecutivos (Inspirado en Econt-JFast ReportCenter.vue) -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">09 &bull; Centro de reportes</span>
+                        <span class="widget-tag">PDF &bull; XLSX &bull; CSV</span>
+                    </div>
+                    <h3>Centro de reportes ejecutivos</h3>
+                    <p class="widget-desc">Estados financieros y balanzas SAT con elección de formato y exportación simulada.</p>
+                </div>
+
+                <div class="report-types-grid" id="reportTypesGrid">
+                    <div class="report-type-card active" onclick="selectReportType('Balanza de Comprobación SAT', this)">
+                        <span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10M12 3v18M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg></span>
+                        <strong>Balanza SAT</strong>
+                        <span class="rt-desc">Cuentas de orden y código agrupador</span>
+                    </div>
+                    <div class="report-type-card" onclick="selectReportType('Flujo de Efectivo & Tesorería', this)">
+                        <span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
+                        <strong>Flujo de efectivo</strong>
+                        <span class="rt-desc">Entradas y salidas conciliadas por SPEI</span>
+                    </div>
+                    <div class="report-type-card" onclick="selectReportType('Antigüedad de Saldos CXC/CXP', this)">
+                        <span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
+                        <strong>Antigüedad de saldos</strong>
+                        <span class="rt-desc">Facturas vencidas a 30, 60 y 90+ días</span>
+                    </div>
+                    <div class="report-type-card" onclick="selectReportType('Auditoría EFOS Art. 69-B', this)">
+                        <span class="rt-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4M12 16h.01"/></svg></span>
+                        <strong>Auditoría 69-B</strong>
+                        <span class="rt-desc">Cruce contra listas del DOF</span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Formato de salida</label>
+                    <div class="format-pills">
+                        <label class="format-pill">
+                            <input type="radio" name="reportFormat" value="PDF" checked>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+                            <span>PDF</span>
+                        </label>
+                        <label class="format-pill">
+                            <input type="radio" name="reportFormat" value="Excel XLSX">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+                            <span>XLSX</span>
+                        </label>
+                        <label class="format-pill">
+                            <input type="radio" name="reportFormat" value="CSV">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h2M14 13h2M8 17h2M14 17h2"/></svg>
+                            <span>CSV</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Barra de progreso -->
+                <div id="reportProgressContainer" style="display: none; margin: 4px 0 16px;">
+                    <div class="report-progress-head">
+                        <span>Procesando base de datos fiscal...</span>
+                        <strong id="reportProgressPercent">0%</strong>
+                    </div>
+                    <div class="report-progress-track">
+                        <div id="reportProgressBar" class="report-progress-bar"></div>
+                    </div>
+                </div>
+
+                <button type="button" class="btn-modern btn-primary" id="btnGenerateReport" onclick="simulateGenerateReport()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.2;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+                    Generar y descargar reporte
+                </button>
+            </div>
+
+            <!-- WIDGET 10: Centro de Alertas Fiscales & Notificaciones SAT (Inspirado en Econt-JFast AlertasDrawer) -->
+            <div class="card-panel">
+                <div class="widget-head">
+                    <div class="widget-kicker">
+                        <span class="widget-num">10 &bull; Alertas SAT</span>
+                        <span class="widget-tag"><span class="nx-live-dot"></span> En vivo</span>
+                    </div>
+                    <h3>Feed de alertas fiscales</h3>
+                    <p class="widget-desc">Monitor de discrepancias fiscales, cancelaciones de CFDI y avisos de auditoría.</p>
+                </div>
+
+                <div class="alerts-toolbar">
+                    <div class="alerts-filters">
+                        <button type="button" class="btn-modern btn-outline active" onclick="filterWidgetFeedAlerts('todas', this)"><span>Todas (<span id="widgetAlertBadgeCount">3</span>)</span></button>
+                        <button type="button" class="btn-modern btn-outline" onclick="filterWidgetFeedAlerts('sat', this)">SAT</button>
+                        <button type="button" class="btn-modern btn-outline" onclick="filterWidgetFeedAlerts('ops', this)">Operativa</button>
+                    </div>
+                    <button type="button" class="btn-modern btn-primary btn-xs" onclick="simulateIncomingAlert()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.5;"><path d="M5 12h14M12 5v14"/></svg>
+                        Simular alerta
+                    </button>
+                </div>
+
+                <div class="alerts-feed-box" id="widgetAlertsFeed">
+                    <div class="widget-alert-item urgent" data-type="sat">
+                        <div class="widget-readout-row">
+                            <span class="badge-status status-danger">SAT · Cancelación</span>
+                            <span class="alert-time">hace 12 min</span>
+                        </div>
+                        <div class="alert-title">CFDI folio <span class="nx-mono">#9042</span> con solicitud de cancelación</div>
+                        <div class="alert-body">Transportes Potosinos requiere respuesta en <span class="nx-mono">72&nbsp;h</span>.</div>
+                        <div class="alert-actions">
+                            <button class="btn-modern btn-primary btn-xs" onclick="showToast('SAT 4.0', 'Validación aprobada ante el SAT', 'success')">Aceptar cancelación</button>
+                            <button class="btn-modern btn-outline btn-xs" onclick="this.closest('.widget-alert-item').remove(); updateWidgetAlertBadge();">Descartar</button>
+                        </div>
+                    </div>
+
+                    <div class="widget-alert-item" data-type="sat">
+                        <div class="widget-readout-row">
+                            <span class="badge-status status-completed">SAT · Lista 69-B</span>
+                            <span class="alert-time">hace 1 h</span>
+                        </div>
+                        <div class="alert-title">Auditoría EFOS: proveedores <span class="nx-mono">100%</span> verificados</div>
+                        <div class="alert-body">Ninguna coincidencia con contribuyentes no localizados.</div>
+                    </div>
+
+                    <div class="widget-alert-item" data-type="ops">
+                        <div class="widget-readout-row">
+                            <span class="badge-status status-pending">CXP · Vencimiento</span>
+                            <span class="alert-time">hoy</span>
+                        </div>
+                        <div class="alert-title">3 facturas por pagar a proveedores <span class="nx-mono">($18,400 USD)</span></div>
+                        <div class="alert-body">Vencen en <span class="nx-mono">48&nbsp;h</span>. Requiere firma de tesorería.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- WIDGET 11: Suite interactiva de modales -->
+            <div class="card-panel modals-suite">
+                <div class="modals-suite-orb liquid-orb-accent animate-float-1" aria-hidden="true"></div>
+                <div class="modals-suite-top">
+                    <div class="widget-head">
+                        <div class="widget-kicker" style="justify-content: flex-start;">
+                            <span class="widget-num">11 &bull; Modales</span>
+                            <span class="widget-tag">Nuevo en 2026</span>
+                        </div>
+                        <h3>Suite de modales: sheet, alerta y hoja de acciones</h3>
+                        <p class="widget-desc">
+                            Modales de vidrio esmerilado (<code>backdrop-filter: blur(32px)</code>) con entrada elástica, cierre con
+                            <kbd>ESC</kbd> y al pulsar fuera.
+                        </p>
+                    </div>
+                    <button class="btn-modern btn-outline" onclick="openCustomizationDrawer()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+                        <span>Personalizar paleta</span>
+                    </button>
+                </div>
+
+                <div class="modal-demo-grid">
+                    <div class="modal-demo-card">
+                        <div>
+                            <div class="modal-demo-head">
+                                <div class="modal-demo-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 9h20M6 6.5h.01M9 6.5h.01"/></svg>
+                                </div>
+                                <h4><small>Sheet</small>Ventana de formulario</h4>
+                            </div>
+                            <p>Ventana flotante con cabecera, cuerpo desplazable y barra de acciones inferior. Ideal para formularios o edición.</p>
+                        </div>
+                        <button class="btn-modern btn-primary" onclick="openAppleModal('widgetAppleSheet')">
+                            Probar sheet
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="modal-demo-card">
+                        <div>
+                            <div class="modal-demo-head">
+                                <div class="modal-demo-icon is-danger">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/></svg>
+                                </div>
+                                <h4><small>Alert</small>Diálogo de confirmación</h4>
+                            </div>
+                            <p>Diálogo compacto y centrado para acciones críticas, eliminaciones o advertencias operativas.</p>
+                        </div>
+                        <button class="btn-modern btn-danger" onclick="openAppleModal('widgetAppleAlert')">
+                            Probar alerta
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="modal-demo-card">
+                        <div>
+                            <div class="modal-demo-head">
+                                <div class="modal-demo-icon is-success">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="M3 12h.01M3 18h.01M3 6h.01M8 12h13M8 18h13M8 6h13"/></svg>
+                                </div>
+                                <h4><small>Action sheet</small>Hoja de acciones</h4>
+                            </div>
+                            <p>Menú contextual con grupo de opciones redondeado y botón de cancelar independiente, pensado para móvil.</p>
+                        </div>
+                        <button class="btn-modern btn-outline" onclick="openAppleModal('widgetAppleActionSheet')">
+                            Probar hoja de acciones
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Modales de la página de widgets -->
+    <!-- 1. Sheet -->
+    <div id="widgetAppleSheet" class="apple-modal-overlay" style="display: none;">
+        <div class="apple-modal-card" style="max-width: 560px;">
+            <div class="apple-modal-header">
+                <div>
+                    <span class="nx-eyebrow">Sheet · Fiscal</span>
+                    <h3 class="apple-modal-title">Parámetros fiscales</h3>
+                    <p class="apple-modal-subtitle">Timbrado 4.0, certificados SAT y retenciones automáticas.</p>
+                </div>
+                <button class="apple-modal-close-pill" onclick="closeAppleModal('widgetAppleSheet')" aria-label="Cerrar modal">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="apple-modal-body">
+                <div class="form-group">
+                    <label class="form-label">Régimen fiscal predeterminado</label>
+                    <select class="form-select">
+                        <option>601 - General de Ley Personas Morales</option>
+                        <option>612 - Personas Físicas con Actividades Empresariales</option>
+                        <option>626 - Régimen Simplificado de Confianza (RESICO)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Tasa de retención de IVA automática</label>
+                    <div class="nx-seg modal-seg">
+                        <button type="button" data-active="true" onclick="pickModalSeg(this)">0% exento</button>
+                        <button type="button" onclick="pickModalSeg(this)">8% frontera</button>
+                        <button type="button" onclick="pickModalSeg(this)">16% general</button>
+                    </div>
+                </div>
+                <div class="modal-note">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+                    <span>Los cambios se aplican a todas las sucursales con sincronización en tiempo real.</span>
+                </div>
+            </div>
+            <div class="apple-modal-footer">
+                <button class="btn-modern btn-outline" onclick="closeAppleModal('widgetAppleSheet')">Cancelar</button>
+                <button class="btn-modern btn-primary" onclick="showToast('Configuración guardada', 'Parámetros fiscales aplicados correctamente.', 'success'); closeAppleModal('widgetAppleSheet');">Guardar cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Alert -->
+    <div id="widgetAppleAlert" class="apple-modal-overlay" style="display: none;">
+        <div class="apple-modal-card" style="max-width: 420px;">
+            <div class="alert-dialog-body">
+                <div class="alert-dialog-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/></svg>
+                </div>
+                <h3 class="apple-modal-title">¿Revocar certificado CSD?</h3>
+                <p class="apple-modal-subtitle" style="font-size: 0.85rem; margin-top: 8px;">Esta acción invalida la emisión de CFDI de la sucursal seleccionada hasta que se suba un nuevo par <span class="nx-mono">.cer</span> / <span class="nx-mono">.key</span> válido.</p>
+                <div class="alert-dialog-actions">
+                    <button class="btn-modern btn-outline" onclick="closeAppleModal('widgetAppleAlert')">Mantener CSD</button>
+                    <button class="btn-modern btn-danger" onclick="showToast('Certificado revocado', 'El CSD se dio de baja de manera segura.', 'warning'); closeAppleModal('widgetAppleAlert');">Sí, revocar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Hoja de acciones -->
+    <div id="widgetAppleActionSheet" class="apple-modal-overlay" style="display: none;">
+        <div class="apple-action-sheet">
+            <div class="apple-action-group">
+                <div class="action-sheet-head">
+                    <span class="nx-eyebrow">Acciones rápidas</span>
+                    <div>Selecciona una operación para ejecutar</div>
+                </div>
+                <button class="apple-action-btn" onclick="showToast('Exportación', 'Generando balance general en PDF...', 'info'); closeAppleModal('widgetAppleActionSheet');">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+                    <span>Exportar balance general (PDF)</span>
+                </button>
+                <button class="apple-action-btn" onclick="showToast('XML SAT', 'Descargando paquete de 42 comprobantes XML...', 'success'); closeAppleModal('widgetAppleActionSheet');">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.29 7 12 12l8.71-5M12 22V12"/></svg>
+                    <span>Descargar paquete masivo XML</span>
+                </button>
+                <button class="apple-action-btn" onclick="openCustomizationDrawer(); closeAppleModal('widgetAppleActionSheet');">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+                    <span>Abrir personalizador de paleta</span>
+                </button>
+            </div>
+            <button class="apple-action-cancel" onclick="closeAppleModal('widgetAppleActionSheet')">
+                Cancelar
+            </button>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="assets/js/nexora-common.js"></script>
+    <script>
+        // Global Click Outside Handler to close all active selects
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.multi-select-wrap')) {
+                document.querySelectorAll('.multi-select-wrap').forEach(w => w.classList.remove('open'));
+            }
+        });
+
+        function toggleSelect(wrapId) {
+            const wrap = document.getElementById(wrapId);
+            const isOpen = wrap.classList.contains('open');
+            // Close others first
+            document.querySelectorAll('.multi-select-wrap').forEach(w => w.classList.remove('open'));
+            if (!isOpen) {
+                wrap.classList.add('open');
+                const search = wrap.querySelector('.multi-select-search-bar');
+                if (search) search.focus();
+            }
+        }
+
+        // Iconos SVG reutilizados en las plantillas
+        const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:3;"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+        const ICON_CHECK = '<svg class="opt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.6;"><path d="M20 6 9 17l-5-5"/></svg>';
+        const ICON_PLUS = '<svg class="opt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.4;"><path d="M5 12h14M12 5v14"/></svg>';
+        const escHtml = (v) => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.2;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>';
+
+        // ==========================================
+        // 1. Multi-Select Depts Data & Logic
+        // ==========================================
+        const deptsData = [
+            'Recursos Humanos & Talento',
+            'Finanzas & Auditoría Fiscal',
+            'Ventas Corporativas & CRM',
+            'Logística & Centros de Distribución',
+            'Tecnologías de la Información (TI)',
+            'Marketing Digital & Growth',
+            'Legal & Cumplimiento Normativo',
+            'Operaciones de Campo & Mantenimiento'
+        ];
+        const selectedDepts = new Set(['Finanzas & Auditoría Fiscal', 'Ventas Corporativas & CRM']);
+
+        function renderDeptOptions(filter = '') {
+            const list = document.getElementById('deptOptionsList');
+            const filtered = deptsData.filter(d => d.toLowerCase().includes(filter.toLowerCase()));
+
+            if (filtered.length === 0) {
+                list.innerHTML = `<div class="opt-empty">No se encontraron departamentos.</div>`;
+                return;
+            }
+
+            list.innerHTML = filtered.map(dept => `
+                <label class="multi-select-item">
+                    <input type="checkbox" value="${dept}" ${selectedDepts.has(dept) ? 'checked' : ''} onchange="toggleDeptItem(this)">
+                    <span>${dept}</span>
+                </label>
+            `).join('');
+
+            updateDeptUI();
+        }
+
+        function filterDeptOptions(val) {
+            renderDeptOptions(val);
+        }
+
+        function toggleDeptItem(checkbox) {
+            if (checkbox.checked) {
+                selectedDepts.add(checkbox.value);
+            } else {
+                selectedDepts.delete(checkbox.value);
+            }
+            updateDeptUI();
+        }
+
+        function selectAllDepts(select) {
+            if (select) {
+                deptsData.forEach(d => selectedDepts.add(d));
+            } else {
+                selectedDepts.clear();
+            }
+            renderDeptOptions(document.getElementById('searchDeptInput').value);
+            showToast('Departamentos', select ? 'Todos seleccionados.' : 'Selección vaciada.', 'info');
+        }
+
+        function updateDeptUI() {
+            const label = document.getElementById('labelDeptSelect');
+            const chips = document.getElementById('deptChipsOutput');
+
+            if (selectedDepts.size === 0) {
+                label.textContent = 'Seleccionar departamentos...';
+                label.className = 'trigger-placeholder';
+                chips.innerHTML = `<span class="widget-empty">Ninguno seleccionado aún</span>`;
+            } else {
+                label.textContent = `${selectedDepts.size} departamento(s) asignado(s)`;
+                label.className = 'trigger-value';
+                chips.innerHTML = Array.from(selectedDepts).map(d => `
+                    <span class="chip">
+                        ${d}
+                        <span class="chip-remove" role="button" aria-label="Quitar ${d}" onclick="removeDept('${d}')">${ICON_X}</span>
+                    </span>
+                `).join('');
+            }
+        }
+
+        function removeDept(dept) {
+            selectedDepts.delete(dept);
+            renderDeptOptions(document.getElementById('searchDeptInput').value);
+        }
+
+        // ==========================================
+        // 2. Multi-Select Tags / Skills Logic
+        // ==========================================
+        const skillsData = ['TypeScript', 'Python', 'Docker', 'Kubernetes', 'PostgreSQL', 'GraphQL', 'Redis', 'AWS Cloud', 'Node.js', 'Figma'];
+        const selectedSkills = new Set(['TypeScript', 'Docker', 'PostgreSQL']);
+
+        function renderSkillOptions(filter = '') {
+            const list = document.getElementById('skillOptionsList');
+            const filtered = skillsData.filter(s => s.toLowerCase().includes(filter.toLowerCase()));
+
+            list.innerHTML = filtered.length === 0
+                ? `<div class="opt-empty">Pulsa Enter para crear «${escHtml(filter)}».</div>`
+                : filtered.map(skill => `
+                <div class="user-option-row ${selectedSkills.has(skill) ? 'selected' : ''}" onclick="toggleSkillItem('${skill}')">
+                    ${selectedSkills.has(skill) ? ICON_CHECK : ICON_PLUS}
+                    <span>${skill}</span>
+                </div>
+            `).join('');
+
+            updateSkillUI();
+        }
+
+        function filterSkillOptions(val) {
+            renderSkillOptions(val);
+        }
+
+        // Add Enter key listener to create custom tag on the fly
+        document.addEventListener('DOMContentLoaded', () => {
+            const skillInput = document.getElementById('searchSkillInput');
+            if (skillInput) {
+                skillInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const newSkill = skillInput.value.replace(/[<>'"`\\&]/g, '').trim();
+                        if (newSkill && !skillsData.includes(newSkill)) {
+                            skillsData.unshift(newSkill);
+                            selectedSkills.add(newSkill);
+                            skillInput.value = '';
+                            renderSkillOptions();
+                            showToast('Tag Creado', `Etiqueta personalizada "${newSkill}" agregada.`, 'success');
+                        }
+                    }
+                });
+            }
+        });
+
+        function toggleSkillItem(skill) {
+            if (selectedSkills.has(skill)) {
+                selectedSkills.delete(skill);
+            } else {
+                selectedSkills.add(skill);
+            }
+            renderSkillOptions(document.getElementById('searchSkillInput').value);
+        }
+
+        function updateSkillUI() {
+            const chips = document.getElementById('skillChipsOutput');
+            if (selectedSkills.size === 0) {
+                chips.innerHTML = `<span class="widget-empty">Sin habilidades seleccionadas</span>`;
+            } else {
+                chips.innerHTML = Array.from(selectedSkills).map(s => `
+                    <span class="chip chip-tag">
+                        ${s}
+                        <span class="chip-remove" role="button" aria-label="Quitar ${s}" onclick="removeSkill('${s}')">${ICON_X}</span>
+                    </span>
+                `).join('');
+            }
+        }
+
+        function removeSkill(skill) {
+            selectedSkills.delete(skill);
+            renderSkillOptions(document.getElementById('searchSkillInput').value);
+        }
+
+        // ==========================================
+        // 3. Categorized Select Logic
+        // ==========================================
+        const categorizedData = [
+            { category: 'Infraestructura & Cloud', items: ['[IT-101] Servidores & Infraestructura', '[IT-102] Licencias SaaS & Software', '[IT-103] Conectividad & Redes Fibra'] },
+            { category: 'Operaciones & Logística', items: ['[OP-201] Fletes & Despacho Terrestre', '[OP-202] Almacenamiento & Bodegas', '[OP-203] Mantenimiento Flota'] },
+            { category: 'Administración & Finanzas', items: ['[ADM-301] Honorarios Profesionales', '[ADM-302] Auditoría Fiscal SAT', '[ADM-303] Seguros Corporativos'] }
+        ];
+
+        let selectedCategoryItem = '[IT-101] Servidores & Infraestructura';
+
+        function renderCategoryOptions(filter = '') {
+            const list = document.getElementById('catOptionsList');
+            let html = '';
+
+            categorizedData.forEach(cat => {
+                const matched = cat.items.filter(i => i.toLowerCase().includes(filter.toLowerCase()) || cat.category.toLowerCase().includes(filter.toLowerCase()));
+                if (matched.length > 0) {
+                    html += `<div class="group-header">${cat.category}</div>`;
+                    matched.forEach(item => {
+                        const m = item.match(/^\[([^\]]+)\]\s*(.*)$/);
+                        html += `
+                            <div class="user-option-row ${item === selectedCategoryItem ? 'selected' : ''}" onclick="selectCatItem('${item}')">
+                                ${m ? `<span class="opt-code">${m[1]}</span><span>${m[2]}</span>` : `<span>${item}</span>`}
+                            </div>
+                        `;
+                    });
+                }
+            });
+
+            list.innerHTML = html || `<div class="opt-empty">Sin partidas para «${escHtml(filter)}».</div>`;
+        }
+
+        function filterCategoryOptions(val) {
+            renderCategoryOptions(val);
+        }
+
+        function selectCatItem(item) {
+            selectedCategoryItem = item;
+            document.getElementById('labelCatSelect').textContent = item;
+            document.getElementById('catDebugOutput').textContent = item;
+            document.getElementById('selectCategorized').classList.remove('open');
+            renderCategoryOptions();
+            showToast('Centro de Costos', `Asignado a: ${item}`, 'info');
+        }
+
+        // ==========================================
+        // 4. Users Combobox Logic
+        // ==========================================
+        const usersData = [
+            { name: 'Elena Valenzuela', role: 'Administradora General', img: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&h=100&q=80', status: 'Disponible' },
+            { name: 'Carlos Mendoza', role: 'Jefe de Logística & Flota', img: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80', status: 'Ocupado' },
+            { name: 'Sofía Arismendi', role: 'Directora Financiera', img: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=80', status: 'Disponible' },
+            { name: 'Mateo Villanueva', role: 'Líder de Ciberseguridad', img: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&h=100&q=80', status: 'En reunión' }
+        ];
+
+        let selectedUser = usersData[0];
+
+        function renderUserOptions(filter = '') {
+            const list = document.getElementById('userOptionsList');
+            const matched = usersData.filter(u => u.name.toLowerCase().includes(filter.toLowerCase()) || u.role.toLowerCase().includes(filter.toLowerCase()));
+
+            if (matched.length === 0) {
+                list.innerHTML = `<div class="opt-empty">Sin colaboradores para «${escHtml(filter)}».</div>`;
+                return;
+            }
+
+            list.innerHTML = matched.map(u => `
+                <div class="user-option-row ${u.name === selectedUser.name ? 'selected' : ''}" onclick="selectUserItem('${u.name}')">
+                    <span class="user-opt-avatar-wrap">
+                        <img src="${u.img}" class="user-opt-avatar" alt="">
+                        <span class="user-presence ${userPresenceClass(u.status)}"></span>
+                    </span>
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-weight:700; font-size:0.86rem;">${u.name}</div>
+                        <div style="font-size:0.74rem; color:var(--text-dim); font-weight:500;">${u.role}</div>
+                    </div>
+                    <span class="user-opt-status">${u.status}</span>
+                </div>
+            `).join('');
+        }
+
+        // Disponible = verde, Ocupado = rojo, En reunión = ámbar
+        function userPresenceClass(status) {
+            if (status === 'Ocupado') return 'is-busy';
+            if (status === 'En reunión') return 'is-meeting';
+            return '';
+        }
+
+        function userBadgeClass(status) {
+            if (status === 'Ocupado') return 'status-cancelled';
+            if (status === 'En reunión') return 'status-pending';
+            return 'status-completed';
+        }
+
+        function filterUserOptions(val) {
+            renderUserOptions(val);
+        }
+
+        function selectUserItem(userName) {
+            selectedUser = usersData.find(u => u.name === userName);
+            document.getElementById('selectedUserPreview').innerHTML = `
+                <img src="${selectedUser.img}" class="trigger-avatar" alt="">
+                <span class="trigger-value">${selectedUser.name} (${selectedUser.role.split(' ')[0]})</span>
+            `;
+            const statusBadge = document.getElementById('userStatusBadge');
+            statusBadge.className = `badge-status ${userBadgeClass(selectedUser.status)}`;
+            statusBadge.innerHTML = `<span class="status-dot"></span> ${selectedUser.status}`;
+            document.getElementById('selectUserCombobox').classList.remove('open');
+            renderUserOptions();
+            showToast('Asignación', `Responsable asignado: ${selectedUser.name}`, 'success');
+        }
+
+        // ==========================================
+        // 5. Simulated Async Remote Search
+        // ==========================================
+        let asyncDebounceTimer = null;
+        const mockDb = [
+            'Logística Austral S.A.', 'TechGlobal Soluciones Corp', 'Industrias Mineras del Norte',
+            'Cisco Systems Latam', 'Dell Technologies México', 'Fortinet Security Latam',
+            'Almacenes Generales de Depósito', 'Transportes Blindados Panamericanos'
+        ];
+
+        function handleAsyncSearch(val) {
+            const spinner = document.getElementById('asyncSpinner');
+            const box = document.getElementById('asyncResultsBox');
+
+            if (!val.trim()) {
+                box.style.display = 'none';
+                spinner.style.display = 'none';
+                return;
+            }
+
+            spinner.style.display = 'inline-block';
+            clearTimeout(asyncDebounceTimer);
+
+            asyncDebounceTimer = setTimeout(() => {
+                spinner.style.display = 'none';
+                const results = mockDb.filter(item => item.toLowerCase().includes(val.toLowerCase()));
+
+                box.style.display = 'block';
+                if (results.length === 0) {
+                    box.innerHTML = `<div class="opt-empty">Sin resultados para «${escHtml(val)}».</div>`;
+                } else {
+                    const latency = 180 + Math.round(Math.random() * 140);
+                    box.innerHTML = results.map((r, i) => `
+                        <div class="user-option-row" onclick="selectAsyncResult('${r}')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2M10 6h4M10 10h4M10 14h4M10 18h4"/></svg>
+                            <span>${r}</span>
+                            ${i === 0 ? `<span class="async-latency">${latency} ms</span>` : ''}
+                        </div>
+                    `).join('');
+                }
+            }, 300);
+        }
+
+        function selectAsyncResult(val) {
+            document.getElementById('asyncSearchBox').value = val;
+            document.getElementById('asyncSelectedLabel').textContent = val;
+            document.getElementById('asyncResultsBox').style.display = 'none';
+            showToast('Proveedor Vinculado', `Entidad seleccionada: ${val}`, 'success');
+        }
+
+        // ==========================================
+        // 6. Segment & Sliders
+        // ==========================================
+        function setSegment(btn, value) {
+            document.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            showToast('Frecuencia', `Período configurado a: ${value}`, 'info');
+        }
+
+        function updateRateLimit(val) {
+            document.getElementById('sliderValueNum').textContent = `${Number(val).toLocaleString('en-US')} req/s`;
+            const range = document.getElementById('rateLimitRange');
+            if (range) {
+                const pct = ((val - range.min) / (range.max - range.min)) * 100;
+                range.style.setProperty('--fill', `${pct}%`);
+            }
+        }
+
+        function resetAllSelects() {
+            selectedDepts.clear();
+            selectedDepts.add('Finanzas & Auditoría Fiscal');
+            selectedSkills.clear();
+            selectedSkills.add('TypeScript');
+
+            renderDeptOptions();
+            renderSkillOptions();
+            renderCategoryOptions();
+            renderUserOptions();
+
+            document.getElementById('asyncSearchBox').value = '';
+            document.getElementById('asyncSelectedLabel').textContent = 'Ninguno';
+            document.getElementById('asyncResultsBox').style.display = 'none';
+
+            // Reset E-Cont widgets
+            renderWidgetEmpresas();
+            applyFiscalDatePreset('mes');
+
+            showToast('Restablecido', 'Todos los widgets han vuelto a su estado original.', 'info');
+        }
+
+        // ==========================================
+        // 7. Widget EmpresaSelector Logic (E-Cont Inspired)
+        // ==========================================
+        const widgetEmpresasData = [
+            { name: 'Consorcio JFast S.A. de C.V.', rfc: 'CNE200915AB4', regimen: 'Régimen 601 General de Ley' },
+            { name: 'JFast Logística Norte S.A.P.I.', rfc: 'NLN220412882', regimen: 'Régimen 626 RESICO' },
+            { name: 'Distribución Austral Bajío S.A.', rfc: 'DAB210809CC1', regimen: 'Régimen 612 Personas Físicas con Actividades' },
+            { name: 'Fideicomiso Inmobiliario Metropolitano', rfc: 'FIM180320KL5', regimen: 'Régimen 606 Arrendamiento' }
+        ];
+
+        let activeWidgetEmpresa = widgetEmpresasData[0];
+        let activeWidgetSucursal = 'Matriz Central CDMX';
+
+        function renderWidgetEmpresas(filter = '') {
+            const container = document.getElementById('widgetEmpresasContainer');
+            if (!container) return;
+            const term = filter.toLowerCase().trim();
+            const matched = widgetEmpresasData.filter(e => 
+                e.name.toLowerCase().includes(term) || e.rfc.toLowerCase().includes(term)
+            );
+
+            if (matched.length === 0) {
+                container.innerHTML = `<div class="opt-empty">Sin coincidencias para «${escHtml(filter)}».</div>`;
+                return;
+            }
+
+            container.innerHTML = matched.map(e => `
+                <button type="button" class="empresa-card-btn ${e.rfc === activeWidgetEmpresa.rfc ? 'active' : ''}"
+                    onclick="selectWidgetEmpresa('${e.name}', '${e.rfc}', '${e.regimen}', this)">
+                    <span class="empresa-main">
+                        <span class="empresa-initials">${e.rfc.slice(0, 3)}</span>
+                        <span style="min-width:0;">
+                            <span class="empresa-name" style="display:block;">${e.name}</span>
+                            <span class="empresa-meta" style="display:block;"><span class="rfc">${e.rfc}</span> · ${e.regimen}</span>
+                        </span>
+                    </span>
+                    ${e.rfc === activeWidgetEmpresa.rfc ? '<span class="badge-status status-completed">Activa</span>' : ''}
+                </button>
+            `).join('');
+        }
+
+        function filterWidgetEmpresas(val) {
+            renderWidgetEmpresas(val);
+        }
+
+        function selectWidgetEmpresa(name, rfc, regimen, btn) {
+            activeWidgetEmpresa = { name, rfc, regimen };
+            document.getElementById('widgetActiveEmpresaText').innerHTML = `${escHtml(name)} <span class="rfc-mono">(${escHtml(rfc)})</span>`;
+            renderWidgetEmpresas();
+            showToast('Empresa Activa', `Razón Social cambiada a: ${name}`, 'success');
+        }
+
+        function onWidgetSucursalChange(sucursal) {
+            activeWidgetSucursal = sucursal;
+            document.getElementById('widgetActiveSucursalBadge').textContent = sucursal;
+            showToast('Sucursal', `Contexto de operaciones actualizado a: ${sucursal}`, 'info');
+        }
+
+        // ==========================================
+        // 8. Widget DateRangePicker Logic (E-Cont Inspired)
+        // ==========================================
+        function isoDateString(d) {
+            return d.toISOString().slice(0, 10);
+        }
+
+        function applyFiscalDatePreset(preset, btn) {
+            document.querySelectorAll('.date-range-presets .preset-btn').forEach(b => b.classList.remove('active'));
+            if (btn) {
+                btn.classList.add('active');
+            } else {
+                const defaultBtn = document.querySelector(`.date-range-presets .preset-btn[onclick*="'${preset}'"]`);
+                if (defaultBtn) defaultBtn.classList.add('active');
+            }
+
+            const hoy = new Date();
+            let inicio = new Date(hoy);
+            let fin = new Date(hoy);
+
+            if (preset === 'hoy') {
+                // hoy / hoy
+            } else if (preset === '7d') {
+                inicio.setDate(inicio.getDate() - 6);
+            } else if (preset === 'mes') {
+                inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+            } else if (preset === 'mesAnterior') {
+                inicio = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+                fin = new Date(hoy.getFullYear(), hoy.getMonth(), 0);
+            } else if (preset === 'anio') {
+                inicio = new Date(hoy.getFullYear(), 0, 1);
+            }
+
+            const inputDesde = document.getElementById('datePickerDesde');
+            const inputHasta = document.getElementById('datePickerHasta');
+            if (inputDesde && inputHasta) {
+                inputDesde.value = isoDateString(inicio);
+                inputHasta.value = isoDateString(fin);
+            }
+
+            updateDateRangeDisplay();
+            if (btn) showToast('Preset Fiscal', `Período contable establecido (${preset})`, 'info');
+        }
+
+        function updateDateRangeDisplay() {
+            const d1Val = document.getElementById('datePickerDesde').value;
+            const d2Val = document.getElementById('datePickerHasta').value;
+            if (!d1Val || !d2Val) return;
+
+            const d1 = new Date(d1Val + 'T00:00:00');
+            const d2 = new Date(d2Val + 'T00:00:00');
+            const diffTime = Math.abs(d2 - d1);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+            const formatted = `${d1Val.split('-').reverse().join('/')} → ${d2Val.split('-').reverse().join('/')}`;
+            document.getElementById('dateRangeFormatted').textContent = formatted;
+            document.getElementById('dateRangeDaysCount').textContent = `${diffDays} días`;
+        }
+
+        // ==========================================
+        // 9. Widget ReportCenter Logic (E-Cont Inspired)
+        // ==========================================
+        let selectedReportTitle = 'Balanza de Comprobación SAT';
+
+        function selectReportType(title, el) {
+            selectedReportTitle = title;
+            document.querySelectorAll('.report-type-card').forEach(c => c.classList.remove('active'));
+            el.classList.add('active');
+            showToast('Reporte Seleccionado', `${title}`, 'info');
+        }
+
+        function simulateGenerateReport() {
+            const btn = document.getElementById('btnGenerateReport');
+            const progContainer = document.getElementById('reportProgressContainer');
+            const progBar = document.getElementById('reportProgressBar');
+            const progPercent = document.getElementById('reportProgressPercent');
+            const formatInput = document.querySelector('input[name="reportFormat"]:checked');
+            const format = formatInput ? formatInput.value : 'PDF';
+
+            btn.disabled = true;
+            btn.innerHTML = `<span class="btn-spinner"></span> Compilando ${selectedReportTitle}...`;
+            progContainer.style.display = 'block';
+            progBar.style.width = '0%';
+            progPercent.textContent = '0%';
+
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 20;
+                progBar.style.width = `${progress}%`;
+                progPercent.textContent = `${progress}%`;
+
+                if (progress >= 100) {
+                    clearInterval(interval);
+                    setTimeout(() => {
+                        progContainer.style.display = 'none';
+                        btn.disabled = false;
+                        btn.innerHTML = `${ICON_DOWNLOAD} Generar y descargar reporte`;
+                        showToast('Descarga Lista', `${selectedReportTitle} exportado en ${format}. Descarga simulada iniciada.`, 'success');
+                    }, 400);
+                }
+            }, 120);
+        }
+
+        // ==========================================
+        // 10. Widget AlertasFeed Logic (E-Cont Inspired)
+        // ==========================================
+        function filterWidgetFeedAlerts(type, btn) {
+            const btns = btn.parentElement.querySelectorAll('button');
+            btns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            const items = document.querySelectorAll('#widgetAlertsFeed .widget-alert-item');
+            items.forEach(item => {
+                const itemType = item.getAttribute('data-type');
+                if (type === 'todas' || itemType === type) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        }
+
+        function updateWidgetAlertBadge() {
+            const feed = document.getElementById('widgetAlertsFeed');
+            if (!feed) return;
+            const count = feed.querySelectorAll('.widget-alert-item').length;
+            const badge = document.getElementById('widgetAlertBadgeCount');
+            if (badge) badge.textContent = count;
+        }
+
+        function simulateIncomingAlert() {
+            const feed = document.getElementById('widgetAlertsFeed');
+            if (!feed) return;
+            const newAlert = document.createElement('div');
+            newAlert.className = 'widget-alert-item urgent';
+            newAlert.setAttribute('data-type', 'sat');
+            newAlert.innerHTML = `
+                <div class="widget-readout-row">
+                    <span class="badge-status status-danger">SAT · Nueva alerta</span>
+                    <span class="alert-time">ahora</span>
+                </div>
+                <div class="alert-title">Notificación en Buzón Tributario SAT</div>
+                <div class="alert-body">Nuevo requerimiento de contabilidad electrónica del ejercicio <span class="nx-mono">2026</span>.</div>
+                <div class="alert-actions">
+                    <button class="btn-modern btn-primary btn-xs" onclick="showToast('Buzón SAT', 'Accediendo a e.firma SAT...', 'info')">Abrir buzón</button>
+                    <button class="btn-modern btn-outline btn-xs" onclick="this.closest('.widget-alert-item').remove(); updateWidgetAlertBadge();">Descartar</button>
+                </div>
+            `;
+            feed.prepend(newAlert);
+            updateWidgetAlertBadge();
+            showToast('Alerta Entrante', 'Nuevo aviso recibido de Buzón Tributario SAT', 'warning');
+        }
+
+        // Control segmentado del modal (retención de IVA)
+        function pickModalSeg(btn) {
+            btn.parentElement.querySelectorAll('button').forEach(b => b.removeAttribute('data-active'));
+            btn.setAttribute('data-active', 'true');
+        }
+
+        // Init all components
+        updateRateLimit(document.getElementById('rateLimitRange').value);
+        renderDeptOptions();
+        renderSkillOptions();
+        renderCategoryOptions();
+        renderUserOptions();
+        renderWidgetEmpresas();
+        applyFiscalDatePreset('mes');
+    </script>
+</body>
+</html>

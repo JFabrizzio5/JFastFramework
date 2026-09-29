@@ -1,8 +1,8 @@
 """File generation from Jinja2 templates.
 
-Templates live as real files under ``jfastframework/templates/``. Not as string
-literals inside Python functions -- that was the v0 mistake: templates you
-cannot lint, diff or test.
+Templates live as real files under ``jfastframework/templates/``, not as string
+literals inside Python functions: a template in a string cannot be linted,
+diffed or tested.
 
 Two Jinja environments, because HTML templates are themselves Jinja::
 
@@ -12,14 +12,15 @@ Two Jinja environments, because HTML templates are themselves Jinja::
 
 Every generated tree carries a ``.jfast-template`` stamp recording which
 template produced it, so ``jfast upgrade`` can later re-apply a newer template
-and show a diff instead of a rewrite.
+and show a diff instead of a rewrite. For a frontend the stamp is also where
+its look is recorded, so ``jfast new view`` can match it later.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -36,6 +37,9 @@ STAMP_FILE = ".jfast-template"
 #: A module is free to differ from its neighbours -- that is the point of a
 #: modular monolith, and `jfast.toml` remembers which is which.
 MODULE_LAYOUTS = ("layered", "modular", "screaming", "hexagonal")
+#: A package per layer: the shape a module grows into without being moved.
+#: Five files is where ``layered`` starts to hurt, and most modules get there.
+DEFAULT_LAYOUT = "modular"
 
 #: The contract whose layer globs match the files a layout generates. Every
 #: entry is load-bearing: a contract written for another layout matches none of
@@ -50,6 +54,17 @@ CONTRACT_TEMPLATE_FOR: dict[str, str] = {
 MODULE_UIS = ("api", "htmx")
 SERVICE_KINDS = ("api", "web", "spa", "gateway")
 FRONTENDS = ("vue", "react")
+
+#: The look a generated frontend is drawn in, first entry the default.
+#:
+#: A look is only the files that draw: stylesheet, components, layout, the two
+#: shipped screens and the page `jfast new view` writes. Router, stores, the
+#: axios instance and the generator markers are one set shared by every look,
+#: so a view generator or a 401 fix never has to be written twice. The look's
+#: trees are rendered first and win any file both sides carry -- see
+#: `Scaffolder.render_trees`.
+FRONTEND_TEMPLATES = ("nexora", "classic")
+DEFAULT_FRONTEND_TEMPLATE = FRONTEND_TEMPLATES[0]
 
 
 @dataclass(frozen=True)
@@ -73,7 +88,10 @@ PLUGIN_CATALOG: dict[str, PluginSpec] = {
     "qdrant": PluginSpec("qdrant", "Qdrant vector database", True),
     "rag": PluginSpec("rag", "Semantic search over pgvector or Qdrant"),
     "queue": PluginSpec("queue", "Background jobs on PostgreSQL, Redis or RabbitMQ"),
+    "outbox": PluginSpec("db", "Jobs and events that commit with the request's rows"),
+    "idempotency": PluginSpec("db", "Idempotency-Key: a retried POST gets the first answer"),
     "auth": PluginSpec("auth", "JWT verification, scopes, rotation, revocation"),
+    "accounts": PluginSpec("accounts", "Users, password login, roles and permissions"),
     "ratelimit": PluginSpec("cache", "Per-tenant and per-subject rate limits (Redis-backed)"),
     "channels": PluginSpec("", "Declared pub/sub channels over memory, Redis or Kafka"),
     "websocket": PluginSpec("server", "Authenticated WebSocket connections, Redis fan-out"),
@@ -81,6 +99,7 @@ PLUGIN_CATALOG: dict[str, PluginSpec] = {
     "web": PluginSpec("web", "Jinja2 templates + HTMX (server-rendered pages)"),
     "sentry": PluginSpec("sentry", "Sentry error and performance reporting"),
     "gateway": PluginSpec("gateway", "Prefix-based reverse proxy"),
+    "http": PluginSpec("http", "Calls to sibling services: deadlines, retries, breakers"),
     "storage": PluginSpec("storage", "File storage on local disks, S3 or MinIO"),
     "tenancy": PluginSpec("", "Multi-tenancy by subdomain, token claim or path"),
     "notifications": PluginSpec("fcm", "Push notifications via Firebase (FCM)"),
@@ -113,18 +132,47 @@ def to_kebab(name: str) -> str:
     return to_snake(name).replace("_", "-")
 
 
-def pluralize(word: str) -> str:
-    """Naive English pluralisation, good enough for table names.
+#: Languages ``pluralize`` knows, set per project with ``[scaffold] language``.
+PLURAL_LANGUAGES = ("en", "es")
 
-    It also sidesteps a real problem: singular nouns collide with SQL reserved
-    words far more often than plurals do (``order``, ``user``, ``group``).
-    Override with ``--table`` when it guesses wrong.
+
+def pluralize(word: str, language: str = "en") -> str:
+    """Pluralise a module name into a table name, in English or Spanish.
+
+    Table names are plural because singular nouns collide with SQL reserved
+    words far more often than plurals do (``order``, ``user``, ``group``). The
+    rules are the regular ones, good enough for identifiers; ``--table``
+    overrides a guess that is wrong.
     """
+    if language == "es":
+        return _pluralize_es(word)
     if word.endswith("y") and not word.endswith(("ay", "ey", "iy", "oy", "uy")):
         return word[:-1] + "ies"
     if word.endswith(("s", "x", "z", "ch", "sh")):
         return word + "es"
     return word + "s"
+
+
+def _pluralize_es(word: str) -> str:
+    """Spanish: the head noun -- the first word -- takes the plural.
+
+    ``orden_compra`` is ``ordenes_compra``, where English pluralises the last
+    word (``line_items``). Identifiers are ASCII, so the stress an accent would
+    show is guessed: a word ending in an unstressed ``-es``/``-is`` of more
+    than one syllable (``lunes``, ``tesis``) stays as it is.
+    """
+    head, sep, rest = word.partition("_")
+    if not head:
+        return word
+    if head.endswith(("a", "e", "i", "o", "u")):
+        plural = head + "s"
+    elif head.endswith("z"):
+        plural = head[:-1] + "ces"
+    elif head.endswith(("es", "is")) and len(head) > 4:
+        plural = head
+    else:
+        plural = head + "es"
+    return plural + sep + rest
 
 
 def resolve_plugins(kind: str, chosen: Sequence[str]) -> list[str]:
@@ -173,11 +221,11 @@ def extras_for(plugins: Sequence[str]) -> str:
 def framework_pin() -> str:
     """The version specifier a generated service should pin, derived not typed.
 
-    Two things this gets right that a hardcoded string did not:
+    Two things this gets right that a hardcoded string cannot:
 
-    * It follows the framework. A literal ``~=0.7`` in the template survived a
-      renumbering to ``0.1.0a1`` and every generated project shipped a
-      requirements file pip could not satisfy.
+    * It follows the framework. A literal pin in the template survives a
+      renumbering of the framework, and every generated project then ships a
+      requirements file pip cannot satisfy.
     * A pre-release is pinned **exactly**. ``~=0.1`` does not match
       ``0.1.0a1``: a compatible-release clause normalises to ``>= 0.1, == 0.*``
       and ``0.1.0a1`` sorts below ``0.1.0``, so it is out of range even with
@@ -203,7 +251,7 @@ class Tree(NamedTuple):
 
     ``extra`` exists because the trees of one command do not always share a
     vocabulary. `jfast new module` renders under a module context, which has no
-    project name, while the contract template it now carries needs one.
+    project name, while the contract template it carries needs one.
     """
 
     template: str
@@ -258,6 +306,7 @@ class Scaffolder:
         *,
         force: bool = False,
         dry_run: bool = False,
+        skip: Collection[Path] = (),
     ) -> list[WrittenFile]:
         source = self.template_root / template
         if not source.is_dir():
@@ -275,9 +324,20 @@ class Scaffolder:
             # named "orders" lands in modules/orders/, not modules/{{module}}/.
             rendered_name = self.env.from_string(str(relative).replace(".j2", "")).render(**context)
             destination = target / rendered_name
+            if destination in skip:
+                continue
 
             if destination.exists() and not force:
                 written.append(WrittenFile(destination, created=False))
+                continue
+
+            if not path.name.endswith(".j2"):
+                # Not a template: an image, a font -- copied byte for byte,
+                # because rendering one as text would corrupt it.
+                if not dry_run:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(path.read_bytes())
+                written.append(WrittenFile(destination, created=True))
                 continue
 
             env = self._env_for(relative)
@@ -304,13 +364,22 @@ class Scaffolder:
         Composition instead of multiplication: a layout tree plus an optional
         UI overlay covers layered/screaming x api/htmx with three trees rather
         than four copies that drift apart.
+
+        The first tree to claim a path owns it. That is what lets a frontend
+        look replace a stylesheet or a component of the shared frontend tree
+        without a copy of the rest -- and it holds under ``--force`` too, where
+        "the last write wins" would hand every overridden file back to the
+        tree underneath.
         """
         written: list[WrittenFile] = []
+        claimed: set[Path] = set()
         for tree in trees:
             merged = {**context, **tree.extra} if tree.extra else context
-            written.extend(
-                self.render_tree(tree.template, tree.target, merged, force=force, dry_run=dry_run)
+            files = self.render_tree(
+                tree.template, tree.target, merged, force=force, dry_run=dry_run, skip=claimed
             )
+            claimed.update(file.path for file in files)
+            written.extend(files)
         return written
 
     def _write_stamp(self, target: Path, template: str, context: dict[str, Any]) -> None:
@@ -335,13 +404,14 @@ class Scaffolder:
 def module_context(
     name: str,
     *,
-    layout: str = "layered",
+    layout: str = DEFAULT_LAYOUT,
     ui: str = "api",
     table: str | None = None,
     modules_dir: str = "modules",
+    language: str = "en",
 ) -> dict[str, Any]:
     snake = to_snake(name)
-    plural = pluralize(snake)
+    plural = pluralize(snake, language)
     return {
         "module": snake,
         "Module": to_pascal(name),
@@ -365,6 +435,7 @@ def service_context(
     workspace_name: str = "workspace",
     api_base_url: str = "",
     frontend: str | None = None,
+    frontend_template: str | None = None,
     routes: Sequence[dict[str, str]] = (),
     language: str = "python",
     sample_module: str = "item",
@@ -402,6 +473,11 @@ def service_context(
         "grpc": grpc,
         "grpc_port": port + 9,
         "frontend": frontend,
+        # Stamped into `.jfast-template` with the rest of the context, which is
+        # the one place `jfast new view` reads the look back from.
+        "frontend_template": (frontend_template or DEFAULT_FRONTEND_TEMPLATE)
+        if kind == "spa"
+        else None,
         "workspace_name": workspace_name,
         "api_base_url": api_base_url or f"http://localhost:{port}",
         "routes": list(routes),
@@ -425,7 +501,9 @@ def service_context(
     return context
 
 
-def view_context(name: str, *, frontend: str = "vue") -> dict[str, Any]:
+def view_context(
+    name: str, *, frontend: str = "vue", frontend_template: str = "classic"
+) -> dict[str, Any]:
     """Context for a frontend module (his `Modulo<Name>` structure)."""
     pascal = to_pascal(name)
     slug = to_kebab(name)
@@ -438,6 +516,7 @@ def view_context(name: str, *, frontend: str = "vue") -> dict[str, Any]:
         "view_title": re.sub(r"(?<=[a-z])(?=[A-Z])", " ", pascal),
         "view_path": f"/{slug}",
         "frontend": frontend,
+        "frontend_template": frontend_template,
     }
 
 
@@ -490,14 +569,15 @@ def service_trees(
     grpc: bool = False,
     agent_docs: bool = False,
     layout: str | None = None,
+    frontend_template: str = DEFAULT_FRONTEND_TEMPLATE,
 ) -> list[Tree]:
     """Which template trees make up a service of this kind.
 
     ``layout`` is the contract's, and ``None`` means nobody has said yet. A
     service is generated before any module exists, so at this point the only
-    thing a layout could be is a guess -- and the guess shipped a layered
-    contract into hexagonal, modular and screaming services, where it matched
-    no file and enforced nothing. The contract is deferred to the first
+    thing a layout could be is a guess -- and a guessed layered contract in a
+    hexagonal, modular or screaming service matches no file and enforces
+    nothing. The contract is deferred to the first
     `jfast new module`, which knows. Pass ``layout`` when the caller does.
 
     ``agent_docs`` adds the surface an AI agent reads before it writes: an
@@ -506,9 +586,12 @@ def service_trees(
     not need two extra files it has to keep true.
 
     It is worth turning on for more than tidiness. The generated stylesheets
-    already tell a reader to consult ``.jfast/skills/design-system/SKILL.md``,
-    and until this existed that path was written into every frontend and
-    pointed at nothing.
+    tell a reader to consult ``.jfast/skills/design-system/SKILL.md``, and
+    without this that path is written into every frontend and points at
+    nothing.
+
+    ``frontend_template`` is the look of an SPA and means nothing for any other
+    kind. A non-default look is its own trees in front of the shared one.
     """
     if kind not in SERVICE_KINDS:
         raise ValueError(f"Unknown kind {kind!r}. Choose from: {', '.join(SERVICE_KINDS)}")
@@ -533,11 +616,23 @@ def service_trees(
                 f"Choose from: {', '.join(FRONTENDS)}. "
                 f"Angular is not generated -- see PLAN.md phase 3."
             )
-        spa: list[Tree] = [Tree(f"frontend_{frontend}", target)]
+        check_frontend_template(frontend_template)
+        spa: list[Tree] = []
+        if frontend_template != "classic":
+            # Framework-specific files first, then what one look shares between
+            # Vue and React, then the base: the first tree to claim a path wins.
+            spa.append(Tree(f"frontend_{frontend}_{frontend_template}", target))
+            spa.append(Tree(f"frontend_{frontend_template}", target))
+        spa.append(Tree(f"frontend_{frontend}", target))
         if agent_docs:
             # The design skill lives with the thing it describes, which for a
             # frontend project is the frontend project.
             spa.append(Tree("agent_design", target))
+            if frontend_template == "nexora":
+                # JFast Suite, the pages the look was drawn from, as a
+                # catalogue an agent or a person can open before building a
+                # screen the project does not have yet.
+                spa.append(Tree("agent_design_nexora", target))
         return spa
 
     if kind == "gateway":
@@ -586,10 +681,57 @@ def detect_frontend(root: Path) -> str | None:
     return None
 
 
-def view_trees(frontend: str, target: Path) -> list[Tree]:
+def check_frontend_template(template: str) -> None:
+    """Raise on a look nobody ships, naming the ones that exist."""
+    if template not in FRONTEND_TEMPLATES:
+        raise ValueError(
+            f"Unknown frontend template {template!r}. Choose from: {', '.join(FRONTEND_TEMPLATES)}."
+        )
+
+
+def detect_frontend_template(root: Path) -> str | None:
+    """The look a frontend project was generated with, read from its stamp.
+
+    The stamp is the single record of it: the choice is made once, at
+    generation, and every later `jfast new view` has to draw its page in the
+    same look or the new screen is the odd one out.
+
+    A project stamped before looks existed has a frontend entry and no
+    template in it, and that project can only be classic -- the one look there
+    was. ``None`` means there is no frontend stamp here at all.
+    """
+    stamp = root / STAMP_FILE
+    if not stamp.is_file():
+        return None
+    try:
+        templates = json.loads(stamp.read_text(encoding="utf-8")).get("templates", {})
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(templates, dict):
+        return None
+
+    stamped_frontend = False
+    for name, entry in templates.items():
+        if not name.startswith("frontend_") or not isinstance(entry, dict):
+            continue
+        stamped_frontend = True
+        chosen = (entry.get("context") or {}).get("frontend_template")
+        if chosen in FRONTEND_TEMPLATES:
+            return str(chosen)
+    return "classic" if stamped_frontend else None
+
+
+def view_trees(frontend: str, target: Path, *, frontend_template: str = "classic") -> list[Tree]:
     if frontend not in FRONTENDS:
         raise ValueError(
             f"Frontend {frontend!r} is not supported for view generation. "
             f"Choose from: {', '.join(FRONTENDS)}."
         )
-    return [Tree(f"view_{frontend}", target)]
+    check_frontend_template(frontend_template)
+    trees: list[Tree] = []
+    if frontend_template != "classic":
+        # Only the page is drawn differently; routes, service and folders are
+        # the shared tree's.
+        trees.append(Tree(f"view_{frontend}_{frontend_template}", target))
+    trees.append(Tree(f"view_{frontend}", target))
+    return trees

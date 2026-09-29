@@ -9,7 +9,7 @@ un pin de release compatible (`~=`) empieza a tener sentido en 0.2.
 ## Renumeración
 
 Las entradas de abajo estaban numeradas originalmente de `0.1.0` a `0.7.0`. Esa
-numeración exageraba la madurez del código. Nunca se publicó nada; el formato
+numeración exageraba la madurez del código. En ese momento no se había publicado nada; el formato
 del archivo de workspace está por cambiar; el backend de cola de Redis no
 implementa el visibility timeout que documenta su propio contrato; los backends
 de RabbitMQ y Kafka nunca se corrieron contra un broker real.
@@ -81,6 +81,262 @@ respondía.
   alguien reescribe un encabezado. `--apply` está rechazado, no stubbeado:
   reescribir el proyecto de alguien necesita una vuelta atrás que esto no tiene.
 
+
+
+
+## [0.1.0a9] - 2026-09-28
+
+Un 201 tiene que significar que la fila existe.
+
+La sesión de la request confirmaba al desmontar la dependencia, y FastAPI corre
+el desmontaje de una dependencia con `yield` después de enviar la respuesta. Así
+que un commit fallido ya se había contestado como éxito, y un cliente que leía
+su propia escritura enseguida podía llegar antes que el commit. Todos los
+módulos generados conectaban la sesión de esa forma.
+
+> Las entradas de `0.1.0a6` a `0.1.0a8` solo están en inglés, en el
+> [CHANGELOG del repositorio](https://github.com/JFabrizzio5/JFastFramework/blob/main/CHANGELOG.md).
+
+### Incompatible
+
+- **El plugin de base de datos no arranca mientras la sesión de alguna ruta
+  confirme después de la respuesta.** `DbSession`, `ReadSession` y
+  `TenantSession` son las tres dependencias de sesión con `scope="function"`, que
+  confirma cuando el endpoint regresa y antes de que exista la respuesta; un
+  commit fallido ahora es un 500. `Depends(session_dependency, scope="function")`
+  también sirve. El rechazo nombra cada ruta, y `jfast upgrade --check` lista
+  las líneas antes de que lo haga el arranque.
+- **Piso de FastAPI 0.121**, la primera versión con `Depends(..., scope=...)`.
+  **Piso de SQLAlchemy 2.0.16** por `postgresql_nulls_not_distinct`.
+
+### Agregado
+
+- **Las violaciones de constraint son 409.** `BaseRepository` convierte una
+  violación única, de FK o de exclusión en `ConflictError`, en vez de una
+  excepción del driver que salía como 500.
+- **`VersionedMixin` y `PreconditionFailedError`.** Una columna `version` que
+  SQLAlchemy revisa en cada `UPDATE`, para que el segundo de dos guardados
+  concurrentes falle con 409 en vez de reemplazar al primero en silencio; y
+  `update(expected_version=n)`, un 412 cuando la fila ya pasó la versión que
+  leyó el cliente. Se niega a ir después de `TimestampMixin`, donde se perdería
+  sin aviso.
+- **`get_for_update`, `advisory_lock`, `run_in_transaction`.** Bloqueo de fila
+  para leer-modificar-escribir; bloqueo por llave durante la transacción, para
+  reglas que una constraint no expresa; y un ejecutor que reintenta la unidad de
+  trabajo completa ante fallo de serialización o deadlock, y ante nada más.
+- **`docs/transactions.md`**, en inglés y español.
+
+### Agregado -- el resto de la historia de transacciones
+
+- **Plugin `outbox`.** `outbox.enqueue(session, job)` y
+  `outbox.publish(session, topic, event)` escriben a través de la sesión de la
+  request, así que un mensaje existe si y solo si se confirmaron las filas de
+  las que habla. Con la cola de PostgreSQL en la misma base el job entra directo
+  a `jfast_jobs`; lo demás pasa por `jfast_outbox` y un relay que corre en cada
+  proceso con `FOR UPDATE SKIP LOCKED`, hace backoff y aparta un mensaje como
+  muerto tras `max_attempts`. `claim_once(session, id)` es la mitad del
+  consumidor, y `current_job()` le da a un handler el id de su job para
+  deduplicar.
+- **Plugin `idempotency`.** `IdempotencyKey` / `RequiredIdempotencyKey`: la
+  llave se registra en la transacción de la request, un reintento repite la
+  respuesta guardada con `Idempotent-Replayed: true`, otro cuerpo con la misma
+  llave es 422, y un duplicado concurrente espera al primer insert y recibe 409
+  o la repetición. Por tenant, y vence tras `ttl_hours`.
+- **Row-level security.** `enable_tenant_rls(op, table)` en una migración y
+  `[plugin.database] rls = true`: cada transacción fija su tenant con un
+  `set_config` local a la transacción, una query sin tenant no ve filas, y
+  PostgreSQL rechaza una escritura para otro tenant. `bypass_rls()` para trabajo
+  entre tenants, en las tablas que lo permiten. En producción no arranca con RLS
+  activo bajo un rol superusuario o `BYPASSRLS`, que ignoran toda política.
+- **Plugin `accounts`.** El store de usuarios que `auth` deja fuera: usuarios,
+  login con contraseña argon2id, bloqueo tras fallos repetidos, roles y permisos
+  que viajan como scopes del token (`require_permission`), administración por
+  tenant bajo `/accounts`, un administrador inicial, y los hooks `on_refresh` y
+  `on_identity` de `auth` registrados por ti -- así un permiso retirado o una
+  cuenta desactivada terminan en el siguiente refresh, y una identidad de
+  proveedor se enlaza a una cuenta solo por un email verificado.
+
+### Cambiado
+
+- **Módulos generados.** Todos los layouts dependen de `DbSession`. `limit` va
+  de 1 a 200 y `offset` desde 0: `?limit=-1` era un 500 y `?limit=10000000` un
+  volcado de la tabla. El `name` que el servicio revisa por duplicados ahora es
+  `UniqueConstraint("tenant_id", "name", postgresql_nulls_not_distinct=True)`
+  -- dos requests podían pasar la revisión. Los módulos `layered` tienen
+  versión: `Read` devuelve `version`, `Update` la acepta y la lista manda
+  `X-Total-Count`.
+
+### Corregido
+
+- **Los jobs corrían sin tenant.** `Job.tenant_id` y `request_id` existían y
+  nadie los llenaba, así que todo handler corría sin alcance y sus repositorios
+  leían las filas de todos los tenants. Un job creado dentro de una request toma
+  ambos del contexto, y el worker los restaura alrededor del handler.
+- **`jfast check` acepta `TenantSession`** como apertura de la base de un tenant;
+  solo buscaba `tenant_session_dependency`.
+- **Documentación que se contradecía.** El README decía `0.1.0a5`; STATUS decía
+  que instalar requiere `--pre`, y no es así mientras solo existan pre-releases;
+  STATUS decía que no había techos de versión, que `0.1.0a8` agregó; la CI decía
+  que el paquete no estaba en PyPI.
+
+### Corregido -- tablas del framework y autogenerate
+
+- **`alembic revision --autogenerate` proponía borrar `jfast_jobs`.** La cola
+  crea su tabla al arrancar y no está entre los modelos del servicio, así que
+  autogenerate la leía como una tabla que el servicio había borrado. Toda tabla
+  del framework es `jfast_*` ahora, y el `env.py` generado pasa `include_name`
+  para saltarlas. `jfast upgrade --check` nombra un `env.py` que no lo tiene.
+
+### Cambiado -- el CLI
+
+- **`cli/main.py` pasó de 2,786 líneas a 90.** Los comandos se movieron a
+  `cli/commands/` por responsabilidad, con `register(app)` como los módulos
+  `migrations` y `check` que ya existían; los helpers de generación compartidos
+  viven en `cli/generate.py` para que ningún módulo de comandos importe a otro.
+  Los nombres de comandos, opciones, textos de ayuda y orden no cambian -- la
+  salida de `--help` de la raíz y de los 52 subcomandos es idéntica antes y
+  después.
+
+### Agregado -- lo que necesitó un servicio real
+
+Salió de reconstruir un servicio de facturación (E-Cont) sobre el framework:
+cada una de estas piezas la había escrito él mismo, y cada una la tenía mal en
+el mismo lugar.
+
+- **`@transactional`, para dependencias de sesión propias.** La revisión al
+  arrancar solo conocía las tres dependencias de sesión del framework, así que
+  una dependencia `yield` del servicio -- usada en 120 rutas en esa
+  reconstrucción -- hacía commit después de la respuesta y nada lo decía.
+  Marcada, queda sujeta a la misma regla: una ruta que dependa de ella sin
+  `scope="function"` impide que el servicio arranque. Las dependencias
+  generadoras sin marcar que llaman `.commit(` después de su `yield` aparecen
+  en una advertencia al arrancar.
+- **Row-level security con más que el tenant.**
+  `@transaction_setting("app.companies")` registra un valor que cada
+  transacción con tenant pone junto al tenant, y
+  `enable_rls_policy(op, table, predicate=...)` escribe una policy que lo lee.
+  Los nombres se validan, los del framework se rechazan, y `None` deja el valor
+  sin poner -- cero filas.
+- **Subidas que no caben en memoria.** `Disk.put_stream(key, chunks)` en los
+  drivers local y S3 -- un archivo temporal que se renombra al final, o un
+  multipart que se aborta si falla -- y `guard_stream`, que corre el paso
+  `validate` del disco sobre los primeros 64 KiB y aplica `max_bytes` conforme
+  llegan los pedazos.
+- **XML, JSON, CSV y texto se reconocen parseándolos.** No tienen bytes
+  mágicos, así que `validate.allow` no podía nombrarlos. Un XML con `DOCTYPE` o
+  `ENTITY` se rechaza antes de parsearlo, y una raíz SVG o HTML no se acepta
+  como `application/xml`.
+- **`jfastframework.encryption`.** AES-256-GCM para valores que el servicio
+  tiene que leer de vuelta, en una columna (`EncryptedString(context=...)`) o a
+  mano (`SecretBox`). El contexto se autentica, así que un valor copiado a otra
+  fila no se descifra; las llaves vienen de `JFAST_ENCRYPTION_KEYS` y rotan sin
+  migración. Extra `encryption`.
+- **Nombres de tabla en español.** `[scaffold] language = "es"` en
+  `jfast.toml`, o `--language es`: `camion` → `camiones`, `orden_compra` →
+  `ordenes_compra`.
+
+### Agregado -- tareas recurrentes, retrasos en RabbitMQ, llamar a otros servicios
+
+- **Tareas recurrentes.** `@tasks.task(name, every=... | cron=..., timezone=...)`
+  y `tasks.schedule(...)`, que corre un loop de scheduler dentro del servicio
+  con `[plugin.queue] scheduler = true`. Es seguro en cada réplica y worker
+  porque cada tick se reclama primero -- en `jfast_schedule_ticks`
+  (PostgreSQL, en la misma transacción que el job con la cola de PostgreSQL) o
+  con `SET NX` de Redis -- y el job de cada tick tiene un id determinista.
+  Después de una caída se dispara una vez el tick perdido más reciente, nunca
+  una ráfaga. El cron es un parser propio de cinco campos con la semántica de
+  días de Vixie y reglas explícitas para el horario de verano.
+- **La cola de RabbitMQ respeta `Job(available_at=...)` y el backoff de
+  reintentos**, con una cascada binaria de colas de TTL fijo y sin plugin del
+  broker, así que un retraso largo ya no bloquea uno corto detrás. Antes
+  publicaba todos los jobs de inmediato.
+- **`jfastframework.http` y el plugin `http`.** Un cliente para servicios
+  hermanos con timeouts obligatorios y un deadline total; reintentos solo para
+  peticiones idempotentes o con `Idempotency-Key`, con backoff full-jitter,
+  `Retry-After` y presupuesto de reintentos; circuit breaker y bulkhead por
+  upstream que fallan rápido con un problem 503; propagación de `X-Request-ID`
+  y, si se activa, del token bearer. Extra `http`.
+
+### Corregido -- RabbitMQ
+
+- **`stats()` siempre reportaba cero.** El canal robusto de aio-pika devuelve
+  el objeto de cola que guardó al declararla, con su conteo original; ahora se
+  pregunta al canal crudo.
+
+### Agregado -- los frontends vienen en looks, y Nexora es el de por defecto
+
+- **`--template nexora|classic`** en `jfast new service --kind spa`,
+  `jfast start` y `jfast init` (que pregunta). `nexora` es el nuevo default: el
+  sistema de diseño liquid-glass en el que está hecho el sitio de docs --
+  paneles y sidebar de vidrio, una barra superior tipo isla, claro y oscuro,
+  una pantalla de login y un pequeño dashboard con valores reales (`/health`, su
+  tiempo de respuesta, las vistas registradas). Un listón WebGL (three.js, en
+  su propio chunk perezoso, apagado con movimiento reducido y sin WebGL, en
+  pausa en pestañas ocultas). `classic` es exactamente el frontend anterior.
+- **Selector de color.** Seis colores predefinidos y uno libre, junto al botón
+  de tema y en el login. Toda la paleta sale de ese color, con tonos de texto
+  que alcanzan contraste 4.5:1; la elección se guarda por app y se aplica antes
+  del primer pintado. `VITE_ACCENT` fija el color por defecto del proyecto.
+- **La marca es el nombre del proyecto** (`VITE_APP_NAME`), o `jfastframework`
+  si está vacío.
+- **Fondo 3D, 2D o ninguno**, en el mismo popover: el listón, su cuadro fijo
+  sin descargar three.js, o el color liso de la página. Se recuerda por app y
+  se aplica antes del primer pintado; `VITE_BACKGROUND` fija el default del
+  proyecto.
+- **El botón de menú pliega el sidebar en pantalla ancha**, y se queda plegado
+  al recargar. Antes se veía ahí y no hacía nada: la regla que lo ocultaba
+  perdía contra `.nx-round-btn`, y su click solo movía el drawer del teléfono.
+- **JFast Suite como referencia.** Con `--agent-docs`, un frontend nexora
+  recibe la skill `nexora-reference`: una copia de las páginas de la suite
+  (cerca de 1 MB, las imágenes en WebP) y cómo traer un patrón de ahí al
+  proyecto. Los templates ahora pueden llevar archivos que no son `.j2`; se
+  copian byte por byte.
+- **El look queda registrado** en `.jfast-template`, y `jfast new view` dibuja
+  las páginas nuevas en él (`--template` lo sobrescribe). Un look desconocido,
+  o un look para un servicio sin frontend, se rechaza antes de escribir nada.
+- **Los agentes hacen lo que pidió el usuario.** La skill de diseño generada,
+  `AGENTS.md` y la documentación de frontend dicen que el look que pide el
+  usuario gana sobre el de por defecto; antes la skill regresaba cualquier
+  petición al diseño por defecto.
+
+### Cambiado -- modular por defecto
+
+- **`jfast new module` sin `--layout` genera un módulo `modular`**, y el prompt
+  interactivo, `jfast start` y `contracts init` también empiezan ahí. Antes era
+  `layered`. Los módulos existentes conservan el layout que tienen registrado en
+  `jfast.toml`; `--layout layered` sigue generando la forma anterior. Las guías
+  para agentes les dicen que usen `modular` salvo que el usuario pida otro.
+
+### Sitio de documentación
+
+- **Las páginas en español llevan a páginas en español.** Todo enlace del menú
+  lateral, del paginador y de los botones de la landing en una página en
+  español apuntaba a la página en inglés un directorio arriba, así que a las
+  traducciones solo se llegaba con el botón de idioma. `es/docs.html` cargaba
+  una hoja de estilos que no existe y decía `lang="en"`. Nada de eso se vio
+  porque `docs-site/check.py` solo revisaba el primer nivel; ahora revisa
+  `es/`, rechaza un enlace que salga del español al inglés salvo el propio
+  botón de idioma, y revisa `<html lang>`. Contra el build anterior reporta
+  1,197 problemas.
+- **La versión es el release.** Las páginas imprimían el directorio donde se
+  publican, así que todos los pies decían "JFastFramework latest". Ahora
+  imprimen la versión del paquete, leída del código, y el selector dice
+  `latest · 0.1.0a9`. Las cifras de la landing -- plugins, arquitecturas,
+  funciones de test -- se cuentan al construir en vez de escribirse en el
+  texto, que llevaba un mes diciendo 17 plugins y 509 tests.
+- **Textos del sitio en los dos idiomas.** El paginador, el botón de copiar, el
+  pie, la portada de la documentación, la etiqueta de costo y la del botón de
+  tema estaban en inglés en las páginas en español.
+- **Rubí líquido.** Oscuro por defecto, paneles de vidrio, barra de navegación
+  flotante y, en la landing, una cinta de vidrio dibujada con three.js --
+  fijada y con hash desde cdnjs, con un brillo fijo cuando no puede correr. El
+  logo va a la derecha del hero, en su propio panel de vidrio. Ver
+  `docs-site/assets/BRAND.md`.
+
+### Sin hacer, y nombrado
+
+Tracing distribuido, y, en `accounts`, verificación de email, recuperación de
+contraseña y MFA. Los dos en `PLAN-NEXT.md`.
 
 ## [0.1.0a5] - 2026-08-30
 

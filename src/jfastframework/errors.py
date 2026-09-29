@@ -51,6 +51,19 @@ class ConflictError(JFastError):
     title = "Conflict"
 
 
+class PreconditionFailedError(JFastError):
+    """The client wrote against a version of the row that is no longer current.
+
+    412 rather than 409: the request carried a precondition -- the version it
+    read -- and that precondition is what failed. The client's remedy is to
+    read again and decide, which is different from a conflict it can fix by
+    changing the payload.
+    """
+
+    status_code = 412
+    title = "Precondition Failed"
+
+
 class ValidationError(JFastError):
     status_code = 422
     title = "Unprocessable Entity"
@@ -153,9 +166,9 @@ def install_error_handlers(app: FastAPI, *, debug: bool = False) -> None:
             # Sanitised, because pydantic puts the offending value in `input`
             # and that value is whatever arrived. A form posted without a
             # content type puts the raw body there as `bytes`, which the JSON
-            # encoder cannot represent -- so serialising the 422 raised inside
-            # the handler, and the client got a 500 with a traceback about
-            # json.dumps instead of the field name it needed.
+            # encoder cannot represent -- so serialising the raw 422 would
+            # raise inside the handler, and the client would get a 500 with a
+            # traceback about json.dumps instead of the field name it needs.
             "errors": _serialisable(exc.errors()),
         }
         return _problem_response(problem, request)

@@ -8,8 +8,9 @@ jobs, a Vue frontend and a reverse proxy, wired together and running under
 Compose. What you write is the part only you know: the rules of your business.
 What keeps it coherent afterwards is a contract that CI enforces.
 
-Status: `0.1.0a5` — alpha, on PyPI. Maturity is tracked per subsystem rather
-than by one version number: [STATUS.md](STATUS.md) says what is tested against
+Status: alpha, on PyPI -- the current version is the one PyPI shows; a number
+typed here goes stale. Maturity is tracked per subsystem rather than by one
+version number: [STATUS.md](STATUS.md) says what is tested against
 real infrastructure, what is unverified, and what is known broken. Read it
 before depending on any single part.
 
@@ -61,7 +62,7 @@ Honest answers matter more here than another feature.
 | The team already has a house framework and conventions that work | Yours. The value here is the opinions, and you already have some |
 | You need Django's admin, its ORM ecosystem or its auth out of the box | Django. This is not trying to be that |
 | You are on a synchronous stack and do not want async | Flask, or FastAPI without this |
-| You need production-grade multi-tenancy isolation today | Not yet — tenancy here is a convention, not row-level security. [STATUS.md](STATUS.md) is explicit about it |
+| You need a user store with MFA, email verification and password reset today | Not yet — the `accounts` plugin has users, login, roles and lockout, and none of those three. [STATUS.md](STATUS.md) is explicit about it |
 
 ---
 
@@ -73,11 +74,12 @@ shop/                       one service
 ├── jfast.toml              which plugins are on; which layout each module uses
 ├── contracts.toml          the rules, checked by CI
 ├── modules/
-│   └── invoice/            one business capability
-│       ├── router.py           HTTP in, response out
-│       ├── service.py          the rules — no SQL, no Request
-│       ├── repository.py       queries — no HTTP concepts
-│       ├── schemas.py
+│   └── invoice/            one business capability (modular, the default)
+│       ├── api/                HTTP in, response out
+│       ├── services/           the rules — no SQL, no Request
+│       ├── repositories/       queries — no HTTP concepts
+│       ├── models/             tables and schemas
+│       ├── validations/        rules that need the database
 │       └── tests/
 ├── shared/                 what two modules both need
 └── migrations/
@@ -184,14 +186,18 @@ from the plugin graph, so it cannot drift from what the app actually loads.
 | `metrics` | Prometheus RED metrics, `/metrics` | `metrics` |
 | `database` | Async SQLAlchemy, sessions, Alembic wiring | `db` |
 | `cache` | Redis cache, pub/sub | `cache` |
-| `queue` | Background jobs on PostgreSQL, Redis or RabbitMQ | `queue` |
+| `queue` | Background jobs on PostgreSQL, Redis or RabbitMQ, and recurring tasks | `queue` |
 | `events` | Kafka publish/subscribe | `kafka` |
 | `mongo` | MongoDB via Motor | `mongo` |
 | `qdrant` | Qdrant vector database | `qdrant` |
 | `rag` | Retrieval over pgvector or Qdrant | `rag` |
 | `web` | Jinja2 + HTMX partial rendering | `web` |
 | `gateway` | Prefix-based reverse proxy | `gateway` |
+| `http` | Calls to sibling services: deadlines, retries, circuit breaker | `http` |
 | `auth` | JWT verification, scopes, revocation, social login | `auth` |
+| `accounts` | Users, password login, lockout, roles and permissions | `accounts` |
+| `outbox` | Jobs and events that commit with the request's rows | `db` |
+| `idempotency` | `Idempotency-Key`: a retried POST gets the first answer | `db` |
 | `ratelimit` | Token bucket per tenant and per subject, in Redis | `cache` |
 | `channels` | Declared pub/sub channels over memory, Redis or Kafka | — |
 | `websocket` | Authenticated connections, fan-out through Redis | `server` |
@@ -247,8 +253,8 @@ async def send_invoice_email(payload: dict) -> None: ...
 await queue.enqueue(Job(task="send_invoice_email", payload={"id": 7}))
 ```
 
-Start with PostgreSQL: enqueueing shares the transaction that produced the
-work, so a rollback takes the job with it. Redis buys latency, RabbitMQ buys
+Start with PostgreSQL: enqueued through the `outbox` plugin, a job shares the
+transaction that produced the work, so a rollback takes the job with it. Redis buys latency, RabbitMQ buys
 routing. [Which to pick, and why](docs/queues-and-events.md).
 
 Delivery is at-least-once — handlers must be idempotent. Retries are bounded
@@ -278,6 +284,11 @@ cd admin && jfast new view Facturas
 `jfast new view` creates `src/ModuloFacturas/{Components,Pages,Routes,Services}`
 and registers it in the router and the sidebar at their marker comments —
 idempotently, failing loudly if a marker is gone.
+
+It comes in two looks. `nexora`, the default, is the liquid-glass design this
+site is built on -- glass sidebar, light and dark, an accent picker, a sign-in
+screen. `--template classic` is the plain one. New views follow the look the
+project was generated with. See [Frontends](docs/frontend.md).
 
 Both frontends are installed and built in CI. That job exists because of a real
 bug: the marker comment sat inside a block comment, whose inner `*/` closed it
@@ -350,9 +361,10 @@ gets a plain 401.
 `X-Tenant-ID` header — settable by anyone with curl. With it, from a signed
 claim.
 
-There is no `/auth/login`: checking a password against your user table is your
-application's job. `auth.issuer` is provided for your own route.
-[docs/auth.md](docs/auth.md).
+`auth` has no user store of its own. The `accounts` plugin is one -- users,
+`/auth/login`, lockout, roles and permissions -- and a service with its own
+user table calls `auth.issuer` from its own route instead.
+[docs/auth.md](docs/auth.md), [docs/accounts.md](docs/accounts.md).
 
 ## Kubernetes
 
@@ -447,11 +459,13 @@ The site is built from these same files: **<https://jfabrizzio5.github.io/JFastF
 | [docs/agents.md](docs/agents.md) | Working with AI agents: what is enforced, and what is not |
 | [docs/contracts.md](docs/contracts.md) | Per-project rules, enforced |
 | [docs/auth.md](docs/auth.md) | JWT: modes, the attacks refused, revocation, Google login |
+| [docs/accounts.md](docs/accounts.md) | Users, password login, lockout, roles and permissions |
+| [docs/transactions.md](docs/transactions.md) | Commit timing, conflicts, locks, retries, the outbox and idempotency keys |
 | [docs/ratelimit.md](docs/ratelimit.md) | A token bucket that does not leak under load |
 | [docs/websockets.md](docs/websockets.md) | Sockets across workers, and what is not delivered |
 | [docs/upgrading.md](docs/upgrading.md) | What breaks on a version bump, filtered to what applies to your project |
 | [docs/storage.md](docs/storage.md) | Disks, signed URLs, S3 and MinIO |
-| [docs/multitenancy.md](docs/multitenancy.md) | Subdomains, trust order, what it is not |
+| [docs/multitenancy.md](docs/multitenancy.md) | Subdomains, trust order, row-level security |
 | [docs/cloud.md](docs/cloud.md) | Secret managers, serverless functions, push |
 | [docs/kubernetes.md](docs/kubernetes.md) | Manifests, probes, what is not generated |
 | [docs/service-contract.md](docs/service-contract.md) | What every service must do, in any language |
@@ -493,8 +507,9 @@ one that admits the gap:
 
 - **RabbitMQ and Kafka** are written against documented APIs but never
   round-tripped against real brokers in CI.
-- **Multi-tenancy** is a convention enforced by `BaseRepository`, not an
-  isolation guarantee. Row-level security is phase 2.
+- **Multi-tenancy** is enforced by PostgreSQL row-level security only with
+  `[plugin.database] rls = true`, a policy per table and a role that is not a
+  superuser. Without the three it is the repository's filter: a convention.
 - **RAG** chunks at fixed width with no reranking.
 - **Angular, React Native, Laravel, .NET** are not generated at all.
 

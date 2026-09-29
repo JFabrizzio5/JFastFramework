@@ -224,7 +224,7 @@ class JFastSettings(BaseSettings):
         """The policy that will actually be sent.
 
         The HTML half of the policy is asked for by the ``web`` plugin, which
-        is what renders pages; a JSON API was granted the HTMX CDN and an
+        is what renders pages, so a JSON API is not granted the HTMX CDN or an
         inline allowance for markup it never produces.
         """
         if self.csp is not None:
@@ -245,10 +245,10 @@ class JFastSettings(BaseSettings):
     def effective_docs_url(self) -> str | None:
         """Interactive docs, closed in production unless asked for.
 
-        ``/info`` already disables itself in production. Leaving ``/docs``
-        and the OpenAPI document open was the inconsistency: the schema
-        names every route, body field and error, which is a map for anyone
-        probing the service. Set ``docs_url`` explicitly to keep it.
+        ``/info`` disables itself in production, and ``/docs`` and the
+        OpenAPI document follow it: the schema names every route, body field
+        and error, which is a map for anyone probing the service. Set
+        ``docs_url`` explicitly to keep it.
         """
         return self._closed_in_production("docs_url", self.docs_url)
 

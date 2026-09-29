@@ -32,6 +32,115 @@ jfast new service portal --kind spa --frontend react
 
 Angular is **not** generated. See "Angular" at the bottom.
 
+## Pick a look: `--template`
+
+A frontend is generated in one of two looks. The choice changes only the
+files that draw — the stylesheet, the base components, the layout, the two
+shipped screens and the page `jfast new view` writes. Router, stores, the
+axios instance, the 401 handling and the generator markers are one shared set,
+so everything else on this page holds for both.
+
+| `--template` | What it looks like |
+| --- | --- |
+| `nexora` **(default)** | Liquid glass, from the Nexora design system: frosted panels over a black studio (and a light one), a glass sidebar, an island top bar, Plus Jakarta Sans with JetBrains Mono for figures, and a WebGL liquid ribbon behind everything. The home page is a small dashboard — KPI cards, a table of registered views, a next-steps column — built only from real values: `/health`, its round trip, and the sidebar |
+| `classic` | Plain Tailwind v4 panels on a neutral surface with one crimson accent. No web fonts, no WebGL. Exactly what every frontend looked like before looks existed |
+
+```bash
+jfast new service admin --kind spa --frontend vue                     # nexora
+jfast new service admin --kind spa --frontend react --template classic
+jfast start shop --template classic                                   # the default stack
+jfast init                                                            # asks "Which look?"
+```
+
+An unknown value is refused before anything is written, naming the two that
+exist. `--template` on a service that is not `--kind spa` is refused too: only
+a frontend has a look.
+
+### Views follow the look
+
+The choice is recorded once, in the project's `.jfast-template` stamp
+(`frontend_template`). `jfast new view` reads it, so a page generated a year
+later is drawn like the screens around it. `--template` on `jfast new view`
+overrides the stamp; a project with no stamp at all — made before stamps, or
+not by jfast — gets the classic page and a note saying so, because a nexora
+page would name classes that project does not have.
+
+### What Nexora adds
+
+| Path | Holds |
+| --- | --- |
+| `src/nexora/nexora.css` | The design system: the palette, light and dark tokens, and the `card-panel`, `btn-modern`, `badge-status`, `kpi-card`, `erp-table`, `nx-*` classes. Imported into Tailwind's `components` layer, so a utility next to one of its classes still wins |
+| `src/nexora/accent.js` | The accent: six presets, deriving the whole palette from one colour, remembering the viewer's pick |
+| `src/nexora/brand.js` | The product name on the wordmark |
+| `src/nexora/background.js` | Whether the ribbon runs at all |
+| `src/nexora/backdrop.js` | The background the viewer picked: 3D, 2D or off |
+| `src/nexora/sidebar.js` | Whether the sidebar is folded away on a wide screen |
+| `src/nexora/liquid.js` | The ribbon, on three.js |
+| `src/components/AccentPicker.*`, `LiquidBackground.*` | The two components the classic look does not have |
+
+**The ribbon costs nothing when it cannot help.** `three` is an npm
+dependency, never a CDN script, and lands in a chunk of its own (about 130 kB
+gzipped) that is fetched after the first paint. Under
+`prefers-reduced-motion` it is never loaded, and switching that setting on
+stops it. Without WebGL 2 the still CSS frame that is always underneath stays
+on screen. A hidden tab renders nothing. It is mounted once at the app root,
+not in the layout, so navigating does not rebuild the scene.
+
+**The name** is `VITE_APP_NAME`, exactly as written, or `jfastframework` when
+it is empty. Change it in `.env` for `npm run dev` and `.env.production` for
+`npm run build`. `jfast workspace env` rewrites `.env`, so set it there again
+after running it.
+
+**The accent** is one colour, and glow, deep shade, button text and two
+text-safe shades are derived from it — the text shades are moved just far
+enough to read at 4.5:1 on each theme, so an amber or a slate accent does not
+produce unreadable eyebrows. Three places set it, first one wins:
+
+1. the viewer, with the swatch next to the theme toggle: Ruby, Blue, Emerald,
+   Violet, Amber, Slate or any custom colour, kept in this browser under
+   `<service>:accent` and replayed before first paint by `index.html`;
+2. `VITE_ACCENT="#3B82F6"` in `.env` / `.env.production` — quoted, because an
+   unquoted `#` starts a comment in those files;
+3. the `--c-*` triplets at the top of `src/nexora/nexora.css`.
+
+Buttons, glows, badges, every `brand-*` utility and the ribbon follow.
+
+**The background** is chosen in the same popover as the accent: **3D** is the
+ribbon, **2D** the still frame under it -- and three.js is never downloaded --
+and **Off** the plain page colour. Switching away from 3D destroys a running
+scene; switching back loads it. `VITE_BACKGROUND=liquid|still|none` in `.env`
+/ `.env.production` is the project's default, `liquid` when empty; the
+viewer's choice, kept under `<service>:backdrop`, wins over it. Both are
+applied by `index.html` before the first paint, so "off" does not flash the
+still frame on reload.
+
+**The menu button** opens the drawer below 960px and, above, folds the sidebar
+away so the page takes the full width. Folded stays folded across pages and
+reloads (`<service>:sidebar`), and a folded sidebar is hidden from keyboard
+focus, not only moved off screen.
+
+### JFast Suite, as a reference
+
+With `--agent-docs`, a nexora frontend also gets the `nexora-reference` skill:
+a copy of JFast Suite -- the static pages the look was drawn from: a landing, a
+CRM console, a payment gateway, a social feed, operations tables, a widget
+gallery -- in `.jfast/skills/nexora-reference/suite/`. Serve that folder and
+open it before building a screen the project does not have yet. The skill says
+how to bring a pattern across: reuse a shipped component if one fits, move the
+CSS into `src/nexora/nexora.css` with the project's tokens, make it a
+component. The suite is never linked from the app, and its images (about
+400 kB of WebP) are demo art.
+
+### Asking for a different look
+
+The shipped look is a starting point. For the other one, generate with
+`--template`; for a look jfast does not ship, restyle the tokens and the
+components in `src/components/`, keeping their props, since generated pages
+call them. An agent working in the project is told the same thing: the
+design skill written by `--agent-docs` describes the look the project was
+generated with, and opens by saying that the look the user asks for wins over
+it.
+
 ## The API URL is already right
 
 `.env` is written from `jfast.workspace.toml`:
@@ -94,7 +203,9 @@ import { mdiHomeOutline, mdiViewDashboardOutline } from '@mdi/js'
 ```
 
 The framework is detected from the project, so you do not repeat
-`--frontend react` inside a React project.
+`--frontend react` inside a React project. So is the look: the page is drawn
+in nexora or classic according to the project's `.jfast-template` (see
+[Views follow the look](#views-follow-the-look)).
 
 ### The markers
 
@@ -374,6 +485,9 @@ rather than a neutral ramp: a component that names `zinc-200` directly is one
 the theme cannot reach, and two components that pick different ramps is how a
 UI ends up looking subtly wrong with nothing identifiably broken in it. See
 [.jfast/skills/design-system/SKILL.md](../.jfast/skills/design-system/SKILL.md).
+Nexora keeps the same utilities — `src/style.css` points `bg-panel`, `text-ink`
+and the `brand-*` ramp at its own tokens — and adds its component classes on
+top, so a page written for either look still takes its colours from tokens.
 
 **Icons without a runtime.** `@mdi/js` ships path strings only; `BaseIcon`
 renders one into an SVG. No icon font, tree-shaken to what you import.
@@ -416,6 +530,13 @@ generated frontends — light, dark, an explicit light choice against a system
 set to dark, the setting surviving a reload, and the mobile drawer opening.
 Computed styles were read back rather than eyeballed. That is one run on one
 browser, not a suite: it is not in CI and it will not catch a regression.
+
+**Both looks, both frameworks, in CI:** `scripts/smoke_frontend.sh` generates
+Vue and React in `nexora` and in `classic`, runs `jfast new view` in each, and
+builds them; it also checks that three.js stays out of the entry chunk and that
+the build honours `VITE_ACCENT`. The nexora screens, the ribbon, the accent
+picker and both themes were looked at in a browser by hand when they were
+written — once, not in CI.
 
 **Not tested:** `npm run dev` as an interactive session, the sign-in form
 against a real `/auth/login` (the generated backend does not mount one), and

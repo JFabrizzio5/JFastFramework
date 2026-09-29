@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JFast Suite | Tablas Empresariales Avanzadas</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet">
+    
+    <!-- Unified CSS -->
+    <link rel="stylesheet" href="assets/css/nexora.css">
+
+    <style>
+        /* ==========================================================
+           Tablas ERP — capa de página sobre nexora.css
+           ========================================================== */
+
+        /* ---- Encabezado de página ---- */
+        .tbl-header {
+            margin-top: 34px;
+            align-items: flex-end;
+        }
+
+        .tbl-header .page-title h1 {
+            font-size: clamp(1.9rem, 3.4vw, 2.7rem);
+            font-weight: 900;
+            letter-spacing: -0.045em;
+            line-height: 1.02;
+            margin-top: 10px;
+        }
+
+        .tbl-header .page-title h1 .faded {
+            color: var(--text-sub);
+            font-weight: 800;
+        }
+
+        .tbl-header-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        /* ---- KPIs: tarjetas de vidrio con métrica mono ---- */
+        .kpi-row {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+
+        .kpi-stat-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 22px;
+            padding: 20px 20px 18px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .kpi-stat-card::after {
+            /* hilo de luz superior */
+            content: "";
+            position: absolute;
+            left: 20px;
+            right: 20px;
+            top: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--kpi-tint, rgb(var(--c-accent))), transparent);
+            opacity: 0.55;
+        }
+
+        .kpi-stat-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--card-hover-border);
+        }
+
+        .kpi-stat-info { min-width: 0; }
+
+        .kpi-stat-info h4 {
+            font-family: var(--font-mono);
+            font-size: 0.66rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-dim);
+            margin-bottom: 10px;
+            white-space: nowrap;
+        }
+
+        .kpi-stat-info .num {
+            font-family: var(--font-mono);
+            font-size: clamp(1.35rem, 2.1vw, 1.75rem);
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            line-height: 1.05;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-main);
+            white-space: nowrap;
+        }
+
+        .kpi-meta {
+            display: block;
+            margin-top: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            letter-spacing: 0.04em;
+            color: var(--text-sub);
+        }
+
+        .kpi-stat-icon {
+            width: 44px;
+            height: 44px;
+            flex-shrink: 0;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--kpi-tint);
+            background:
+                radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.22), transparent 58%),
+                color-mix(in srgb, var(--kpi-tint) 14%, transparent);
+            border: 1px solid color-mix(in srgb, var(--kpi-tint) 32%, transparent);
+            box-shadow:
+                inset 0 1px 1.5px var(--card-specular),
+                inset 0 -6px 12px -6px color-mix(in srgb, var(--kpi-tint) 40%, transparent),
+                0 10px 22px -10px color-mix(in srgb, var(--kpi-tint) 70%, transparent);
+        }
+
+        .kpi-stat-icon svg { width: 20px; height: 20px; stroke-width: 2; }
+
+        .tint-success { --kpi-tint: var(--success); }
+        .tint-warning { --kpi-tint: var(--warning); }
+        .tint-accent { --kpi-tint: rgb(var(--c-accent)); }
+
+        /* ---- Barra de filtros ---- */
+        .table-filter-bar {
+            border-radius: 22px;
+            padding: 12px 14px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .filter-left-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .table-search-input-wrap {
+            position: relative;
+            min-width: min(260px, 100%);
+            flex: 1;
+            max-width: 380px;
+        }
+
+        .table-search-input-wrap svg {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-dim);
+            pointer-events: none;
+        }
+
+        .table-search-input {
+            width: 100%;
+            height: 40px;
+            padding: 0 16px 0 40px;
+            border: 1px solid var(--badge-border);
+            border-radius: 9999px;
+            background: var(--pill-bg);
+            color: var(--text-main);
+            font-size: 0.84rem;
+            outline: none;
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
+            transition: var(--transition-fast);
+        }
+
+        html.nx-light .table-search-input { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04); }
+
+        .table-search-input::placeholder { color: var(--text-light); }
+        .table-search-input:hover { background: var(--pill-hover); }
+
+        .table-search-input:focus {
+            background: var(--pill-hover);
+            border-color: rgb(var(--c-accent) / 0.6);
+            box-shadow: 0 0 0 4px rgb(var(--c-accent) / 0.14);
+        }
+
+        .pill-select.form-select {
+            width: auto;
+            height: 40px;
+            padding: 0 36px 0 16px;
+            border-radius: 9999px;
+            background-color: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .pill-select.form-select:hover {
+            background-color: var(--pill-hover);
+            border-color: var(--card-hover-border);
+        }
+
+        .page-size-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .page-size-control > span {
+            font-family: var(--font-mono);
+            font-size: 0.66rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-dim);
+        }
+
+        /* ---- Isla flotante de acciones masivas ---- */
+        .batch-actions-banner {
+            position: fixed;
+            left: 50%;
+            bottom: 26px;
+            transform: translateX(-50%);
+            z-index: 1500;
+            display: none;
+            align-items: center;
+            gap: 14px;
+            padding: 8px 8px 8px 18px;
+            border-radius: 9999px;
+            background: var(--nav-bg);
+            backdrop-filter: blur(26px) saturate(190%);
+            -webkit-backdrop-filter: blur(26px) saturate(190%);
+            border: 1px solid var(--nav-border);
+            box-shadow: 0 22px 50px -12px rgba(0, 0, 0, 0.6), 0 0 0 1px rgb(var(--c-accent) / 0.12), inset 0 1px 1.5px var(--card-specular);
+            animation: nxIslandIn 0.35s var(--ease-out);
+            max-width: calc(100vw - 32px);
+        }
+
+        html.nx-light .batch-actions-banner {
+            box-shadow: 0 22px 50px -14px rgba(28, 35, 60, 0.22), 0 0 0 1px rgb(var(--c-accent) / 0.12), inset 0 1px 1.5px #fff;
+        }
+
+        @keyframes nxIslandIn {
+            from { opacity: 0; transform: translate(-50%, 18px) scale(0.96); }
+            to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+        }
+
+        .batch-count {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--text-main);
+            white-space: nowrap;
+        }
+
+        .batch-count-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgb(var(--c-accent));
+            box-shadow: 0 0 10px rgb(var(--c-accent) / 0.9);
+        }
+
+        .batch-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .batch-actions .btn-modern {
+            padding: 8px 14px;
+            font-size: 0.78rem;
+        }
+
+        .batch-actions .btn-modern svg { width: 14px; height: 14px; stroke-width: 2.2; }
+
+        /* ---- Contenedor de la tabla ---- */
+        .table-container-card {
+            border-radius: 24px;
+            overflow: hidden;
+        }
+
+        /* nexora.css ya da vidrio a .table-responsive: aquí el vidrio es la tarjeta */
+        .table-container-card .table-responsive {
+            border: none;
+            border-radius: 0;
+            background: transparent;
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+            box-shadow: none;
+        }
+
+        .erp-data-table th {
+            user-select: none;
+            cursor: pointer;
+            transition: var(--transition-fast);
+        }
+
+        .erp-data-table th:hover { color: var(--text-main); }
+
+        .erp-data-table th.non-sortable { cursor: default; }
+        .erp-data-table th.non-sortable:hover { color: var(--text-dim); }
+
+        .erp-data-table th.col-check,
+        .erp-data-table td.col-check {
+            width: 48px;
+            padding-left: 20px;
+            padding-right: 6px;
+            text-align: center;
+        }
+
+        .erp-data-table .col-num { text-align: right; }
+
+        .sort-icon {
+            display: inline-block;
+            margin-left: 4px;
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--text-sub);
+            transition: color 0.15s ease;
+        }
+
+        .sort-icon.is-sorted { color: rgb(var(--c-accent)); }
+
+        .erp-data-table input[type=checkbox] {
+            width: 15px;
+            height: 15px;
+            cursor: pointer;
+            accent-color: rgb(var(--c-accent));
+            vertical-align: middle;
+        }
+
+        .erp-data-table tbody tr.row-selected td {
+            background: rgb(var(--c-accent) / 0.1);
+        }
+
+        .erp-data-table tbody tr.row-selected td:first-child {
+            box-shadow: inset 3px 0 0 rgb(var(--c-accent));
+        }
+
+        .cell-folio {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--text-main);
+            white-space: nowrap;
+        }
+
+        .cell-folio span { color: rgb(var(--c-accent)); }
+
+        .cell-client-name { font-weight: 700; line-height: 1.3; }
+
+        .cell-rfc {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            letter-spacing: 0.03em;
+            color: var(--text-dim);
+            margin-top: 2px;
+        }
+
+        .cell-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 11px;
+            border-radius: 9999px;
+            font-size: 0.74rem;
+            font-weight: 600;
+            white-space: nowrap;
+            color: var(--text-main);
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+        }
+
+        .cell-date {
+            font-family: var(--font-mono);
+            font-size: 0.78rem;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .cell-amount {
+            font-family: var(--font-mono);
+            font-size: 0.84rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-main);
+            white-space: nowrap;
+        }
+
+        .row-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .row-actions .btn-table-ficha svg { width: 13px; height: 13px; stroke-width: 2.2; }
+
+        .btn-row-delete {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: var(--transition-fast);
+        }
+
+        .btn-row-delete:hover {
+            color: var(--danger);
+            background: var(--danger-light);
+            border-color: var(--danger-border);
+        }
+
+        .btn-row-delete svg { width: 14px; height: 14px; stroke-width: 2; }
+
+        .table-empty {
+            text-align: center;
+            padding: 52px 20px !important;
+            color: var(--text-dim);
+        }
+
+        .table-empty-icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 12px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: rgb(var(--c-accent));
+            background: rgb(var(--c-accent) / 0.1);
+            border: 1px solid rgb(var(--c-accent) / 0.25);
+            box-shadow: inset 0 1px 1.5px var(--card-specular);
+        }
+
+        .table-empty strong { display: block; color: var(--text-main); font-size: 0.9rem; }
+        .table-empty small { font-size: 0.78rem; }
+
+        /* ---- Paginación ---- */
+        .table-pagination-footer {
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-top: 1px solid var(--card-border);
+            background: var(--bg-muted);
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .pagination-nav {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .page-num-btn {
+            min-width: 34px;
+            height: 34px;
+            padding: 0 12px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 9999px;
+            border: 1px solid var(--badge-border);
+            background: var(--pill-bg);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            color: var(--text-main);
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-size: 0.74rem;
+            cursor: pointer;
+            transition: var(--transition-fast);
+        }
+
+        .page-num-btn:hover {
+            background: var(--pill-hover);
+            border-color: var(--card-hover-border);
+        }
+
+        .page-num-btn.active {
+            background: rgb(var(--c-accent));
+            color: rgb(var(--c-on-accent));
+            border-color: rgb(var(--c-accent));
+            box-shadow: 0 8px 20px -6px rgb(var(--c-accent) / 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.35);
+        }
+
+        .page-num-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* ---- Modales ---- */
+        .modal-title-block {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .modal-title-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 13px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: rgb(var(--c-accent));
+            background:
+                radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.22), transparent 58%),
+                rgb(var(--c-accent) / 0.12);
+            border: 1px solid rgb(var(--c-accent) / 0.3);
+            box-shadow: inset 0 1px 1.5px var(--card-specular), 0 10px 22px -10px rgb(var(--c-accent) / 0.7);
+        }
+
+        .modal-title-icon svg { width: 18px; height: 18px; stroke-width: 2; }
+
+        .modal-title-block .nx-eyebrow { font-size: 0.62rem; }
+        .modal-title-block h3 { margin-top: 2px; }
+        .modal-title-block h3.is-mono { font-family: var(--font-mono); font-size: 1.05rem; letter-spacing: -0.02em; }
+
+        .modal-sub {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            margin-top: 2px;
+        }
+
+        .inv-summary {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            padding: 16px 18px;
+            border-radius: 18px;
+            background: var(--pill-bg);
+            border: 1px solid var(--card-border);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+        }
+
+        .inv-label {
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-dim);
+        }
+
+        .inv-client { font-weight: 800; margin-top: 6px; letter-spacing: -0.01em; }
+
+        .inv-rfc {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            margin-top: 2px;
+        }
+
+        .inv-section-title {
+            font-size: 0.9rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+
+        .inv-items-wrap {
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            overflow: hidden;
+            overflow-x: auto;
+        }
+
+        .inv-items {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+        }
+
+        .inv-items th {
+            padding: 10px 14px;
+            background: var(--bg-muted);
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .inv-items td {
+            padding: 11px 14px;
+            border-bottom: 1px solid var(--border-dark);
+        }
+
+        .inv-items tr:last-child td { border-bottom: none; }
+        .inv-items .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+        .inv-total {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 12px;
+            padding: 14px 18px;
+            border-radius: 16px;
+            background: rgb(var(--c-accent) / 0.08);
+            border: 1px solid rgb(var(--c-accent) / 0.22);
+        }
+
+        .inv-total strong {
+            font-family: var(--font-mono);
+            font-size: 1.35rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            color: rgb(var(--c-accent));
+            font-variant-numeric: tabular-nums;
+        }
+
+        .form-grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+
+        .form-grid-2 .form-group { margin-bottom: 0; }
+        #modalNewTransaction .modal-body > .form-group { margin-bottom: 0; }
+        .form-input.is-mono { font-family: var(--font-mono); }
+
+        /* ---- Responsive ---- */
+        @media (max-width: 1024px) {
+            .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        @media (max-width: 640px) {
+            .tbl-header { margin-top: 24px; }
+            .tbl-header-actions { width: 100%; }
+            .tbl-header-actions .btn-modern { flex: 1; }
+            .kpi-row { gap: 12px; }
+            .kpi-stat-card { padding: 16px; flex-direction: column-reverse; gap: 12px; }
+            .kpi-stat-icon { width: 38px; height: 38px; border-radius: 12px; }
+            .kpi-stat-info h4 { white-space: normal; letter-spacing: 0.1em; line-height: 1.35; }
+            .kpi-stat-info .num { font-size: 1.3rem; }
+            .table-search-input-wrap { max-width: none; flex-basis: 100%; }
+            .filter-left-controls .pill-select { flex: 1; min-width: 0; padding: 0 28px 0 14px; font-size: 0.76rem; background-position: right 11px center; }
+            .page-size-control { width: 100%; justify-content: space-between; }
+            .table-pagination-footer { justify-content: center; text-align: center; }
+            .inv-summary, .form-grid-2 { grid-template-columns: 1fr; }
+            .batch-actions-banner { bottom: 16px; padding: 8px 8px 8px 14px; gap: 10px; }
+            .batch-actions .btn-label { display: none; }
+            .batch-actions .btn-modern { padding: 9px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main Navigation Bar -->
+    <header class="nexora-navbar">
+        <div class="brand-wrapper">
+            <a href="index.html" aria-label="JFast Suite, inicio">
+                <div class="brand-info">
+                    <h1>JFast <span>Suite</span></h1>
+                </div>
+            </a>
+        </div>
+
+        <nav class="nav-links-menu" id="navLinksMenu" aria-label="Módulos">
+            <a href="index.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+                <span>Inicio</span>
+            </a>
+            <a href="crm.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M9 3v18M15 9l3 3-3 3"/></svg>
+                <span>CRM</span>
+            </a>
+            <a href="social.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                <span>Red Social</span>
+            </a>
+            <a href="pagos.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="20" height="14" x="2" y="5" rx="3"/><path d="M2 10h20"/></svg>
+                <span>Pagos</span>
+            </a>
+            <a href="widgets.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="7" height="7" x="3" y="3" rx="2"/><rect width="7" height="7" x="14" y="3" rx="2"/><rect width="7" height="7" x="14" y="14" rx="2"/><rect width="7" height="7" x="3" y="14" rx="2"/></svg>
+                <span>Widgets</span>
+            </a>
+            <a href="tablas.html" class="nav-pill-link active" aria-current="page">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+                <span>Tablas ERP</span>
+            </a>
+        </nav>
+
+        <div class="navbar-actions">
+            <button type="button" class="btn-modern btn-primary nx-hide-sm" onclick="openModal('modalNewTransaction')" style="padding: 9px 18px; font-size: 0.8rem;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.4;"><path d="M12 5v14M5 12h14"/></svg>Nueva venta</button>
+            <button type="button" class="nx-round-btn" data-open-palette aria-label="Personalizar paleta" title="Personalizar paleta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;color:rgb(var(--c-accent));"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+            </button>
+            <button type="button" class="nx-round-btn theme-toggle-btn" onclick="toggleTheme()" aria-label="Cambiar tema"></button>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Encabezado de página -->
+        <div class="page-header-row tbl-header">
+            <div class="page-title">
+                <span class="nx-eyebrow"><span class="nx-live-dot"></span>Auditoría fiscal · CFDI</span>
+                <h1>Operaciones <span class="faded">&amp; facturación fiscal</span></h1>
+                <p>Gestión masiva de folios, auditoría en tiempo real y exportación de datos.</p>
+            </div>
+            <div class="tbl-header-actions">
+                <button type="button" class="btn-modern btn-outline" onclick="exportTableToCSV()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                    Exportar CSV
+                </button>
+                <button type="button" class="btn-modern btn-ghost" onclick="resetFilters()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    Limpiar filtros
+                </button>
+            </div>
+        </div>
+
+        <!-- KPIs -->
+        <div class="kpi-row">
+            <div class="kpi-stat-card liquid-panel tint-success">
+                <div class="kpi-stat-info">
+                    <h4>Total facturado</h4>
+                    <div class="num" id="kpiTotalRevenue">$186,410.00</div>
+                    <span class="kpi-meta">USD · acumulado</span>
+                </div>
+                <div class="kpi-stat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                </div>
+            </div>
+
+            <div class="kpi-stat-card liquid-panel tint-accent">
+                <div class="kpi-stat-info">
+                    <h4>Total órdenes</h4>
+                    <div class="num" id="kpiTotalCount">8 Folios</div>
+                    <span class="kpi-meta">folios emitidos</span>
+                </div>
+                <div class="kpi-stat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+                </div>
+            </div>
+
+            <div class="kpi-stat-card liquid-panel tint-success">
+                <div class="kpi-stat-info">
+                    <h4>Completadas</h4>
+                    <div class="num" id="kpiCompletedCount" style="color: var(--success);">5</div>
+                    <span class="kpi-meta">liquidadas</span>
+                </div>
+                <div class="kpi-stat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                </div>
+            </div>
+
+            <div class="kpi-stat-card liquid-panel tint-warning">
+                <div class="kpi-stat-info">
+                    <h4>Pendientes / proceso</h4>
+                    <div class="num" id="kpiPendingCount" style="color: var(--warning);">3</div>
+                    <span class="kpi-meta">por cobrar</span>
+                </div>
+                <div class="kpi-stat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtros y búsqueda -->
+        <div class="table-filter-bar liquid-panel">
+            <div class="filter-left-controls">
+                <div class="table-search-input-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="text" id="globalSearchInput" class="table-search-input" placeholder="Buscar folio, cliente o RFC…" oninput="handleTableSearch(this.value)" aria-label="Buscar en la tabla">
+                </div>
+
+                <select id="statusFilterSelect" class="form-select pill-select" onchange="applyFilters()" aria-label="Filtrar por estado">
+                    <option value="ALL">Todos los estados</option>
+                    <option value="Completado">Completado</option>
+                    <option value="Pendiente">Pendiente</option>
+                    <option value="En proceso">En proceso</option>
+                    <option value="Cancelado">Cancelado</option>
+                </select>
+
+                <select id="categoryFilterSelect" class="form-select pill-select" onchange="applyFilters()" aria-label="Filtrar por categoría">
+                    <option value="ALL">Todas las categorías</option>
+                    <option value="Hardware & Servidores">Hardware &amp; Servidores</option>
+                    <option value="Licencias SaaS">Licencias SaaS</option>
+                    <option value="Ciberseguridad">Ciberseguridad</option>
+                    <option value="Servicios Cloud">Servicios Cloud</option>
+                </select>
+            </div>
+
+            <div class="page-size-control">
+                <span>Mostrar</span>
+                <select id="pageSizeSelect" class="form-select pill-select" onchange="changePageSize(Number(this.value))" aria-label="Filas por página">
+                    <option value="5" selected>5 filas</option>
+                    <option value="10">10 filas</option>
+                    <option value="25">25 filas</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Tabla -->
+        <div class="table-container-card liquid-panel">
+            <div class="table-responsive">
+                <table class="erp-data-table">
+                    <thead>
+                        <tr>
+                            <th class="non-sortable col-check">
+                                <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this.checked)" aria-label="Seleccionar página">
+                            </th>
+                            <th onclick="sortTable('folio')">
+                                Folio fiscal <span class="sort-icon" id="sort-folio">↕</span>
+                            </th>
+                            <th onclick="sortTable('client')">
+                                Cliente / Razón social <span class="sort-icon" id="sort-client">↕</span>
+                            </th>
+                            <th onclick="sortTable('category')">
+                                Categoría <span class="sort-icon" id="sort-category">↕</span>
+                            </th>
+                            <th onclick="sortTable('date')">
+                                Emisión <span class="sort-icon is-sorted" id="sort-date">↓</span>
+                            </th>
+                            <th class="col-num" onclick="sortTable('amount')">
+                                Importe <span class="sort-icon" id="sort-amount">↕</span>
+                            </th>
+                            <th onclick="sortTable('status')">
+                                Estado <span class="sort-icon" id="sort-status">↕</span>
+                            </th>
+                            <th class="non-sortable" style="text-align: right;">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBodyRows">
+                        <!-- Se genera con JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="table-pagination-footer">
+                <div id="paginationInfoText">Mostrando 1 a 5 de 8 transacciones</div>
+                <div class="pagination-nav" id="paginationControls"></div>
+            </div>
+        </div>
+
+        <div style="height: 110px;"></div>
+    </main>
+
+    <!-- Isla flotante de acciones masivas -->
+    <div id="batchActionsBar" class="batch-actions-banner" role="region" aria-label="Acciones masivas">
+        <div class="batch-count">
+            <span class="batch-count-dot"></span>
+            <span id="selectedCountText">0 filas seleccionadas</span>
+        </div>
+        <div class="batch-actions">
+            <button type="button" class="btn-modern btn-outline" onclick="batchMarkCompleted()" title="Marcar completadas">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6 9 17l-5-5"/></svg>
+                <span class="btn-label">Completar</span>
+            </button>
+            <button type="button" class="btn-modern btn-danger" onclick="batchDeleteRows()" title="Eliminar seleccionadas">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                <span class="btn-label">Eliminar</span>
+            </button>
+            <button type="button" class="btn-modern btn-ghost" onclick="clearSelection()" title="Quitar selección" aria-label="Quitar selección" style="padding: 9px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal: detalle de factura -->
+    <div id="modalInvoiceDetail" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title-block">
+                    <div class="modal-title-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8M16 13H8M16 17H8"/></svg>
+                    </div>
+                    <div style="min-width: 0;">
+                        <span class="nx-eyebrow">Comprobante fiscal</span>
+                        <h3 id="invDetailFolio" class="is-mono">#FAC-2026-904</h3>
+                        <p class="modal-sub" id="invDetailDate">Emitida el 23 Sep 2026</p>
+                    </div>
+                </div>
+                <button type="button" class="modal-close-btn" onclick="closeModal('modalInvoiceDetail')" aria-label="Cerrar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="inv-summary">
+                    <div style="min-width: 0;">
+                        <span class="inv-label">Receptor / cliente</span>
+                        <div class="inv-client" id="invDetailClient">Logística Austral S.A.</div>
+                        <div class="inv-rfc" id="invDetailRfc">RFC: LAU920311K82</div>
+                    </div>
+                    <div>
+                        <span class="inv-label">Estado de pago</span>
+                        <div style="margin-top: 8px;" id="invDetailStatus">
+                            <span class="badge-status status-completed"><span class="status-dot"></span>Completado</span>
+                        </div>
+                    </div>
+                </div>
+
+                <h4 class="inv-section-title">Conceptos facturados</h4>
+                <div class="inv-items-wrap">
+                    <table class="inv-items">
+                        <thead>
+                            <tr>
+                                <th style="text-align: left;">Descripción</th>
+                                <th style="text-align: center;">Cant.</th>
+                                <th style="text-align: right;">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody id="invDetailItemsBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="inv-total">
+                    <span class="inv-label">Total liquidado</span>
+                    <strong id="invDetailTotalAmount">$14,850.00</strong>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-modern btn-outline" onclick="window.print()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>
+                    Imprimir
+                </button>
+                <button type="button" class="btn-modern btn-primary" onclick="closeModal('modalInvoiceDetail')">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: nueva venta -->
+    <div id="modalNewTransaction" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title-block">
+                    <div class="modal-title-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
+                    </div>
+                    <div>
+                        <span class="nx-eyebrow">Nueva venta</span>
+                        <h3>Registrar venta fiscal</h3>
+                    </div>
+                </div>
+                <button type="button" class="modal-close-btn" onclick="closeModal('modalNewTransaction')" aria-label="Cerrar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <form onsubmit="handleCreateTransaction(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label class="form-label" for="newClientInput">Cliente / razón social</label>
+                        <input type="text" id="newClientInput" class="form-input" placeholder="Ej: Telecomunicaciones de México Corp" required>
+                    </div>
+
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label class="form-label" for="newAmountInput">Importe total (USD)</label>
+                            <input type="number" step="0.01" id="newAmountInput" class="form-input is-mono" placeholder="5400.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="newCategorySelect">Categoría</label>
+                            <select id="newCategorySelect" class="form-select" required>
+                                <option value="Hardware & Servidores">Hardware &amp; Servidores</option>
+                                <option value="Licencias SaaS">Licencias SaaS</option>
+                                <option value="Ciberseguridad">Ciberseguridad</option>
+                                <option value="Servicios Cloud">Servicios Cloud</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label class="form-label" for="newStatusSelect">Estado inicial</label>
+                            <select id="newStatusSelect" class="form-select">
+                                <option value="Completado">Completado</option>
+                                <option value="Pendiente" selected>Pendiente</option>
+                                <option value="En proceso">En proceso</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="newDateInput">Fecha de emisión</label>
+                            <input type="date" id="newDateInput" class="form-input is-mono" required>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-modern btn-ghost" onclick="closeModal('modalNewTransaction')">Cancelar</button>
+                    <button type="submit" class="btn-modern btn-primary">Registrar en tabla</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="assets/js/nexora-common.js"></script>
+    <script>
+        // Database State
+        let tableData = [
+            { id: 1, folio: 'FAC-2026-904', client: 'Logística Austral S.A.', rfc: 'LAU920311K82', category: 'Hardware & Servidores', date: '2026-09-23', amount: 14850.00, status: 'Completado', items: [{ desc: 'Servidor Dell R740 2U', qty: 3, price: 4950 }] },
+            { id: 2, folio: 'FAC-2026-903', client: 'TechGlobal Soluciones Corp', rfc: 'TGS180512M90', category: 'Licencias SaaS', date: '2026-09-22', amount: 8420.00, status: 'Pendiente', items: [{ desc: 'Licencia JFast Pro 50 Seats', qty: 1, price: 8420 }] },
+            { id: 3, folio: 'FAC-2026-902', client: 'Industrias Mineras del Norte', rfc: 'IMN080124TR4', category: 'Ciberseguridad', date: '2026-09-22', amount: 32100.00, status: 'En proceso', items: [{ desc: 'Módulo Firewall Fortinet & Setup', qty: 2, price: 16050 }] },
+            { id: 4, folio: 'FAC-2026-901', client: 'Banco Panamericano SA', rfc: 'BPA890314L55', category: 'Servicios Cloud', date: '2026-09-21', amount: 64900.00, status: 'Completado', items: [{ desc: 'Clúster Privado Kubernetes Anual', qty: 1, price: 64900 }] },
+            { id: 5, folio: 'FAC-2026-900', client: 'Distribuidora Farma Express', rfc: 'DFE120809H22', category: 'Hardware & Servidores', date: '2026-09-20', amount: 9240.00, status: 'Completado', items: [{ desc: 'Switch Cisco Catalyst 9200', qty: 4, price: 2310 }] },
+            { id: 6, folio: 'FAC-2026-899', client: 'Grupo Constructor Altiplano', rfc: 'GCA150218U11', category: 'Licencias SaaS', date: '2026-09-19', amount: 5600.00, status: 'Cancelado', items: [{ desc: 'Suscripción ERP Starter Anual', qty: 1, price: 5600 }] },
+            { id: 7, folio: 'FAC-2026-898', client: 'OmniLogistics México', rfc: 'OLM190704V88', category: 'Hardware & Servidores', date: '2026-09-18', amount: 28500.00, status: 'Completado', items: [{ desc: 'Sistema UPS APC 3000VA', qty: 3, price: 9500 }] },
+            { id: 8, folio: 'FAC-2026-897', client: 'Cervecería Artesanal Modelo', rfc: 'CAM110923P33', category: 'Servicios Cloud', date: '2026-09-17', amount: 22800.00, status: 'Pendiente', items: [{ desc: 'Almacenamiento NVMe en la Nube', qty: 1, price: 22800 }] }
+        ];
+
+        let currentSortColumn = 'date';
+        let currentSortOrder = 'desc'; // 'asc' or 'desc'
+        let currentPage = 1;
+        let pageSize = 5;
+        let selectedRowIds = new Set();
+
+        // 1. Filtering & Sorting Engine
+        function getFilteredData() {
+            const query = document.getElementById('globalSearchInput').value.trim().toLowerCase();
+            const statusFilter = document.getElementById('statusFilterSelect').value;
+            const categoryFilter = document.getElementById('categoryFilterSelect').value;
+
+            return tableData.filter(row => {
+                const matchQuery = !query || 
+                    row.folio.toLowerCase().includes(query) ||
+                    row.client.toLowerCase().includes(query) ||
+                    row.rfc.toLowerCase().includes(query) ||
+                    row.category.toLowerCase().includes(query) ||
+                    row.status.toLowerCase().includes(query);
+
+                const matchStatus = (statusFilter === 'ALL') || (row.status === statusFilter);
+                const matchCategory = (categoryFilter === 'ALL') || (row.category === categoryFilter);
+
+                return matchQuery && matchStatus && matchCategory;
+            }).sort((a, b) => {
+                let valA = a[currentSortColumn];
+                let valB = b[currentSortColumn];
+
+                if (typeof valA === 'string') {
+                    return currentSortOrder === 'asc' 
+                        ? valA.localeCompare(valB) 
+                        : valB.localeCompare(valA);
+                } else {
+                    return currentSortOrder === 'asc' ? valA - valB : valB - valA;
+                }
+            });
+        }
+
+        // 2. Render Table Rows & Pagination
+        function renderTable() {
+            const filtered = getFilteredData();
+            const totalRows = filtered.length;
+            const totalPages = Math.ceil(totalRows / pageSize) || 1;
+
+            if (currentPage > totalPages) currentPage = totalPages;
+
+            const startIndex = (currentPage - 1) * pageSize;
+            const endIndex = Math.min(startIndex + pageSize, totalRows);
+            const pageSlice = filtered.slice(startIndex, endIndex);
+
+            const tbody = document.getElementById('tableBodyRows');
+
+            if (pageSlice.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="8" class="table-empty">
+                            <div class="table-empty-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:20px;height:20px;stroke-width:2;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                            </div>
+                            <strong>No se encontraron transacciones</strong>
+                            <small>Prueba con otro término o limpia los filtros.</small>
+                        </td>
+                    </tr>
+                `;
+            } else {
+                tbody.innerHTML = pageSlice.map(row => {
+                    const isSelected = selectedRowIds.has(row.id);
+                    let badgeClass = 'status-processing';
+                    if (row.status === 'Completado') badgeClass = 'status-completed';
+                    else if (row.status === 'Pendiente') badgeClass = 'status-pending';
+                    else if (row.status === 'Cancelado') badgeClass = 'status-cancelled';
+
+                    return `
+                        <tr class="${isSelected ? 'row-selected' : ''}">
+                            <td class="col-check">
+                                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleRowSelect(${row.id}, this.checked)" aria-label="Seleccionar ${row.folio}">
+                            </td>
+                            <td class="cell-folio"><span>#</span>${row.folio}</td>
+                            <td>
+                                <div class="cell-client-name">${row.client}</div>
+                                <div class="cell-rfc">${row.rfc}</div>
+                            </td>
+                            <td><span class="cell-chip">${row.category}</span></td>
+                            <td class="cell-date">${formatDate(row.date)}</td>
+                            <td class="cell-amount col-num">$${row.amount.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                            <td>
+                                <span class="badge-status ${badgeClass}"><span class="status-dot"></span>${row.status}</span>
+                            </td>
+                            <td style="text-align: right;">
+                                <div class="row-actions">
+                                    <button type="button" class="btn-table-ficha" onclick="openInvoiceModal(${row.id})" title="Ver factura">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                                        Ver
+                                    </button>
+                                    <button type="button" class="btn-row-delete" onclick="deleteRow(${row.id})" title="Eliminar" aria-label="Eliminar ${row.folio}">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // Update Pagination Text
+            const infoText = document.getElementById('paginationInfoText');
+            if (totalRows === 0) {
+                infoText.textContent = 'Mostrando 0 registros';
+            } else {
+                infoText.textContent = `Mostrando ${startIndex + 1} a ${endIndex} de ${totalRows} transacciones`;
+            }
+
+            // Render Pagination Nav Buttons
+            const nav = document.getElementById('paginationControls');
+            let paginationHtml = `
+                <button class="page-num-btn" ${currentPage === 1 ? 'disabled' : ''} onclick="goToPage(${currentPage - 1})">‹ Ant</button>
+            `;
+
+            for (let i = 1; i <= totalPages; i++) {
+                paginationHtml += `
+                    <button class="page-num-btn ${currentPage === i ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>
+                `;
+            }
+
+            paginationHtml += `
+                <button class="page-num-btn" ${currentPage === totalPages ? 'disabled' : ''} onclick="goToPage(${currentPage + 1})">Sig ›</button>
+            `;
+            nav.innerHTML = paginationHtml;
+
+            // Master Checkbox state
+            const allChecked = pageSlice.length > 0 && pageSlice.every(r => selectedRowIds.has(r.id));
+            document.getElementById('selectAllCheckbox').checked = allChecked;
+
+            updateKPIs();
+            updateBatchBanner();
+        }
+
+        function formatDate(dateStr) {
+            const [y, m, d] = dateStr.split('-');
+            const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+            return `${d} ${months[parseInt(m) - 1]} ${y}`;
+        }
+
+        // 3. Sorting Mechanism
+        function sortTable(column) {
+            if (currentSortColumn === column) {
+                currentSortOrder = currentSortOrder === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSortColumn = column;
+                currentSortOrder = 'asc';
+            }
+
+            // Update sort icons
+            document.querySelectorAll('.sort-icon').forEach(icon => {
+                icon.textContent = '↕';
+                icon.classList.remove('is-sorted');
+            });
+            const targetIcon = document.getElementById(`sort-${column}`);
+            if (targetIcon) {
+                targetIcon.textContent = currentSortOrder === 'asc' ? '↑' : '↓';
+                targetIcon.classList.add('is-sorted');
+            }
+
+            renderTable();
+        }
+
+        // 4. Handlers
+        function handleTableSearch(val) {
+            currentPage = 1;
+            renderTable();
+        }
+
+        function applyFilters() {
+            currentPage = 1;
+            renderTable();
+        }
+
+        function changePageSize(size) {
+            pageSize = size;
+            currentPage = 1;
+            renderTable();
+        }
+
+        function goToPage(page) {
+            currentPage = page;
+            renderTable();
+        }
+
+        function resetFilters() {
+            document.getElementById('globalSearchInput').value = '';
+            document.getElementById('statusFilterSelect').value = 'ALL';
+            document.getElementById('categoryFilterSelect').value = 'ALL';
+            currentPage = 1;
+            renderTable();
+            showToast('Filtros', 'Filtros restablecidos a la vista global.', 'info');
+        }
+
+        // 5. Selection Management
+        function toggleRowSelect(id, checked) {
+            if (checked) selectedRowIds.add(id);
+            else selectedRowIds.delete(id);
+            renderTable();
+        }
+
+        function toggleSelectAll(checked) {
+            const filtered = getFilteredData();
+            const startIndex = (currentPage - 1) * pageSize;
+            const endIndex = Math.min(startIndex + pageSize, filtered.length);
+            const pageSlice = filtered.slice(startIndex, endIndex);
+
+            pageSlice.forEach(row => {
+                if (checked) selectedRowIds.add(row.id);
+                else selectedRowIds.delete(row.id);
+            });
+
+            renderTable();
+        }
+
+        function updateBatchBanner() {
+            const banner = document.getElementById('batchActionsBar');
+            const countText = document.getElementById('selectedCountText');
+            if (selectedRowIds.size > 0) {
+                banner.style.display = 'flex';
+                countText.textContent = `${selectedRowIds.size} transacción(es) seleccionada(s)`;
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+
+        function clearSelection() {
+            selectedRowIds.clear();
+            renderTable();
+        }
+
+        function batchMarkCompleted() {
+            tableData.forEach(row => {
+                if (selectedRowIds.has(row.id)) row.status = 'Completado';
+            });
+            showToast('Acción en Lote', `${selectedRowIds.size} órdenes marcadas como Completadas.`, 'success');
+            selectedRowIds.clear();
+            renderTable();
+        }
+
+        function batchDeleteRows() {
+            tableData = tableData.filter(row => !selectedRowIds.has(row.id));
+            showToast('Eliminación', 'Las órdenes seleccionadas fueron eliminadas.', 'warning');
+            selectedRowIds.clear();
+            renderTable();
+        }
+
+        function deleteRow(id) {
+            const row = tableData.find(r => r.id === id);
+            tableData = tableData.filter(r => r.id !== id);
+            selectedRowIds.delete(id);
+            renderTable();
+            showToast('Registro Eliminado', `La orden ${row ? row.folio : ''} fue eliminada.`, 'danger');
+        }
+
+        // 6. Modal View Invoice Detail
+        function openInvoiceModal(id) {
+            const row = tableData.find(r => r.id === id);
+            if (!row) return;
+
+            document.getElementById('invDetailFolio').textContent = `#${row.folio}`;
+            document.getElementById('invDetailDate').textContent = `Emitida el ${formatDate(row.date)}`;
+            document.getElementById('invDetailClient').textContent = row.client;
+            document.getElementById('invDetailRfc').textContent = `RFC: ${row.rfc}`;
+            document.getElementById('invDetailTotalAmount').textContent = `$${row.amount.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+
+            let badgeClass = 'status-processing';
+            if (row.status === 'Completado') badgeClass = 'status-completed';
+            else if (row.status === 'Pendiente') badgeClass = 'status-pending';
+            else if (row.status === 'Cancelado') badgeClass = 'status-cancelled';
+            document.getElementById('invDetailStatus').innerHTML = `<span class="badge-status ${badgeClass}"><span class="status-dot"></span>${row.status}</span>`;
+
+            // Items breakdown
+            const tbody = document.getElementById('invDetailItemsBody');
+            tbody.innerHTML = (row.items || [{ desc: 'Servicios Profesionales Especializados', qty: 1, price: row.amount }]).map(item => `
+                <tr>
+                    <td>${item.desc}</td>
+                    <td class="mono" style="text-align: center;">${item.qty}</td>
+                    <td class="mono" style="text-align: right; font-weight: 700;">$${(item.qty * item.price).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                </tr>
+            `).join('');
+
+            openModal('modalInvoiceDetail');
+        }
+
+        // 7. Modal Create New Transaction
+        function handleCreateTransaction(e) {
+            e.preventDefault();
+            const client = document.getElementById('newClientInput').value.trim();
+            const amount = parseFloat(document.getElementById('newAmountInput').value);
+            const category = document.getElementById('newCategorySelect').value;
+            const status = document.getElementById('newStatusSelect').value;
+            const date = document.getElementById('newDateInput').value;
+
+            const nextNum = 905 + tableData.length;
+            const newFolio = `FAC-2026-${nextNum}`;
+            const randomRfc = client.substring(0, 3).toUpperCase() + '260928AB1';
+
+            const newRow = {
+                id: Date.now(),
+                folio: newFolio,
+                client: client,
+                rfc: randomRfc,
+                category: category,
+                date: date,
+                amount: amount,
+                status: status,
+                items: [{ desc: `${category} - Asignación`, qty: 1, price: amount }]
+            };
+
+            tableData.unshift(newRow);
+            closeModal('modalNewTransaction');
+            e.target.reset();
+            renderTable();
+            showToast('Venta Registrada', `Folio #${newFolio} creado exitosamente.`, 'success');
+        }
+
+        // 8. Update KPIs
+        function updateKPIs() {
+            const totalRev = tableData.reduce((acc, r) => acc + r.amount, 0);
+            const completed = tableData.filter(r => r.status === 'Completado').length;
+            const pending = tableData.filter(r => r.status === 'Pendiente' || r.status === 'En proceso').length;
+
+            document.getElementById('kpiTotalRevenue').textContent = `$${totalRev.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+            document.getElementById('kpiTotalCount').textContent = `${tableData.length} Folios`;
+            document.getElementById('kpiCompletedCount').textContent = completed;
+            document.getElementById('kpiPendingCount').textContent = pending;
+        }
+
+        // 9. Real CSV Export to Browser Download
+        function exportTableToCSV() {
+            const filtered = getFilteredData();
+            const headers = ['Folio', 'Cliente', 'RFC', 'Categoria', 'Fecha', 'Importe_USD', 'Estado'];
+            
+            const rows = filtered.map(r => [
+                `"${r.folio}"`,
+                `"${r.client}"`,
+                `"${r.rfc}"`,
+                `"${r.category}"`,
+                `"${r.date}"`,
+                r.amount,
+                `"${r.status}"`
+            ]);
+
+            const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Reporte_Facturacion_JFast_${new Date().toISOString().slice(0, 10)}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showToast('Descarga CSV', 'Archivo CSV generado y descargado exitosamente.', 'success');
+        }
+
+        // Initialize today's date in new transaction form
+        document.getElementById('newDateInput').value = new Date().toISOString().slice(0, 10);
+
+        // Initial render
+        renderTable();
+    </script>
+</body>
+</html>

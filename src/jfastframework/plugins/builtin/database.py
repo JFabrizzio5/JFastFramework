@@ -1,8 +1,8 @@
 """Async PostgreSQL via SQLAlchemy 2.0, as one database or as several named ones.
 
-The plugin used to hold a single DSN. That one field is why there was no read
-replica, no per-tenant database and no shard: not one missing feature each, but
-one missing structure -- a database the service can *name*.
+A read replica, a per-tenant database and a shard are not three features but
+one structure: a database the service can *name*. A single DSN field has no
+room for any of them.
 
     [plugin.database]
     dsn_env = "JFAST_DB_DSN"          # the unnamed case, unchanged
@@ -15,22 +15,24 @@ one missing structure -- a database the service can *name*.
     read_only = true
 
 Leaving ``connections`` out is an alias for one instance called ``default``, so
-``JFAST_DB_DSN`` and ``ctx.require("db.engine")`` keep meaning exactly what they
-meant. Every DSN is a ``SecretStr`` or an environment variable and is never
-echoed by ``jfast describe`` or by ``/info``.
+``JFAST_DB_DSN`` and ``ctx.require("db.engine")`` mean the one database. Every
+DSN is a ``SecretStr`` or an environment variable and is never echoed by
+``jfast describe`` or by ``/info``.
 
 Requires: ``pip install jfastframework[db]``
 """
 
 from __future__ import annotations
 
+import inspect
 import os
 import time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
+from fastapi import Depends
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from pydantic_settings import SettingsConfigDict
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -84,8 +86,8 @@ class TenantPoolExhausted(ServiceUnavailableError, RuntimeError):
 
     503, not 500. Every engine being busy is backpressure: the service is
     healthy, it is at capacity, and the request can succeed if it arrives
-    again in a moment. As a bare ``RuntimeError`` it reached the unhandled
-    handler and came back as ``500 "An unexpected error occurred"`` -- which
+    again in a moment. As a bare ``RuntimeError`` it would reach the unhandled
+    handler and come back as ``500 "An unexpected error occurred"`` -- which
     tells a client to stop and a reader to look for a bug, and hides the one
     signal that says raise ``tenant_max_engines`` or lower the concurrency.
 
@@ -124,11 +126,11 @@ class DatabaseSettings(PluginSettings):
 
     dsn: SecretStr = SecretStr("postgresql+asyncpg://postgres:postgres@localhost:5432/postgres")
     echo: bool = False
-    # Ten connections per process, not thirty. These are per *worker*, and the
-    # generated image starts one per CPU up to eight -- so the old pair was 240
-    # connections from a single service against a PostgreSQL that accepts 100
-    # by default, and the service that fell over was whichever one connected
-    # next. Ten leaves the default deployment at 80 with room beside it.
+    # Ten connections per process. Pools are per *worker*, and the generated
+    # image starts one per CPU up to eight: 30 connections x 8 workers is 240
+    # from a single service against a PostgreSQL that accepts 100 by default,
+    # and the service that falls over is whichever one connects next. Ten
+    # leaves the default deployment at 80 with room beside it.
     #
     # Ten is not small for an async service either: a connection is held while
     # a query runs, not for the length of a request, so ten in flight per
@@ -156,6 +158,13 @@ class DatabaseSettings(PluginSettings):
     # Empty leaves the server's setting alone, which is only right when
     # something outside this service already guarantees it.
     session_timezone: str = "UTC"
+
+    # Row-level security. Every transaction tells PostgreSQL its tenant, so a
+    # table put under `enable_tenant_rls` in a migration returns only that
+    # tenant's rows whatever the query says. See jfastframework.db.rls -- and
+    # connect as a role that is neither a superuser nor BYPASSRLS, or the
+    # policies do not apply: production refuses to start otherwise.
+    rls: bool = False
 
     # Named instances. Empty means one instance called `default`, configured by
     # the fields above.
@@ -187,11 +196,11 @@ class DatabaseSettings(PluginSettings):
     # turns the check off for a server nobody here can know the size of.
     #
     # It exists because every pool number in this file is *per process*, and
-    # the generated image runs one worker per CPU: the defaults are 30
-    # connections, which is 240 on an eight-core host, from one service,
-    # against a server that accepts 100. Nothing multiplied those two numbers
-    # before, so the first sign was `FATAL: sorry, too many clients already` --
-    # in production, from whichever service happened to connect last.
+    # the generated image runs one worker per CPU: 30 connections per worker
+    # is 240 on an eight-core host, from one service, against a server that
+    # accepts 100. Unless something multiplies those two numbers, the first
+    # sign is `FATAL: sorry, too many clients already` -- in production, from
+    # whichever service happens to connect last.
     server_max_connections: int = 100
 
     # Deploy generation
@@ -665,10 +674,9 @@ def mark_write(request: Request) -> None:
     """Say this request wrote, so this client's next read skips the replica.
 
     Only needed for a write behind a *safe* method -- a lazy upsert inside a
-    ``GET``. Unsafe methods pin on their own, and must, because the decision
-    has to be made before the handler returns: dependency teardown, where a
-    session commits, runs after the response headers are already on the wire,
-    so a commit cannot be what sets the cookie.
+    ``GET``. Unsafe methods pin on their own: the middleware decides from what
+    it can see when the response comes back, and whether a session committed
+    is not one of those things.
     """
     request.state.jfast_db_wrote = True
 
@@ -726,12 +734,11 @@ class ReadWritePinMiddleware(BaseHTTPMiddleware):
             return True
         if not self._settings.pin_on_unsafe_methods:
             return False
-        # The method, not the session. A session commits during dependency
-        # teardown, which happens after `call_next` has already handed back the
-        # response -- too late to set a cookie on it. The method is known
-        # before the handler runs and covers every write a REST API makes; the
-        # cost of the approximation is a POST that read nothing pinning its
-        # client for one window, which is load, not incorrectness.
+        # The method, not the session. The middleware cannot see whether a
+        # session committed; the method is known before the handler runs and
+        # covers every write a REST API makes. The cost of the approximation
+        # is a POST that read nothing pinning its client for one window, which
+        # is load, not incorrectness.
         return request.method in UNSAFE_METHODS and response.status_code < 400
 
 
@@ -765,7 +772,9 @@ class DatabasePlugin(Plugin):
             engines[name] = engine
             # expire_on_commit=False keeps ORM objects usable after the request
             # scope commits, which is what response serialisation needs.
-            sessionmakers[name] = async_sessionmaker(engine, expire_on_commit=False)
+            sessionmakers[name] = async_sessionmaker(
+                engine, expire_on_commit=False, **self._session_options()
+            )
 
         read_only = tuple(n for n, c in connections.items() if c.read_only)
         if settings.read_write_split and not read_only:
@@ -810,6 +819,65 @@ class DatabasePlugin(Plugin):
                     settings=settings,
                     secure=ctx.settings.is_production,
                 )
+            )
+
+    def _session_options(self) -> dict[str, Any]:
+        settings: DatabaseSettings = self.settings
+        if not settings.rls:
+            return {}
+        from jfastframework.db.rls import TenantScopedSession
+
+        return {"sync_session_class": TenantScopedSession}
+
+    async def _check_rls_role(self, ctx: AppContext) -> None:
+        from jfastframework.db.rls import role_problem
+
+        assert self._registry is not None
+        try:
+            problem = await role_problem(self._registry.engine())
+        except Exception as exc:  # noqa: BLE001 - an unreachable database is /ready's to report
+            # Refusing to boot because the database is not up yet would turn a
+            # blip into a crash loop. /ready reports the database; the role is
+            # checked on the next start.
+            ctx.logger.warning(
+                "rls is on and the database role could not be checked",
+                extra={"error": str(exc)},
+            )
+            return
+        if problem is None:
+            return
+        message = (
+            f"[plugin.database] rls is on, but {problem}: every policy is ignored and "
+            f"each tenant can read the others' rows. Connect as a role without "
+            f"SUPERUSER or BYPASSRLS (docs/multitenancy.md shows the grants)."
+        )
+        if ctx.settings.is_production:
+            raise PluginError(message)
+        ctx.logger.warning(message)
+
+    async def startup(self, ctx: AppContext) -> None:
+        if self.settings.rls:
+            await self._check_rls_role(ctx)
+        # Here rather than in `register`: routers are mounted after plugins
+        # register, and by startup every route the service serves exists.
+        violations = session_scope_violations(ctx.app)
+        if violations:
+            raise PluginError(
+                "these routes open a database session that would commit after the "
+                "response is sent, so a failed commit still answers 2xx and the next "
+                "request can read before the write is visible:\n  "
+                + "\n  ".join(violations)
+                + "\nDepend on DbSession / ReadSession / TenantSession from "
+                'jfastframework.plugins.builtin.database, or pass scope="function" '
+                "to Depends(...)."
+            )
+        suspected = suspected_scope_violations(ctx.app)
+        if suspected:
+            ctx.logger.warning(
+                "these routes reach a dependency of this service that commits after its "
+                'yield without scope="function", so the commit runs after the response '
+                "is sent. Mark it @transactional and scope it, or scope it:\n  "
+                + "\n  ".join(suspected)
             )
 
     async def shutdown(self, ctx: AppContext) -> None:
@@ -961,7 +1029,18 @@ def _registry_of(request: Request) -> DatabaseRegistry:
 
 
 async def session_dependency(request: Request) -> AsyncIterator[Any]:
-    """FastAPI dependency yielding a request-scoped session on the primary.
+    """FastAPI dependency yielding a session on the primary, committed on exit.
+
+    Depend on it through ``DbSession`` (or ``Depends(session_dependency,
+    scope="function")``), never a bare ``Depends(session_dependency)``. The
+    scope decides *when* the commit below runs. FastAPI's default for a
+    ``yield`` dependency is ``"request"``, which runs it after the response has
+    been sent: a commit that fails -- a deferred constraint, a serialisation
+    failure, a dropped connection -- has already been answered 201, and a
+    client quick enough to read its own write can get there before the commit
+    and see nothing. ``"function"`` commits when the endpoint returns, before
+    the response exists, so a failed commit is the 500 it should be. The
+    database plugin refuses to start while a route uses any other scope.
 
     ``request`` is annotated ``Request`` and must stay that way. FastAPI
     decides what a dependency parameter *is* from its annotation, and with
@@ -1043,3 +1122,117 @@ async def tenant_session_dependency(request: Request) -> AsyncIterator[Any]:
         except Exception:
             await session.rollback()
             raise
+
+
+# -- what routes depend on ------------------------------------------------
+#
+# The dependencies above only commit before the response when they are
+# function-scoped, and the scope is chosen where they are used, not where they
+# are defined. These aliases are the one spelling that is always right:
+#
+#     async def create(payload: ItemCreate, session: DbSession) -> ItemRead: ...
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession as _Session
+else:
+    _Session = Any
+
+DbSession = Annotated[_Session, Depends(session_dependency, scope="function")]
+ReadSession = Annotated[_Session, Depends(read_session_dependency, scope="function")]
+TenantSession = Annotated[_Session, Depends(tenant_session_dependency, scope="function")]
+
+_TRANSACTIONAL = (session_dependency, read_session_dependency, tenant_session_dependency)
+_MARK = "__jfast_transactional__"
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def transactional(dependency: F) -> F:
+    """Mark a session dependency of your own, so the scope check covers it.
+
+    A service that opens its own session -- to set extra row-level security
+    values, say -- commits in its own ``yield`` dependency, and that commit
+    runs after the response exactly like the framework's would. Marked, the
+    database plugin holds it to the same rule: every route must depend on it
+    with ``scope="function"``, or the service does not start::
+
+        @transactional
+        async def session_with_rls(request: Request) -> AsyncIterator[AsyncSession]:
+            ...
+
+        SessionRLS = Annotated[AsyncSession, Depends(session_with_rls, scope="function")]
+    """
+    setattr(dependency, _MARK, True)
+    return dependency
+
+
+def _is_transactional(call: Any) -> bool:
+    return call in _TRANSACTIONAL or bool(getattr(call, _MARK, False))
+
+
+def _walk(app: Any) -> Iterator[tuple[Any, Any]]:
+    """Every (route, dependant) pair below every API route, depth first."""
+    from fastapi.routing import APIRoute
+
+    for route in getattr(app, "routes", ()):
+        if not isinstance(route, APIRoute):
+            continue
+        pending = [route.dependant]
+        while pending:
+            dependant = pending.pop()
+            for sub in dependant.dependencies:
+                yield route, sub
+                pending.append(sub)
+
+
+def _label(route: Any, call: Any) -> str:
+    methods = ",".join(sorted(route.methods or ()))
+    return f"{methods} {route.path} -> {getattr(call, '__name__', repr(call))}"
+
+
+def session_scope_violations(app: Any) -> list[str]:
+    """Routes that reach a session dependency with any scope but ``"function"``.
+
+    The framework's three session dependencies, and any of the service's own
+    marked with :func:`transactional`. Walks every route's dependency tree, so
+    a session two levels down -- inside a ``get_service`` -- is found as well
+    as one on the endpoint.
+    """
+    return sorted(
+        {
+            _label(route, sub.call)
+            for route, sub in _walk(app)
+            if _is_transactional(sub.call) and sub.scope != "function"
+        }
+    )
+
+
+def _commits_after_yield(call: Any) -> bool:
+    """Whether a generator dependency's source commits after it yields."""
+    if not (inspect.isasyncgenfunction(call) or inspect.isgeneratorfunction(call)):
+        return False
+    try:
+        source = inspect.getsource(call)
+    except (OSError, TypeError):
+        return False
+    _, _, after = source.partition("yield")
+    return ".commit(" in after
+
+
+def suspected_scope_violations(app: Any) -> list[str]:
+    """Unmarked dependencies that look like they commit after the response.
+
+    A heuristic -- a request-scoped generator dependency whose code calls
+    ``.commit(`` after its ``yield`` -- so it warns rather than refusing:
+    the service knows whether that write may happen after the response, and
+    either marks the dependency or scopes it.
+    """
+    return sorted(
+        {
+            _label(route, sub.call)
+            for route, sub in _walk(app)
+            if not _is_transactional(sub.call)
+            and sub.scope != "function"
+            and _commits_after_yield(sub.call)
+        }
+    )

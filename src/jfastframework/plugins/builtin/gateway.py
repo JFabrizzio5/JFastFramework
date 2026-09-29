@@ -243,7 +243,7 @@ class GatewayPlugin(Plugin):
             # reports it. It matters because they do not agree: a refused
             # connection to a dead port raises ConnectError on Linux and
             # ConnectTimeout on Windows, and catching TimeoutException first
-            # turned the same dead upstream into a 504 on one of them.
+            # would turn the same dead upstream into a 504 on one of them.
             ctx.logger.warning("gateway cannot reach %s: %s", url, exc)
             raise BadGatewayError(f"{route.prefix} is unreachable") from exc
         except httpx.TimeoutException as exc:

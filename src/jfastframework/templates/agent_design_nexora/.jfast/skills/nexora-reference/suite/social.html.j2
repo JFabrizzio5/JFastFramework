@@ -1,0 +1,2173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JFast Suite | Red Social Corporativa & Comunidad</title>
+    
+    <!-- Google Fonts: Plus Jakarta Sans + JetBrains Mono + Caveat -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet">
+    
+    <!-- Unified CSS -->
+    <link rel="stylesheet" href="assets/css/nexora.css">
+
+    <style>
+        /* ================================================================
+           Red Social — Liquid Glass
+           La tipografía, el fondo y los tokens vienen de nexora.css.
+           ================================================================ */
+
+        .social-page-wrap {
+            max-width: 1240px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 36px 16px 90px;
+            overflow-x: clip;
+        }
+
+        .social-layout {
+            display: grid;
+            grid-template-columns: 250px minmax(0, 1fr) 290px;
+            gap: 22px;
+            align-items: start;
+            width: 100%;
+            min-width: 0;
+        }
+
+        .social-layout > * {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .social-side-col {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        @media (min-height: 780px) {
+            .social-side-col { position: sticky; top: 100px; }
+        }
+
+        /* ---------- Superficie de vidrio común ---------- */
+        .glass-surface,
+        .stories-container,
+        .post-creator-card,
+        .post-card,
+        .profile-mini-card,
+        .trends-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(26px) saturate(170%);
+            -webkit-backdrop-filter: blur(26px) saturate(170%);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--card-shadow), inset 0 1px 1.5px var(--card-specular);
+        }
+
+        html.nx-light .stories-container,
+        html.nx-light .post-creator-card,
+        html.nx-light .post-card,
+        html.nx-light .profile-mini-card,
+        html.nx-light .trends-card {
+            box-shadow: var(--card-shadow), inset 0 1px 2px #fff;
+        }
+
+        /* ---------- Encabezado editorial ---------- */
+        .social-editorial-header {
+            margin-bottom: 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            gap: 18px;
+        }
+
+        .social-editorial-header > div:first-child {
+            flex: 1 1 520px;
+            min-width: 0;
+            max-width: 760px;
+        }
+
+        .social-editorial-title {
+            font-size: clamp(1.8rem, 3.2vw, 2.5rem);
+            font-weight: 900;
+            letter-spacing: -0.045em;
+            line-height: 1.04;
+            color: var(--text-main);
+            margin-top: 10px;
+        }
+
+        .social-editorial-title span { color: var(--text-sub); font-weight: 800; }
+
+        .social-editorial-subtitle {
+            font-size: 0.92rem;
+            color: var(--text-dim);
+            margin-top: 8px;
+            max-width: 560px;
+        }
+
+        .social-header-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .social-header-actions .btn-modern { font-size: 0.82rem; }
+
+        /* ---------- Historias ---------- */
+        .stories-container {
+            display: flex;
+            gap: 14px;
+            overflow-x: auto;
+            padding: 18px 20px;
+            margin-bottom: 20px;
+            scrollbar-width: none;
+        }
+
+        .stories-container::-webkit-scrollbar { display: none; }
+
+        .story-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            flex-shrink: 0;
+            width: 72px;
+            transition: transform 0.25s var(--ease-out);
+        }
+
+        .story-item:hover { transform: translateY(-3px); }
+
+        .story-ring {
+            width: 62px;
+            height: 62px;
+            border-radius: 50%;
+            padding: 2.5px;
+            background: conic-gradient(from 210deg, rgb(var(--c-glow)), rgb(var(--c-accent)), rgb(var(--c-accent-deep)), rgb(var(--c-accent)), rgb(var(--c-glow)));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 20px -6px rgb(var(--c-accent) / 0.55);
+            transition: transform 0.25s var(--ease-out), box-shadow 0.25s ease;
+        }
+
+        .story-item:hover .story-ring {
+            transform: scale(1.06);
+            box-shadow: 0 10px 26px -6px rgb(var(--c-accent) / 0.75);
+        }
+
+        .story-ring.watched {
+            background: var(--badge-border);
+            box-shadow: none;
+        }
+
+        .story-avatar {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2.5px solid var(--card-solid);
+            background: var(--bg-muted);
+        }
+
+        .story-name {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            width: 100%;
+        }
+
+        .story-item:hover .story-name { color: var(--text-main); }
+
+        /* ---------- Compositor ---------- */
+        .post-creator-card {
+            padding: 20px 22px;
+            margin-bottom: 20px;
+            transition: border-color 0.25s ease, box-shadow 0.25s ease;
+        }
+
+        .post-creator-card:focus-within {
+            border-color: var(--card-hover-border);
+            box-shadow: var(--card-shadow), 0 0 0 4px rgb(var(--c-accent) / 0.08), inset 0 1px 1.5px var(--card-specular);
+        }
+
+        .post-creator-top {
+            display: flex;
+            gap: 14px;
+            align-items: flex-start;
+        }
+
+        .creator-avatar {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid rgb(var(--c-accent) / 0.55);
+            box-shadow: 0 0 0 3px rgb(var(--c-accent) / 0.1);
+            flex-shrink: 0;
+        }
+
+        .post-textarea {
+            width: 100%;
+            border: 1px solid var(--card-border);
+            background: var(--bg-input);
+            border-radius: 18px;
+            padding: 14px 16px;
+            color: var(--text-main);
+            font-size: 0.92rem;
+            outline: none;
+            resize: none;
+            min-height: 88px;
+            line-height: 1.55;
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+            transition: var(--transition-fast);
+        }
+
+        .post-textarea::placeholder { color: var(--text-sub); }
+
+        .post-textarea:focus {
+            border-color: rgb(var(--c-accent) / 0.55);
+            box-shadow: 0 0 0 4px rgb(var(--c-accent) / 0.12);
+        }
+
+        .post-creator-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid var(--card-border);
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .creator-tools-group {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .tool-btn {
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            padding: 7px 13px;
+            border-radius: var(--radius-full);
+            color: var(--text-dim);
+            font-size: 0.78rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            transition: var(--transition-fast);
+        }
+
+        .tool-btn:hover {
+            background: var(--pill-hover);
+            border-color: var(--card-hover-border);
+            color: var(--text-main);
+            transform: translateY(-1px);
+        }
+
+        .attach-close-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(0, 0, 0, 0.55);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .attach-preview-img {
+            width: 100%;
+            max-height: 240px;
+            object-fit: cover;
+            border-radius: 18px;
+            border: 1px solid var(--card-border);
+            display: block;
+        }
+
+        /* ---------- Filtros del feed ---------- */
+        .feed-filter-bar {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding: 2px 2px 14px;
+            margin-bottom: 8px;
+            scrollbar-width: none;
+        }
+
+        .feed-filter-bar::-webkit-scrollbar { display: none; }
+
+        .feed-filter-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            background: var(--card-bg);
+            backdrop-filter: blur(20px) saturate(160%);
+            -webkit-backdrop-filter: blur(20px) saturate(160%);
+            border: 1px solid var(--card-border);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            padding: 8px 15px;
+            border-radius: var(--radius-full);
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-dim);
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: var(--transition-fast);
+        }
+
+        .feed-filter-pill svg { width: 14px; height: 14px; stroke-width: 2; }
+
+        .feed-filter-pill:hover {
+            color: var(--text-main);
+            border-color: var(--card-hover-border);
+            transform: translateY(-1px);
+        }
+
+        .feed-filter-pill.active {
+            background: rgb(var(--c-accent));
+            color: rgb(var(--c-on-accent));
+            border-color: rgb(var(--c-accent));
+            box-shadow: 0 10px 24px -8px rgb(var(--c-accent) / 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.35);
+        }
+
+        /* ---------- Publicaciones ---------- */
+        .feed-stream {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .post-card {
+            position: relative;
+            padding: 24px;
+            animation: postAppear 0.45s var(--ease-out);
+            transition: border-color 0.25s ease, transform 0.3s var(--ease-out);
+        }
+
+        @keyframes postAppear {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .post-card:hover { border-color: var(--card-hover-border); }
+
+        .post-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+
+        .post-author-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .post-author-img {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1px solid var(--badge-border);
+            flex-shrink: 0;
+        }
+
+        .post-author-badge {
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            background: radial-gradient(circle at 30% 25%, rgb(var(--c-glow)), rgb(var(--c-accent)) 50%, rgb(var(--c-accent-deep)));
+            box-shadow: inset -3px -3px 8px rgba(0, 0, 0, 0.4), inset 2px 2px 5px rgba(255, 255, 255, 0.3), 0 8px 18px -6px rgb(var(--c-accent) / 0.55);
+        }
+
+        .post-author-name {
+            font-weight: 800;
+            font-size: 0.95rem;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px 8px;
+            letter-spacing: -0.02em;
+        }
+
+        .post-author-name .badge-status,
+        .post-author-name .stage-pill {
+            padding: 2px 8px;
+            font-size: 0.64rem;
+        }
+
+        .post-time {
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            color: var(--text-dim);
+            margin-top: 3px;
+        }
+
+        .post-more-btn {
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .post-body-text {
+            font-size: 0.93rem;
+            line-height: 1.65;
+            color: var(--text-main);
+            margin-bottom: 16px;
+            white-space: pre-line;
+        }
+
+        .post-media-img {
+            display: block;
+            width: 100%;
+            max-height: 420px;
+            object-fit: cover;
+            border-radius: 20px;
+            margin-bottom: 16px;
+            border: 1px solid var(--card-border);
+            transition: transform 0.4s var(--ease-out);
+        }
+
+        .post-media-img:hover { transform: scale(1.008); }
+
+        .post-tag {
+            color: rgb(var(--c-accent));
+            font-weight: 700;
+            cursor: pointer;
+            border-radius: 6px;
+            padding: 1px 5px;
+            background: rgb(var(--c-accent) / 0.1);
+            transition: background 0.15s ease;
+        }
+
+        html:not(.nx-light) .post-tag { color: rgb(var(--c-glow)); }
+
+        .post-tag:hover { background: rgb(var(--c-accent) / 0.2); }
+
+        .post-stats-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px 14px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--card-border);
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+        }
+
+        /* Contador de reacciones: el corazón es un icono, no un emoji */
+        .like-count {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .like-count::before {
+            content: "";
+            width: 13px;
+            height: 13px;
+            flex-shrink: 0;
+            background: rgb(var(--c-accent));
+            -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z'/%3E%3C/svg%3E") center / contain no-repeat;
+            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z'/%3E%3C/svg%3E") center / contain no-repeat;
+            filter: drop-shadow(0 0 4px rgb(var(--c-accent) / 0.6));
+        }
+
+        .like-count.is-featured { color: rgb(var(--c-glow)); font-weight: 700; }
+        html.nx-light .like-count.is-featured { color: rgb(var(--c-accent)); }
+
+        .post-actions-bar {
+            display: flex;
+            justify-content: space-around;
+            gap: 4px;
+        }
+
+        .post-action-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            padding: 8px 16px;
+            border-radius: var(--radius-full);
+            color: var(--text-dim);
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+            transition: var(--transition-fast);
+        }
+
+        .post-action-btn:hover {
+            background: var(--pill-bg);
+            border-color: var(--badge-border);
+            color: var(--text-main);
+        }
+
+        @keyframes heartPop {
+            0% { transform: scale(1); }
+            35% { transform: scale(1.42); }
+            65% { transform: scale(0.92); }
+            100% { transform: scale(1); }
+        }
+
+        .post-action-btn.liked { color: rgb(var(--c-accent)); }
+        html:not(.nx-light) .post-action-btn.liked { color: rgb(var(--c-glow)); }
+
+        .post-action-btn.liked svg {
+            animation: heartPop 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            fill: currentColor;
+            stroke: currentColor;
+            filter: drop-shadow(0 0 6px rgb(var(--c-accent) / 0.6));
+        }
+
+        /* ---------- Comentarios ---------- */
+        .comments-section {
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid var(--card-border);
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .comments-section.open { display: flex; }
+
+        .comment-item {
+            display: flex;
+            gap: 10px;
+            font-size: 0.84rem;
+        }
+
+        .comment-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1px solid var(--badge-border);
+            flex-shrink: 0;
+        }
+
+        .comment-bubble {
+            background: var(--pill-bg);
+            border: 1px solid var(--card-border);
+            padding: 10px 14px;
+            border-radius: 4px 16px 16px 16px;
+            flex: 1;
+            min-width: 0;
+            line-height: 1.5;
+            color: var(--text-main);
+        }
+
+        .comment-author {
+            font-weight: 700;
+            font-size: 0.82rem;
+            margin-bottom: 2px;
+            color: var(--text-main);
+        }
+
+        .comment-author span { font-family: var(--font-mono); font-size: 0.66rem !important; }
+
+        /* ---------- Tarjetas de autos dentro del feed ----------
+           El póster se inclina y el auto sale por el borde inferior, así que
+           el contenedor necesita aire y NO puede recortar (sin overflow). */
+        .post-card .reveal-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 40px 32px;
+            padding: 40px 16px 60px;
+            margin: 0 0 4px;
+            max-width: none;
+        }
+
+        .post-card .reveal-card { max-width: 240px; }
+
+        /* La tarjeta activa pasa por encima de su vecina */
+        .post-card .reveal-card:hover,
+        .post-card .reveal-card:focus-visible,
+        .post-card .reveal-card.is-active { z-index: 5; }
+
+        .post-card:has(.reveal-card) { z-index: 1; }
+
+        /* ---------- Encuesta ---------- */
+        .poll-container {
+            background: var(--pill-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 16px;
+            margin: 16px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+        }
+
+        .poll-option-row {
+            position: relative;
+            background: var(--bg-input);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: var(--transition-fast);
+            padding: 12px 16px;
+        }
+
+        .poll-option-row:hover {
+            border-color: var(--card-hover-border);
+            transform: translateX(3px);
+        }
+
+        .poll-bar-fill {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            background: linear-gradient(90deg, rgb(var(--c-accent) / 0.28), rgb(var(--c-accent) / 0.1));
+            border-right: 1px solid rgb(var(--c-accent) / 0.45);
+            transition: width 0.6s var(--ease-out);
+            z-index: 1;
+        }
+
+        .poll-option-content {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            font-weight: 600;
+            gap: 12px;
+        }
+
+        .poll-percentage {
+            font-family: var(--font-mono);
+            font-size: 0.74rem;
+            font-weight: 700;
+            color: rgb(var(--c-glow));
+            white-space: nowrap;
+        }
+
+        html.nx-light .poll-percentage { color: rgb(var(--c-accent)); }
+
+        .poll-footer {
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            color: var(--text-dim);
+            margin-top: 6px;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        /* ---------- Columna izquierda: perfil ---------- */
+        .profile-mini-card {
+            overflow: hidden;
+            text-align: center;
+        }
+
+        .profile-cover {
+            position: relative;
+            height: 92px;
+            background:
+                radial-gradient(60% 120% at 20% 0%, rgb(var(--c-glow) / 0.85), transparent 60%),
+                radial-gradient(70% 140% at 90% 20%, rgb(var(--c-accent)), transparent 65%),
+                linear-gradient(135deg, rgb(var(--c-accent-deep)), rgb(var(--c-body)));
+        }
+
+        .profile-cover::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to bottom, transparent 40%, rgb(0 0 0 / 0.25));
+        }
+
+        .profile-info-body {
+            position: relative;
+            padding: 0 20px 22px;
+            margin-top: -40px;
+        }
+
+        .profile-main-avatar {
+            width: 78px;
+            height: 78px;
+            border-radius: 50%;
+            border: 3.5px solid var(--card-solid);
+            object-fit: cover;
+            margin: 0 auto 12px;
+            display: block;
+            box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.55), 0 0 0 1px rgb(var(--c-accent) / 0.4);
+        }
+
+        .profile-name {
+            font-size: 1.08rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+        }
+
+        .profile-role {
+            font-size: 0.78rem;
+            color: var(--text-dim);
+            margin-top: 3px;
+        }
+
+        .profile-stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            border-top: 1px solid var(--card-border);
+            border-bottom: 1px solid var(--card-border);
+            padding: 14px 0;
+            margin: 16px 0;
+        }
+
+        .profile-stats-grid strong {
+            font-family: var(--font-mono);
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: var(--text-main);
+            letter-spacing: -0.02em;
+        }
+
+        .profile-stats-grid small {
+            display: block;
+            font-family: var(--font-mono);
+            font-size: 0.6rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+            margin-top: 3px;
+        }
+
+        .groups-card { padding: 20px; }
+
+        .groups-card .nx-eyebrow { margin-bottom: 12px; }
+
+        .group-links {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .group-link {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            font-size: 0.84rem;
+            font-weight: 600;
+            padding: 8px 10px;
+            border-radius: 14px;
+            color: var(--text-main);
+            border: 1px solid transparent;
+            transition: var(--transition-fast);
+        }
+
+        .group-link:hover {
+            background: var(--pill-bg);
+            border-color: var(--badge-border);
+        }
+
+        .group-icon {
+            width: 30px;
+            height: 30px;
+            border-radius: 10px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgb(var(--c-accent) / 0.12);
+            border: 1px solid rgb(var(--c-accent) / 0.25);
+            color: rgb(var(--c-glow));
+        }
+
+        html.nx-light .group-icon { color: rgb(var(--c-accent)); }
+
+        .group-icon svg { width: 15px; height: 15px; stroke-width: 2; }
+
+        /* ---------- Columna derecha ---------- */
+        .trends-card { padding: 20px 22px; }
+
+        .trends-card-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .trend-item {
+            padding: 11px 0;
+            border-bottom: 1px solid var(--card-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            transition: var(--transition-fast);
+        }
+
+        .trend-item:last-child { border-bottom: none; }
+
+        .trend-item:hover { transform: translateX(3px); }
+        .trend-item:hover .trend-tag { color: rgb(var(--c-accent)); }
+        html:not(.nx-light) .trend-item:hover .trend-tag { color: rgb(var(--c-glow)); }
+
+        .trend-tag {
+            font-weight: 800;
+            font-size: 0.88rem;
+            letter-spacing: -0.02em;
+            transition: color 0.15s ease;
+        }
+
+        .trend-meta {
+            font-family: var(--font-mono);
+            font-size: 0.66rem;
+            color: var(--text-dim);
+            margin-top: 2px;
+        }
+
+        .trend-signal {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            white-space: nowrap;
+        }
+
+        .trend-signal.up { color: var(--success); }
+        .trend-signal.hot { color: rgb(var(--c-glow)); }
+        html.nx-light .trend-signal.hot { color: rgb(var(--c-accent)); }
+
+        .suggest-user-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 11px 0;
+            border-bottom: 1px solid var(--card-border);
+            gap: 12px;
+        }
+
+        .suggest-user-row:last-child { border-bottom: none; }
+
+        .suggest-avatar {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1px solid var(--badge-border);
+            flex-shrink: 0;
+        }
+
+        .suggest-name { font-size: 0.84rem; font-weight: 700; }
+        .suggest-role { font-size: 0.72rem; color: var(--text-dim); }
+
+        .suggest-user-row .btn-modern {
+            padding: 6px 12px;
+            font-size: 0.72rem;
+        }
+
+        /* ---------- Modales de la página ----------
+           nexora.css cubre .apple-modal-card/header/body/footer; estas son
+           las piezas propias de esta página que no tienen estilo compartido. */
+        .apple-modal-title {
+            font-size: 1.2rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            color: var(--text-main);
+        }
+
+        .apple-modal-subtitle {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-top: 4px;
+            line-height: 1.5;
+        }
+
+        .apple-close-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            color: var(--text-dim);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            align-self: flex-start;
+            transition: var(--transition-fast);
+        }
+
+        .apple-close-btn:hover {
+            color: var(--text-main);
+            border-color: var(--card-hover-border);
+            transform: rotate(90deg);
+        }
+
+        .modal-comment-composer {
+            display: flex;
+            gap: 10px;
+            margin-top: 18px;
+            padding-top: 14px;
+            border-top: 1px solid var(--card-border);
+        }
+
+        .modal-comment-composer .form-input { border-radius: var(--radius-full); padding: 10px 16px; font-size: 0.86rem; }
+
+        /* Hoja de compartir */
+        .apple-action-sheet {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            transform: translateY(16px) scale(0.97);
+            transition: transform 0.35s var(--ease-out);
+        }
+
+        .apple-modal-overlay.active .apple-action-sheet { transform: none; }
+
+        .apple-action-group,
+        .apple-action-cancel {
+            background: var(--card-bg);
+            backdrop-filter: blur(32px) saturate(180%);
+            -webkit-backdrop-filter: blur(32px) saturate(180%);
+            border: 1px solid var(--nav-border);
+            border-radius: 22px;
+            box-shadow: 0 30px 70px -18px rgba(0, 0, 0, 0.7), inset 0 1px 1.5px var(--card-specular);
+            overflow: hidden;
+        }
+
+        html.nx-light .apple-action-group,
+        html.nx-light .apple-action-cancel {
+            background: var(--card-solid);
+            box-shadow: 0 30px 60px -18px rgba(28, 35, 60, 0.25), inset 0 1px 2px #fff;
+        }
+
+        .share-sheet-head {
+            padding: 18px 20px 14px;
+            text-align: center;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .share-sheet-head p {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-top: 5px;
+        }
+
+        .apple-action-btn {
+            width: 100%;
+            padding: 15px 20px;
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid var(--card-border);
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-main);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-align: left;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        .apple-action-btn:last-child { border-bottom: none; }
+
+        .apple-action-btn svg {
+            width: 17px;
+            height: 17px;
+            stroke-width: 2;
+            color: rgb(var(--c-accent));
+        }
+
+        .apple-action-btn:hover { background: var(--pill-bg); }
+
+        .apple-action-cancel {
+            width: 100%;
+            padding: 15px;
+            font-size: 0.92rem;
+            font-weight: 800;
+            color: var(--text-main);
+            cursor: pointer;
+            transition: border-color 0.2s ease;
+        }
+
+        .apple-action-cancel:hover { border-color: var(--card-hover-border); }
+
+        /* Alerta de confirmación */
+        .social-alert-card {
+            padding: 30px 26px 24px;
+            text-align: center;
+        }
+
+        .social-alert-icon {
+            width: 54px;
+            height: 54px;
+            border-radius: 50%;
+            margin: 0 auto 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--danger-light);
+            border: 1px solid var(--danger-border);
+            color: var(--danger);
+            box-shadow: 0 0 24px -4px var(--danger-border);
+        }
+
+        .social-alert-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 22px;
+        }
+
+        .social-alert-actions .btn-modern { flex: 1; }
+
+        .btn-danger-solid {
+            background: var(--danger);
+            color: #fff;
+            box-shadow: 0 10px 26px -8px rgba(255, 77, 94, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+        }
+
+        .btn-danger-solid:hover { transform: translateY(-2px); filter: brightness(1.08); }
+
+        /* ---------- Visor de historias (siempre oscuro: es una foto) ---------- */
+        .apple-story-card {
+            max-width: 420px;
+            width: 100%;
+            height: min(640px, calc(100vh - 40px));
+            background: #000;
+            border-radius: 30px;
+            overflow: hidden;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 40px 90px -20px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.12), inset 0 1px 1.5px rgba(255, 255, 255, 0.2);
+        }
+
+        .story-progress-bar-apple {
+            position: absolute;
+            top: 12px;
+            left: 14px;
+            right: 14px;
+            height: 3px;
+            background: rgba(255, 255, 255, 0.28);
+            border-radius: 3px;
+            overflow: hidden;
+            z-index: 20;
+        }
+
+        .story-progress-fill-apple {
+            height: 100%;
+            background: linear-gradient(90deg, rgb(var(--c-glow)), #fff);
+            box-shadow: 0 0 10px rgb(var(--c-glow) / 0.8);
+            width: 0%;
+            transition: width 0.1s linear;
+        }
+
+        .story-top-author-bar {
+            position: absolute;
+            top: 24px;
+            left: 14px;
+            right: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 20;
+            padding: 8px 10px 8px 12px;
+            background: rgba(0, 0, 0, 0.45);
+            backdrop-filter: blur(14px) saturate(160%);
+            -webkit-backdrop-filter: blur(14px) saturate(160%);
+            border-radius: var(--radius-full);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15);
+        }
+
+        .story-author-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1.5px solid rgb(var(--c-accent));
+        }
+
+        .story-author-meta {
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .story-close-btn {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.14);
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s ease, background 0.2s ease;
+        }
+
+        .story-close-btn:hover { transform: rotate(90deg); background: rgba(255, 255, 255, 0.24); }
+
+        .story-bottom-reply-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 30px 14px 20px;
+            background: linear-gradient(0deg, rgba(0, 0, 0, 0.9) 0%, transparent 100%);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 20;
+        }
+
+        .story-reply-input {
+            flex: 1;
+            min-width: 0;
+            background: rgba(255, 255, 255, 0.14);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.24);
+            color: #fff;
+            font-size: 0.82rem;
+            padding: 10px 15px;
+            border-radius: var(--radius-full);
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+
+        .story-reply-input::placeholder { color: rgba(255, 255, 255, 0.6); }
+        .story-reply-input:focus { border-color: rgb(var(--c-glow) / 0.8); }
+
+        .quick-emoji-btn-apple {
+            background: rgba(255, 255, 255, 0.16);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.26);
+            border-radius: 50%;
+            width: 38px;
+            height: 38px;
+            flex-shrink: 0;
+            font-size: 1.05rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s var(--ease-out), background 0.2s ease;
+        }
+
+        .quick-emoji-btn-apple:hover {
+            transform: scale(1.18);
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* ---------- Responsive ---------- */
+        @media (max-width: 1120px) {
+            .social-layout { grid-template-columns: 240px minmax(0, 1fr); }
+            .social-layout > .social-right-col { display: none; }
+        }
+
+        @media (max-width: 780px) {
+            .social-layout { grid-template-columns: minmax(0, 1fr); }
+            .social-layout > .social-left-col { display: none; }
+            .social-page-wrap { padding: 24px 12px 70px; }
+        }
+
+        @media (max-width: 560px) {
+            .post-card { padding: 18px 16px; }
+            .post-card .reveal-grid {
+                grid-template-columns: minmax(0, 1fr);
+                max-width: 260px;
+                margin-inline: auto;
+                gap: 72px;
+                padding: 36px 0 60px;
+            }
+            .post-card .reveal-card { max-width: 240px; }
+            .post-header .badge-status.post-header-flag { display: none; }
+            .post-action-btn { padding: 8px 10px; font-size: 0.78rem; gap: 6px; }
+            .post-creator-card { padding: 16px; }
+            .creator-avatar { display: none; }
+            .social-header-actions { width: 100%; }
+            .social-header-actions .btn-modern { flex: 1; }
+            .modal-comment-composer { flex-direction: column; }
+        }
+
+        @media (max-width: 420px) {
+            .post-actions-bar { justify-content: space-between; flex-wrap: wrap; }
+            .post-action-btn { padding: 8px 7px; font-size: 0.74rem; gap: 5px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Navbar: isla de vidrio -->
+    <header class="nexora-navbar">
+        <div class="brand-wrapper">
+            <a href="index.html" aria-label="JFast Suite, inicio">
+                <div class="brand-info">
+                    <h1>JFast <span>Suite</span></h1>
+                </div>
+            </a>
+        </div>
+
+        <nav class="nav-links-menu" id="navLinksMenu" aria-label="Módulos">
+            <a href="index.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+                <span>Inicio</span>
+            </a>
+            <a href="crm.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M9 3v18M15 9l3 3-3 3"/></svg>
+                <span>CRM</span>
+            </a>
+            <a href="social.html" class="nav-pill-link active" aria-current="page">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                <span>Red Social</span>
+            </a>
+            <a href="pagos.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="20" height="14" x="2" y="5" rx="3"/><path d="M2 10h20"/></svg>
+                <span>Pagos</span>
+            </a>
+            <a href="widgets.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="7" height="7" x="3" y="3" rx="2"/><rect width="7" height="7" x="14" y="3" rx="2"/><rect width="7" height="7" x="14" y="14" rx="2"/><rect width="7" height="7" x="3" y="14" rx="2"/></svg>
+                <span>Widgets</span>
+            </a>
+            <a href="tablas.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+                <span>Tablas ERP</span>
+            </a>
+        </nav>
+
+        <div class="navbar-actions">
+            <span class="nx-pill nx-hide-sm" style="font-size:0.72rem;"><span class="nx-live-dot"></span>Red en línea</span>
+            <button type="button" class="nx-round-btn" data-open-palette aria-label="Personalizar paleta" title="Personalizar paleta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;color:rgb(var(--c-accent));"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+            </button>
+            <button type="button" class="nx-round-btn theme-toggle-btn" onclick="toggleTheme()" aria-label="Cambiar tema"></button>
+        </div>
+    </header>
+
+    <div class="social-page-wrap">
+
+        <!-- Encabezado editorial -->
+        <div class="social-editorial-header">
+            <div>
+                <span class="nx-eyebrow"><span class="nx-live-dot"></span>Comunidad &bull; 1,420 colegas en línea</span>
+                <h2 class="social-editorial-title">Red social corporativa. <span>Todo el equipo, un solo feed.</span></h2>
+                <p class="social-editorial-subtitle">Conecta con los equipos operativos, colabora en tiempo real y comparte avances estratégicos.</p>
+            </div>
+            <div class="social-header-actions">
+                <button class="btn-modern btn-outline" onclick="openAppleModal('modalAppleShareSheet')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+                    <span>Compartir Red</span>
+                </button>
+                <button class="btn-modern btn-primary" onclick="document.getElementById('postTextInput').focus()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg>
+                    <span>Nueva publicación</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="social-layout">
+
+            <!-- Columna izquierda: perfil y grupos -->
+            <div class="social-left-col social-side-col">
+                <div class="profile-mini-card">
+                    <div class="profile-cover"></div>
+                    <div class="profile-info-body">
+                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=160&h=160&q=80" alt="Elena" class="profile-main-avatar">
+                        <h3 class="profile-name">Elena Valenzuela</h3>
+                        <p class="profile-role">Directora General &amp; Tech Lead</p>
+
+                        <div class="profile-stats-grid">
+                            <div>
+                                <strong>1,420</strong>
+                                <small>Colegas</small>
+                            </div>
+                            <div>
+                                <strong>86</strong>
+                                <small>Publicaciones</small>
+                            </div>
+                        </div>
+
+                        <button class="btn-modern btn-outline" style="width: 100%; font-size: 0.8rem;" onclick="showToast('Perfil', 'Abriendo perfil público verificado de Elena.', 'info')">
+                            Ver mi perfil social
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Grupos -->
+                <div class="card-panel groups-card">
+                    <h4 class="nx-eyebrow">Grupos corporativos</h4>
+                    <div class="group-links">
+                        <a href="javascript:void(0)" class="group-link" onclick="filterFeedByTag('#Innovacion')">
+                            <span class="group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg></span>Innovación &amp; IA 2026
+                        </a>
+                        <a href="javascript:void(0)" class="group-link" onclick="filterFeedByTag('#Ventas')">
+                            <span class="group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span>Club de Ventas B2B
+                        </a>
+                        <a href="javascript:void(0)" class="group-link" onclick="filterFeedByTag('#DevOps')">
+                            <span class="group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>Infraestructura &amp; Cloud
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Columna central: historias, compositor y feed -->
+            <div class="social-feed-col">
+                <!-- Historias -->
+                <div class="stories-container">
+                    <!-- Your Story -->
+                    <div class="story-item" onclick="openStoryModal('Tu Historia (Elena)', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80')">
+                        <div class="story-ring">
+                            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&h=120&q=80" class="story-avatar" alt="Tu Historia">
+                        </div>
+                        <span class="story-name">+ Tu Historia</span>
+                    </div>
+
+                    <!-- Story 1 -->
+                    <div class="story-item" onclick="openStoryModal('Carlos Mendoza (Logística)', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=600&q=80')">
+                        <div class="story-ring">
+                            <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=120&h=120&q=80" class="story-avatar" alt="Carlos">
+                        </div>
+                        <span class="story-name">Carlos M.</span>
+                    </div>
+
+                    <!-- Story 2 -->
+                    <div class="story-item" onclick="openStoryModal('Sofía Arismendi (Finanzas)', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=600&q=80')">
+                        <div class="story-ring">
+                            <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=120&h=120&q=80" class="story-avatar" alt="Sofía">
+                        </div>
+                        <span class="story-name">Sofía A.</span>
+                    </div>
+
+                    <!-- Story 3 -->
+                    <div class="story-item" onclick="openStoryModal('Mateo V. (Ciberseguridad)', 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=600&q=80')">
+                        <div class="story-ring">
+                            <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=120&h=120&q=80" class="story-avatar" alt="Mateo">
+                        </div>
+                        <span class="story-name">Mateo V.</span>
+                    </div>
+
+                    <!-- Story 4 -->
+                    <div class="story-item" onclick="openStoryModal('Bodega Central CDMX', 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=600&q=80')">
+                        <div class="story-ring watched">
+                            <img src="https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=120&h=120&q=80" class="story-avatar" alt="Almacén">
+                        </div>
+                        <span class="story-name">Bodega CDMX</span>
+                    </div>
+                </div>
+
+                <!-- Compositor -->
+                <div class="post-creator-card">
+                    <div class="post-creator-top">
+                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&h=100&q=80" class="creator-avatar" alt="Elena">
+                        <textarea id="postTextInput" class="post-textarea" placeholder="¿Qué avance o novedad quieres compartir con el equipo hoy?..."></textarea>
+                    </div>
+
+                    <div class="post-creator-bottom">
+                        <div class="creator-tools-group">
+                            <button type="button" class="tool-btn" onclick="toggleImageAttach()">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="color:var(--success); stroke-width: 2;"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                                <span>Foto</span>
+                            </button>
+                            <button type="button" class="tool-btn" onclick="insertTag('#Innovacion2026')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;color:rgb(var(--c-accent));" aria-hidden="true"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg>
+                                <span>Hashtag</span>
+                            </button>
+                            <button type="button" class="tool-btn" onclick="showToast('Encuesta', 'Creación de encuestas habilitada en el feed.', 'info')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="color:var(--warning); stroke-width: 2;"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
+                                <span>Encuesta</span>
+                            </button>
+                        </div>
+
+                        <button type="button" class="btn-modern btn-primary" onclick="publishNewPost()" style="padding: 9px 22px; font-size: 0.84rem;">
+                            Publicar
+                        </button>
+                    </div>
+
+                    <div id="imageAttachPreview" style="display: none; margin-top: 14px; position: relative;">
+                        <img src="https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=800&q=80" class="attach-preview-img" alt="Imagen adjunta">
+                        <button type="button" class="attach-close-btn" onclick="toggleImageAttach()" aria-label="Quitar imagen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+                    </div>
+                </div>
+
+                <!-- Filtros del feed -->
+                <div class="feed-filter-bar">
+                    <button class="feed-filter-pill active" onclick="filterFeedCategory('all', this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span>Todos</span></button>
+                    <button class="feed-filter-pill" onclick="filterFeedCategory('media', this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg><span>Multimedia</span></button>
+                    <button class="feed-filter-pill" onclick="filterFeedCategory('logistica', this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;" aria-hidden="true"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg><span>Logística &amp; Operaciones</span></button>
+                    <button class="feed-filter-pill" onclick="filterFeedCategory('finanzas', this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;" aria-hidden="true"><rect width="20" height="14" x="2" y="7" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg><span>Finanzas &amp; Ventas</span></button>
+                    <button class="feed-filter-pill" onclick="filterFeedCategory('tech', this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;" aria-hidden="true"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/></svg><span>Tecnología &amp; Seguridad</span></button>
+                </div>
+
+                <!-- Feed Stream -->
+                <div class="feed-stream" id="feedStreamContainer">
+
+                    <!-- Post Destacado: Club Automotriz con 3D Pop-Out Cards de Carros -->
+                    <article class="post-card" id="post-hypercars" data-category="media tech">
+                        <div class="post-header">
+                            <div class="post-author-wrap">
+                                <div class="post-author-badge">
+                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.5 2.8C2.1 10.9 2 11.2 2 11.5V16c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>
+                                </div>
+                                <div>
+                                    <div class="post-author-name">
+                                        Club Ejecutivo Automotriz
+                                        <span class="badge-status status-processing">Flota Premium 2026</span>
+                                    </div>
+                                    <div class="post-time">Hace 5 min &bull; Beneficios de Alta Dirección</div>
+                                </div>
+                            </div>
+                            <span class="badge-status post-header-flag nx-mono" style="font-size: 0.62rem; letter-spacing: 0.08em;">3D &bull; HOVER</span>
+                        </div>
+
+                        <div class="post-body-text" style="margin-bottom: 0;">✨ <strong>Nueva flota de alta dirección.</strong> Pasa el cursor (o toca) cada póster: se inclina hacia atrás y el auto sale del marco.</div>
+
+                        <!-- Tarjetas 3D: el auto sale del póster (estilos en nexora.css) -->
+                        <div class="reveal-grid">
+                            <article class="reveal-card" tabindex="0">
+                                <div class="reveal-card-poster">
+                                    <img class="reveal-card-bg" src="assets/img/track_bg.webp" alt="">
+                                    <img class="reveal-card-car" src="assets/img/porsche_gt3_cutout.webp" alt="Porsche 911 GT3 RS">
+                                    <span class="reveal-card-meta">TRACK EDITION &bull; 01</span>
+                                    <div class="reveal-card-info">
+                                        <h4 class="reveal-card-title">Porsche 911 GT3 RS</h4>
+                                        <p class="reveal-card-sub">518 HP &bull; 4.0L Boxer</p>
+                                    </div>
+                                </div>
+                                <img class="reveal-card-popout" src="assets/img/porsche_gt3_cutout.webp" alt="" aria-hidden="true">
+                                <div class="reveal-card-caption"><strong>Porsche 911 GT3 RS</strong><span>Track edition</span></div>
+                            </article>
+                            <article class="reveal-card" tabindex="0">
+                                <div class="reveal-card-poster">
+                                    <img class="reveal-card-bg" src="assets/img/cyber_bg.webp" alt="">
+                                    <img class="reveal-card-car" src="assets/img/cyber_hypercar_cutout.webp" alt="Cyber Vision GT">
+                                    <span class="reveal-card-meta">NEO TOKIO &bull; 02</span>
+                                    <div class="reveal-card-info">
+                                        <h4 class="reveal-card-title">Cyber Vision GT</h4>
+                                        <p class="reveal-card-sub">1,200 HP &bull; AWD eléctrico</p>
+                                    </div>
+                                </div>
+                                <img class="reveal-card-popout" src="assets/img/cyber_hypercar_cutout.webp" alt="" aria-hidden="true">
+                                <div class="reveal-card-caption"><strong>Cyber Vision GT</strong><span>Hypercar eléctrico</span></div>
+                            </article>
+                        </div>
+
+                        <div class="post-stats-row">
+                            <span id="like-count-hypercars" class="like-count is-featured">142 reacciones</span>
+                            <span>28 comentarios • 19 compartidos</span>
+                        </div>
+
+                        <div class="post-actions-bar">
+                            <button class="post-action-btn" onclick="toggleLike(this, 'like-count-hypercars', 142)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+                                <span>Me gusta</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openApplePostComments('Club Ejecutivo Automotriz', 'Nueva flota de alta dirección: pósters 3D con el auto saliendo del marco.', 'post-hypercars')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                <span>Comentarios (28)</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openAppleModal('modalAppleShareSheet')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+                                <span>Compartir</span>
+                            </button>
+                        </div>
+                    </article>
+
+                    <!-- Post 1: Logística con Imagen -->
+                    <article class="post-card" id="post-1" data-category="logistica media">
+                        <div class="post-header">
+                            <div class="post-author-wrap">
+                                <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80" class="post-author-img" alt="Carlos">
+                                <div>
+                                    <div class="post-author-name">
+                                        Carlos Mendoza
+                                        <span class="badge-status status-completed" style="padding: 2px 7px; font-size: 0.65rem;">Jefe Logística</span>
+                                    </div>
+                                    <div class="post-time">Hace 25 minutos • Público corporativo</div>
+                                </div>
+                            </div>
+                            <button class="btn-modern btn-ghost post-more-btn" onclick="openAppleModal('modalAppleShareSheet')" aria-label="Más opciones"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
+                        </div>
+
+                        <div class="post-body-text">¡Gran noticia para todo el equipo de operaciones! 🚛📦 Acabamos de concluir la recepción de los 3 nuevos servidores Dell PowerEdge R740 en la bodega central CDMX para la entrega con <a href="crm.html" class="post-tag">@Logística Austral</a>.
+
+Todo listo y sincronizado en nuestro módulo de Tablas ERP. <span class="post-tag">#Logística2026</span> <span class="post-tag">#Infraestructura</span></div>
+
+                        <img src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=900&q=80" class="post-media-img" alt="Servidores">
+
+                        <div class="post-stats-row">
+                            <span id="like-count-1" class="like-count">24 reacciones</span>
+                            <span>3 comentarios • 5 compartidos</span>
+                        </div>
+
+                        <div class="post-actions-bar">
+                            <button class="post-action-btn" onclick="toggleLike(this, 'like-count-1', 24)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                                <span>Me gusta</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openApplePostComments('Carlos Mendoza', 'Acabamos de concluir la recepción de los 3 nuevos servidores Dell PowerEdge R740 en la bodega central...', 'post-1')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                <span>Comentarios (3)</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openAppleModal('modalAppleShareSheet')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+                                <span>Compartir</span>
+                            </button>
+                        </div>
+
+                        <!-- Inline comments -->
+                        <div class="comments-section" id="comments-1">
+                            <div class="comment-item">
+                                <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=80" class="comment-avatar" alt="Sofía">
+                                <div class="comment-bubble">
+                                    <div class="comment-author">Sofía Arismendi</div>
+                                    <div>Excelente coordinación Carlos, la factura ya quedó aprobada en el módulo de Cobros.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </article>
+
+                    <!-- Post 2: Finanzas -->
+                    <article class="post-card" id="post-2" data-category="finanzas">
+                        <div class="post-header">
+                            <div class="post-author-wrap">
+                                <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=80" class="post-author-img" alt="Sofía">
+                                <div>
+                                    <div class="post-author-name">
+                                        Sofía Arismendi
+                                        <span class="badge-status status-processing" style="padding: 2px 7px; font-size: 0.65rem;">Finanzas</span>
+                                    </div>
+                                    <div class="post-time">Hace 1 hora • Comunidad Finanzas</div>
+                                </div>
+                            </div>
+                            <button class="btn-modern btn-ghost post-more-btn" onclick="openAppleModal('modalAppleShareSheet')" aria-label="Más opciones"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
+                        </div>
+
+                        <div class="post-body-text">Acabamos de registrar el cierre comercial del mes en el CRM: ¡Superamos la meta trimestral en un +14.2%! 📊🚀 
+Gracias a todo el equipo de ventas por la dedicación y a los clientes por su confianza continua. <span class="post-tag">#VentasRecord</span> <span class="post-tag">#JFastTeam</span></div>
+
+                        <div class="post-stats-row">
+                            <span id="like-count-2" class="like-count">41 reacciones</span>
+                            <span>8 comentarios • 12 compartidos</span>
+                        </div>
+
+                        <div class="post-actions-bar">
+                            <button class="post-action-btn" onclick="toggleLike(this, 'like-count-2', 41)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                                <span>Me gusta</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openApplePostComments('Sofía Arismendi', 'Acabamos de registrar el cierre comercial del mes en el CRM: ¡Superamos la meta...', 'post-2')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                <span>Comentarios (8)</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openAppleModal('modalAppleShareSheet')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+                                <span>Compartir</span>
+                            </button>
+                        </div>
+                    </article>
+
+                    <!-- Post 3: Encuesta Interactiva -->
+                    <article class="post-card" id="post-3" data-category="tech">
+                        <div class="post-header">
+                            <div class="post-author-wrap">
+                                <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=100&h=100&q=80" class="post-author-img" alt="Valeria">
+                                <div>
+                                    <div class="post-author-name">
+                                        Valeria Treviño
+                                        <span class="badge-status status-completed" style="padding: 2px 7px; font-size: 0.65rem;">Estrategia & Growth</span>
+                                    </div>
+                                    <div class="post-time">Hace 3 horas • Votación abierta a todos los departamentos</div>
+                                </div>
+                            </div>
+                            <span class="badge-status status-processing post-header-flag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;" aria-hidden="true"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>Encuesta activa</span>
+                        </div>
+
+                        <div class="post-body-text">Equipo, estamos priorizando el roadmap técnico del próximo trimestre y queremos escuchar a todas las áreas operativas. ¿Cuál consideran que debe ser nuestra prioridad clave? 🗳️✨</div>
+
+                        <!-- Interactive Poll Box -->
+                        <div class="poll-container" id="pollBox">
+                            <div class="poll-option-row" onclick="castPollVote(0)">
+                                <div class="poll-bar-fill" id="pollBar0" style="width: 52%;"></div>
+                                <div class="poll-option-content">
+                                    <span class="poll-label">🤖 Integración de IA Generativa en CRM y Embudo Kanban</span>
+                                    <span class="poll-percentage" id="pollPct0">52% (84 votos)</span>
+                                </div>
+                            </div>
+                            <div class="poll-option-row" onclick="castPollVote(1)">
+                                <div class="poll-bar-fill" id="pollBar1" style="width: 31%;"></div>
+                                <div class="poll-option-content">
+                                    <span class="poll-label">💳 Automatización instantánea de dispersiones SPEI</span>
+                                    <span class="poll-percentage" id="pollPct1">31% (50 votos)</span>
+                                </div>
+                            </div>
+                            <div class="poll-option-row" onclick="castPollVote(2)">
+                                <div class="poll-bar-fill" id="pollBar2" style="width: 17%;"></div>
+                                <div class="poll-option-content">
+                                    <span class="poll-label">📱 App móvil offline para inspectores y almacén</span>
+                                    <span class="poll-percentage" id="pollPct2">17% (27 votos)</span>
+                                </div>
+                            </div>
+                            <div class="poll-footer">
+                                <span id="pollTotalVotes">Total: 161 votos emitidos</span>
+                                <span>Cierra en 48 horas</span>
+                            </div>
+                        </div>
+
+                        <div class="post-stats-row">
+                            <span id="like-count-3" class="like-count">58 reacciones</span>
+                            <span>19 comentarios • 14 compartidos</span>
+                        </div>
+
+                        <div class="post-actions-bar">
+                            <button class="post-action-btn" onclick="toggleLike(this, 'like-count-3', 58)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                                <span>Me gusta</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openApplePostComments('Valeria Treviño', 'Equipo, estamos priorizando el roadmap técnico del próximo trimestre...', 'post-3')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                <span>Comentarios (19)</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openAppleModal('modalAppleShareSheet')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+                                <span>Compartir</span>
+                            </button>
+                        </div>
+                    </article>
+
+                    <!-- Post 4: Ciberseguridad -->
+                    <article class="post-card" id="post-4" data-category="tech">
+                        <div class="post-header">
+                            <div class="post-author-wrap">
+                                <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&h=100&q=80" class="post-author-img" alt="Mateo">
+                                <div>
+                                    <div class="post-author-name">
+                                        Mateo Villanueva
+                                        <span class="badge-status status-completed" style="padding: 2px 7px; font-size: 0.65rem;">Ciberseguridad Lead</span>
+                                    </div>
+                                    <div class="post-time">Hace 5 horas • Infraestructura & Seguridad</div>
+                                </div>
+                            </div>
+                            <button class="btn-modern btn-ghost post-more-btn" onclick="confirmArchivePost('post-4')" aria-label="Archivar publicación">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            </button>
+                        </div>
+
+                        <div class="post-body-text">🛡️ Auditoría trimestral PCI-DSS superada con 0 vulnerabilidades críticas. Se han reforzado los tokens de cifrado AES-256 en la Pasarela de Pagos y la protección biométrica de la suite corporativa. <span class="post-tag">#SecurityFirst</span> <span class="post-tag">#CloudSecurity</span></div>
+
+                        <div class="post-stats-row">
+                            <span id="like-count-4" class="like-count">37 reacciones</span>
+                            <span>4 comentarios • 9 compartidos</span>
+                        </div>
+
+                        <div class="post-actions-bar">
+                            <button class="post-action-btn" onclick="toggleLike(this, 'like-count-4', 37)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                                <span>Me gusta</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openApplePostComments('Mateo Villanueva', 'Auditoría trimestral PCI-DSS superada con 0 vulnerabilidades críticas...', 'post-4')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                <span>Comentarios (4)</span>
+                            </button>
+                            <button class="post-action-btn" onclick="openAppleModal('modalAppleShareSheet')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+                                <span>Compartir</span>
+                            </button>
+                        </div>
+                    </article>
+
+                </div>
+            </div>
+
+            <!-- Columna derecha: tendencias y sugerencias -->
+            <div class="social-right-col social-side-col">
+                <!-- Trending Topics -->
+                <div class="trends-card">
+                    <div class="trends-card-head">
+                        <h4 class="nx-eyebrow">Tendencias en JFast</h4>
+                        <span class="badge-status status-completed" style="font-size: 0.62rem;"><span class="status-dot"></span>En vivo</span>
+                    </div>
+
+                    <div class="trend-item" onclick="insertTag('#CierreFiscal2026')">
+                        <div>
+                            <div class="trend-tag">#CierreFiscal2026</div>
+                            <div class="trend-meta">184 publicaciones</div>
+                        </div>
+                        <span class="trend-signal up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>Trending</span>
+                    </div>
+
+                    <div class="trend-item" onclick="insertTag('#InnovacionCloud')">
+                        <div>
+                            <div class="trend-tag">#InnovacionCloud</div>
+                            <div class="trend-meta">92 publicaciones</div>
+                        </div>
+                        <span class="trend-signal hot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>Popular</span>
+                    </div>
+
+                    <div class="trend-item" onclick="insertTag('#SeguridadBancaria')">
+                        <div>
+                            <div class="trend-tag">#SeguridadBancaria</div>
+                            <div class="trend-meta">67 publicaciones</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Suggested Colleagues -->
+                <div class="trends-card">
+                    <h4 class="nx-eyebrow" style="margin-bottom: 6px;">Compañeros sugeridos</h4>
+
+                    <div class="suggest-user-row">
+                        <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&h=100&q=80" class="suggest-avatar" alt="Mateo">
+                        <div style="flex:1; min-width:0;">
+                            <div class="suggest-name">Mateo Villanueva</div>
+                            <div class="suggest-role">Ciberseguridad</div>
+                        </div>
+                        <button class="btn-modern btn-outline" onclick="toggleFollow(this)">+ Conectar</button>
+                    </div>
+
+                    <div class="suggest-user-row">
+                        <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=100&h=100&q=80" class="suggest-avatar" alt="Valeria">
+                        <div style="flex:1; min-width:0;">
+                            <div class="suggest-name">Valeria Treviño</div>
+                            <div class="suggest-role">Marketing B2B</div>
+                        </div>
+                        <button class="btn-modern btn-outline" onclick="toggleFollow(this)">+ Conectar</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ==================================================== -->
+    <!-- Modales de la red social                             -->
+    <!-- ==================================================== -->
+
+    <!-- 1. Visor de historias -->
+    <div id="modalAppleStory" class="apple-modal-overlay" style="display: none;">
+        <div class="apple-story-card">
+            <!-- Progress Bar -->
+            <div class="story-progress-bar-apple">
+                <div class="story-progress-fill-apple" id="storyProgressFillApple"></div>
+            </div>
+
+            <!-- Top Author Bar -->
+            <div class="story-top-author-bar">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <img id="storyModalAvatarApple" src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=80&q=80" class="story-author-avatar" alt="Autor">
+                    <div>
+                        <strong id="storyModalAuthorApple" style="font-size: 0.88rem; color:#fff; display:block;">Carlos Mendoza</strong>
+                        <span class="story-author-meta">Hace 25 min &bull; Historia corporativa</span>
+                    </div>
+                </div>
+                <button type="button" class="story-close-btn" onclick="closeStoryModal()" aria-label="Cerrar historia"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+
+            <!-- Story Image -->
+            <img id="storyModalImgApple" src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=900&q=80" style="width:100%; height:100%; object-fit:cover;" alt="Historia">
+
+            <!-- Bottom Reply & Reactions Bar -->
+            <div class="story-bottom-reply-bar">
+                <input type="text" class="story-reply-input" placeholder="Responder a la historia..." onkeydown="handleStoryReply(event)">
+                <button class="quick-emoji-btn-apple" onclick="sendStoryReaction('🔥')">🔥</button>
+                <button class="quick-emoji-btn-apple" onclick="sendStoryReaction('👏')">👏</button>
+                <button class="quick-emoji-btn-apple" onclick="sendStoryReaction('❤️')">❤️</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Hilo de comentarios -->
+    <div id="modalAppleComments" class="apple-modal-overlay" style="display: none;">
+        <div class="apple-modal-card" style="max-width: 580px;">
+            <div class="apple-modal-header">
+                <div>
+                    <span class="nx-eyebrow" style="margin-bottom: 6px;">Conversación del equipo</span>
+                    <h3 class="apple-modal-title">Hilo de Conversación</h3>
+                    <p class="apple-modal-subtitle" id="commentModalPostPreview">Comentarios y aportaciones del equipo.</p>
+                </div>
+                <button type="button" class="apple-close-btn" onclick="closeAppleModal('modalAppleComments')" aria-label="Cerrar modal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            
+            <div class="apple-modal-body" style="max-height: 380px; overflow-y: auto;">
+                <div id="modalCommentsThread" style="display: flex; flex-direction: column; gap: 14px;">
+                    <!-- Preloaded Comments -->
+                    <div class="comment-item">
+                        <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=80" class="comment-avatar" alt="Sofía">
+                        <div class="comment-bubble">
+                            <div class="comment-author">Sofía Arismendi <span style="font-weight:400; font-size:0.72rem; color:var(--text-muted);">• Hace 20 min</span></div>
+                            <div>Excelente coordinación con el departamento, ya validamos los comprobantes fiscales correspondientes.</div>
+                        </div>
+                    </div>
+                    <div class="comment-item">
+                        <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&h=100&q=80" class="comment-avatar" alt="Mateo">
+                        <div class="comment-bubble">
+                            <div class="comment-author">Mateo Villanueva <span style="font-weight:400; font-size:0.72rem; color:var(--text-muted);">• Hace 10 min</span></div>
+                            <div>Los puertos de red ya fueron configurados con las políticas de firewall corporativo. Todo seguro y blindado.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Add Comment Pill -->
+                <div class="modal-comment-composer">
+                    <input type="text" id="modalCommentInput" class="form-input" placeholder="Añadir una respuesta al hilo..." onkeydown="if(event.key==='Enter') submitModalComment()">
+                    <button class="btn-modern btn-primary" onclick="submitModalComment()" style="padding: 9px 20px; font-size: 0.82rem;">
+                        Enviar
+                    </button>
+                </div>
+            </div>
+
+            <div class="apple-modal-footer">
+                <button class="btn-modern btn-outline" onclick="closeAppleModal('modalAppleComments')">Cerrar hilo</button>
+                <button class="btn-modern btn-primary" onclick="showToast('Notificaciones', 'Te has suscrito a las respuestas de este hilo.', 'success'); closeAppleModal('modalAppleComments');">Seguir hilo</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Hoja de compartir -->
+    <div id="modalAppleShareSheet" class="apple-modal-overlay" style="display: none;">
+        <div class="apple-action-sheet">
+            <div class="apple-action-group">
+                <div class="share-sheet-head">
+                    <span class="nx-eyebrow">Compartir contenido</span>
+                    <p>Selecciona el canal de distribución</p>
+                </div>
+                <button class="apple-action-btn" onclick="navigator.clipboard?.writeText(window.location.href); showToast('Enlace Copiado', 'El enlace directo al post ha sido copiado al portapapeles.', 'success'); closeAppleModal('modalAppleShareSheet');">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:17px;height:17px;" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><span>Copiar enlace directo</span>
+                </button>
+                <button class="apple-action-btn" onclick="showToast('Slack Corporativo', 'Publicación enviada al canal #general en Slack.', 'success'); closeAppleModal('modalAppleShareSheet');">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:17px;height:17px;" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Enviar al canal de Slack <span class="nx-mono nx-dim" style="font-size:0.74rem;">#general</span></span>
+                </button>
+                <button class="apple-action-btn" onclick="showToast('Descarga', 'Generando ficha imprimible en PDF...', 'info'); closeAppleModal('modalAppleShareSheet');">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:17px;height:17px;" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8"/></svg><span>Exportar ficha en PDF</span>
+                </button>
+                <button class="apple-action-btn" onclick="openCustomizationDrawer(); closeAppleModal('modalAppleShareSheet');">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:17px;height:17px;" aria-hidden="true"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg><span>Personalizar paleta de la suite</span>
+                </button>
+            </div>
+            <button class="apple-action-cancel" onclick="closeAppleModal('modalAppleShareSheet')">
+                Cancelar
+            </button>
+        </div>
+    </div>
+
+    <!-- 4. Confirmación de archivo -->
+    <div id="modalAppleConfirmArchive" class="apple-modal-overlay" style="display: none;">
+        <div class="apple-modal-card social-alert-card" style="max-width: 420px;">
+            <div class="social-alert-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg></div>
+            <h3 class="apple-modal-title" style="margin-bottom: 8px;">¿Archivar publicación?</h3>
+            <p class="apple-modal-subtitle" style="font-size: 0.85rem;">La publicación dejará de ser visible para los miembros de la organización pero se conservará en los registros de auditoría.</p>
+            <div class="social-alert-actions">
+                <button class="btn-modern btn-outline" onclick="closeAppleModal('modalAppleConfirmArchive')">Cancelar</button>
+                <button class="btn-modern btn-danger-solid" onclick="executeArchivePost()">Sí, archivar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="assets/js/nexora-common.js"></script>
+    <script>
+        let attachImageActive = false;
+        let postToArchive = null;
+
+        function toggleImageAttach() {
+            attachImageActive = !attachImageActive;
+            document.getElementById('imageAttachPreview').style.display = attachImageActive ? 'block' : 'none';
+        }
+
+        function insertTag(tag) {
+            const textarea = document.getElementById('postTextInput');
+            textarea.value += ' ' + tag + ' ';
+            textarea.focus();
+        }
+
+        function publishNewPost() {
+            const textarea = document.getElementById('postTextInput');
+            const text = textarea.value.trim();
+
+            if (!text && !attachImageActive) {
+                showToast('Campo Vacío', 'Escribe un mensaje para publicar con el equipo.', 'warning');
+                return;
+            }
+
+            const stream = document.getElementById('feedStreamContainer');
+            const newPostId = 'post-' + Date.now();
+
+            let mediaHtml = '';
+            if (attachImageActive) {
+                mediaHtml = `<img src="https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=800&q=80" class="post-media-img" alt="Media">`;
+            }
+
+            const newPostCard = document.createElement('article');
+            newPostCard.className = 'post-card';
+            newPostCard.id = newPostId;
+            newPostCard.setAttribute('data-category', attachImageActive ? 'media' : 'general');
+            newPostCard.innerHTML = `
+                <div class="post-header">
+                    <div class="post-author-wrap">
+                        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&h=100&q=80" class="post-author-img" alt="Elena">
+                        <div>
+                            <div class="post-author-name">
+                                Elena Valenzuela
+                                <span class="badge-status status-completed" style="padding: 2px 7px; font-size: 0.65rem;">Directora General</span>
+                            </div>
+                            <div class="post-time">Hace unos segundos • Público corporativo</div>
+                        </div>
+                    </div>
+                    <button class="btn-modern btn-ghost post-more-btn" onclick="confirmArchivePost('${newPostId}')" aria-label="Archivar publicación">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+                <div class="post-body-text">${text}</div>
+                ${mediaHtml}
+                <div class="post-stats-row">
+                    <span id="like-count-${newPostId}" class="like-count">1 reacción</span>
+                    <span>0 comentarios • 0 compartidos</span>
+                </div>
+                <div class="post-actions-bar">
+                    <button class="post-action-btn liked" onclick="toggleLike(this, 'like-count-${newPostId}', 1)">
+                        <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                        <span>Me gusta</span>
+                    </button>
+                    <button class="post-action-btn" onclick="openApplePostComments('Elena Valenzuela', '${text.replace(/'/g, "\\'")}', '${newPostId}')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <span>Comentar</span>
+                    </button>
+                    <button class="post-action-btn" onclick="openAppleModal('modalAppleShareSheet')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+                        <span>Compartir</span>
+                    </button>
+                </div>
+            `;
+
+            stream.prepend(newPostCard);
+            textarea.value = '';
+            if (attachImageActive) toggleImageAttach();
+
+            showToast('Publicado', 'Tu publicación ya está disponible en el feed de la organización.', 'success');
+        }
+
+        function toggleLike(btn, countId, baseCount) {
+            const isLiked = btn.classList.toggle('liked');
+            const countLabel = document.getElementById(countId);
+            const count = isLiked ? baseCount + 1 : baseCount;
+            countLabel.textContent = `${count} ${count === 1 ? 'reacción' : 'reacciones'}`;
+        }
+
+        function confirmArchivePost(postId) {
+            postToArchive = postId;
+            openAppleModal('modalAppleConfirmArchive');
+        }
+
+        function executeArchivePost() {
+            if (postToArchive) {
+                const el = document.getElementById(postToArchive);
+                if (el) {
+                    el.style.transition = 'all 0.35s ease';
+                    el.style.opacity = '0';
+                    el.style.transform = 'scale(0.95)';
+                    setTimeout(() => el.remove(), 350);
+                }
+            }
+            closeAppleModal('modalAppleConfirmArchive');
+            showToast('Archivada', 'La publicación ha sido archivada.', 'info');
+        }
+
+        /* Hilo de comentarios */
+        let activeCommentPostId = null;
+        function openApplePostComments(author, snippet, postId) {
+            activeCommentPostId = postId;
+            const previewEl = document.getElementById('commentModalPostPreview');
+            if (previewEl) {
+                previewEl.textContent = `Publicación de ${author}: "${snippet.length > 60 ? snippet.substring(0, 60) + '...' : snippet}"`;
+            }
+            openAppleModal('modalAppleComments');
+            setTimeout(() => {
+                const inp = document.getElementById('modalCommentInput');
+                if (inp) inp.focus();
+            }, 200);
+        }
+
+        function submitModalComment() {
+            const input = document.getElementById('modalCommentInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            const thread = document.getElementById('modalCommentsThread');
+            const commentDiv = document.createElement('div');
+            commentDiv.className = 'comment-item';
+            commentDiv.innerHTML = `
+                <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&h=100&q=80" class="comment-avatar" alt="Elena">
+                <div class="comment-bubble">
+                    <div class="comment-author">Elena Valenzuela <span style="font-weight:400; font-size:0.72rem; color:var(--text-muted);">• Ahora mismo</span></div>
+                    <div>${text}</div>
+                </div>
+            `;
+            thread.appendChild(commentDiv);
+            input.value = '';
+            thread.scrollTop = thread.scrollHeight;
+            showToast('Comentario Enviado', 'Tu aportación ha sido registrada en el hilo.', 'success');
+        }
+
+        function toggleFollow(btn) {
+            if (btn.textContent.includes('Conectar')) {
+                btn.textContent = '✓ Conectado';
+                btn.classList.remove('btn-outline');
+                btn.classList.add('btn-primary');
+                showToast('Conexión', 'Solicitud de conexión aprobada.', 'success');
+            } else {
+                btn.textContent = '+ Conectar';
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-outline');
+            }
+        }
+
+        /* Interactive Poll */
+        let pollVoted = false;
+        let pollVotes = [84, 50, 27];
+        function castPollVote(index) {
+            if (pollVoted) {
+                showToast('Encuesta', 'Ya has emitido tu voto para esta encuesta.', 'info');
+                return;
+            }
+            pollVoted = true;
+            pollVotes[index]++;
+            const total = pollVotes.reduce((a, b) => a + b, 0);
+
+            for (let i = 0; i < 3; i++) {
+                const pct = Math.round((pollVotes[i] / total) * 100);
+                document.getElementById(`pollBar${i}`).style.width = pct + '%';
+                document.getElementById(`pollPct${i}`).textContent = `${pct}% (${pollVotes[i]} votos)`;
+            }
+            document.getElementById('pollTotalVotes').textContent = `Total: ${total} votos emitidos (¡Tu voto fue registrado!)`;
+            showToast('Voto Registrado', '¡Gracias por participar en las decisiones corporativas!', 'success');
+        }
+
+        /* Feed Category Filter */
+        function filterFeedCategory(category, btn) {
+            document.querySelectorAll('.feed-filter-pill').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+
+            const posts = document.querySelectorAll('.feed-stream .post-card');
+            posts.forEach(post => {
+                if (category === 'all') {
+                    post.style.display = 'block';
+                } else {
+                    const postCat = post.getAttribute('data-category') || '';
+                    if (postCat.includes(category)) {
+                        post.style.display = 'block';
+                    } else {
+                        post.style.display = 'none';
+                    }
+                }
+            });
+            showToast('Filtro de Feed', `Mostrando: ${btn.textContent.trim()}`, 'info');
+        }
+
+        /* Visor de historias con temporizador */
+        let storyInterval = null;
+        let storyProgress = 0;
+
+        function openStoryModal(author, imgUrl) {
+            const authorEl = document.getElementById('storyModalAuthorApple');
+            const imgEl = document.getElementById('storyModalImgApple');
+            const avatarEl = document.getElementById('storyModalAvatarApple');
+            
+            if (authorEl) authorEl.textContent = author;
+            if (imgEl) imgEl.src = imgUrl;
+            if (avatarEl) avatarEl.src = imgUrl;
+            
+            openAppleModal('modalAppleStory');
+
+            clearInterval(storyInterval);
+            storyProgress = 0;
+            const bar = document.getElementById('storyProgressFillApple');
+            if (bar) bar.style.width = '0%';
+
+            storyInterval = setInterval(() => {
+                storyProgress += 2;
+                if (bar) bar.style.width = storyProgress + '%';
+                if (storyProgress >= 100) {
+                    clearInterval(storyInterval);
+                    closeStoryModal();
+                }
+            }, 100);
+        }
+
+        function closeStoryModal() {
+            clearInterval(storyInterval);
+            closeAppleModal('modalAppleStory');
+        }
+
+        function sendStoryReaction(emoji) {
+            showToast('Reacción Enviada', `Has reaccionado con ${emoji} a la historia`, 'success');
+            setTimeout(closeStoryModal, 600);
+        }
+
+        function handleStoryReply(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const text = e.target.value.trim();
+                if (!text) return;
+                e.target.value = '';
+                showToast('Mensaje Directo', 'Respuesta enviada a la bandeja privada.', 'success');
+                setTimeout(closeStoryModal, 600);
+            }
+        }
+
+        function filterFeedByTag(tag) {
+            showToast('Filtro Social', `Mostrando publicaciones etiquetadas con ${tag}`, 'info');
+        }
+    </script>
+</body>
+</html>

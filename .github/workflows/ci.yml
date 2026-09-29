@@ -45,6 +45,22 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # Delayed jobs and retry backoff on RabbitMQ are queue TTLs and
+      # dead-letter exchanges, which exist only inside the broker. A user of
+      # its own, because `guest` may only connect from the broker's loopback
+      # and the runner reaches the container through the Docker bridge.
+      rabbitmq:
+        image: rabbitmq:3.13-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: jfast
+          RABBITMQ_DEFAULT_PASS: jfast
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
 
     strategy:
       fail-fast: false
@@ -102,21 +118,29 @@ jobs:
         env:
           JFAST_TEST_REDIS_URL: redis://localhost:6379/0
           JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
+          JFAST_TEST_RABBITMQ_URL: amqp://jfast:jfast@localhost:5672/
         run: pytest -q
 
-      # Named, because a skip is silent and this is the whole point of the
-      # service container above.
-      # Named, because a skip is silent and these three are the only
-      # evidence that the atomicity, the fan-out and the pinning are real.
+      # Named, because a skip is silent and these are the only evidence that
+      # the atomicity, the fan-out, the pinning, the transaction races and the
+      # broker-held delays are real.
       - name: Prove the tests needing a real server actually ran
         env:
           JFAST_TEST_REDIS_URL: redis://localhost:6379/0
           JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
+          JFAST_TEST_RABBITMQ_URL: amqp://jfast:jfast@localhost:5672/
         run: |
           pytest -q -rs --no-header \
             tests/test_ratelimit.py::test_lua_script_against_real_redis \
             tests/test_websocket.py::test_a_message_published_on_one_worker_reaches_a_socket_on_the_other \
             tests/test_database_postgres.py \
+            tests/test_transactions.py \
+            tests/test_outbox.py \
+            tests/test_idempotency.py \
+            tests/test_rls.py \
+            tests/test_accounts.py \
+            tests/test_rabbitmq_queue.py \
+            tests/test_scheduler.py \
             | tee /tmp/server-tests.log
           if grep -qE '^SKIPPED|no tests ran' /tmp/server-tests.log; then
             echo '::error::a test needing a real server skipped; a service container is not reachable'
@@ -134,8 +158,9 @@ jobs:
       # happen is a step going yellow and being ignored, which is how a
       # security check stops meaning anything.
       - name: Audit dependencies
-        # --skip-editable: this project is installed from the checkout and is
-        # not on PyPI, so there is nothing to look up for it.
+        # --skip-editable: this project is installed from the checkout, so the
+        # copy being audited is not the one on PyPI and there is nothing to
+        # look up for it.
         run: pip-audit --skip-editable --desc
 
       - name: Static security scan

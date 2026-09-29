@@ -165,7 +165,7 @@ request
   → RequestContextMiddleware      assign/propagate X-Request-ID, bind contextvars
   → PrometheusMiddleware          RED metrics, labelled by route template
   → route handler
-      → Depends(session_dependency)   request-scoped session
+      → DbSession                     sesión; confirma antes de la respuesta
       → Service                       domain rules
       → Repository                    data access, tenant-filtered
   → response                      X-Request-ID echoed back

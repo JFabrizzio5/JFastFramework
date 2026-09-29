@@ -9,7 +9,8 @@ Compose. Lo que escribes tú es la parte que solo tú conoces: las reglas de tu
 negocio. Lo que la mantiene coherente después es un contrato que CI hace
 cumplir.
 
-Estado: `0.1.0a4` — alpha, en PyPI. La madurez se rastrea por subsistema en vez
+Estado: alpha, en PyPI -- la versión actual es la que muestra PyPI; un número
+escrito aquí se queda viejo. La madurez se rastrea por subsistema en vez
 de con un solo número de versión: [STATUS.md](STATUS.md) dice qué está probado
 contra infraestructura real, qué no está verificado y qué se sabe roto. Léelo
 antes de depender de cualquier parte.
@@ -63,7 +64,7 @@ Acá importan más las respuestas honestas que una feature más.
 | El equipo ya tiene un framework propio y convenciones que funcionan | El tuyo. Acá el valor son las opiniones, y ya tienes algunas |
 | Necesitas el admin de Django, su ecosistema de ORM o su auth de fábrica | Django. Esto no intenta ser eso |
 | Estás en un stack síncrono y no quieres async | Flask, o FastAPI sin esto |
-| Necesitas hoy aislamiento multi-tenant de nivel producción | Todavía no — aquí el tenancy es una convención, no row-level security. [STATUS.md](STATUS.md) es explícito al respecto |
+| Necesitas hoy un store de usuarios con MFA, verificación de email y recuperación de contraseña | Todavía no — el plugin `accounts` tiene usuarios, login, roles y bloqueo, y ninguna de esas tres. [STATUS.md](STATUS.md) es explícito al respecto |
 
 ---
 
@@ -75,11 +76,12 @@ shop/                       one service
 ├── jfast.toml              which plugins are on; which layout each module uses
 ├── contracts.toml          the rules, checked by CI
 ├── modules/
-│   └── invoice/            one business capability
-│       ├── router.py           HTTP in, response out
-│       ├── service.py          the rules — no SQL, no Request
-│       ├── repository.py       queries — no HTTP concepts
-│       ├── schemas.py
+│   └── invoice/            una capacidad de negocio (modular, por defecto)
+│       ├── api/                entra HTTP, sale respuesta
+│       ├── services/           las reglas — sin SQL, sin Request
+│       ├── repositories/       queries — sin conceptos de HTTP
+│       ├── models/             tablas y esquemas
+│       ├── validations/        reglas que necesitan la base
 │       └── tests/
 ├── shared/                 what two modules both need
 └── migrations/
@@ -189,7 +191,7 @@ grafo de plugins, así que no puede desviarse de lo que la app realmente carga.
 | `metrics` | Métricas RED de Prometheus, `/metrics` | `metrics` |
 | `database` | SQLAlchemy async, sesiones, cableado de Alembic | `db` |
 | `cache` | Caché Redis, pub/sub | `cache` |
-| `queue` | Jobs en segundo plano sobre PostgreSQL, Redis o RabbitMQ | `queue` |
+| `queue` | Jobs en segundo plano sobre PostgreSQL, Redis o RabbitMQ, y tareas recurrentes | `queue` |
 | `events` | Publicación/suscripción con Kafka | `kafka` |
 | `channels` | Canales pub/sub declarados sobre memoria, Redis o Kafka | — |
 | `mongo` | MongoDB vía Motor | `mongo` |
@@ -197,7 +199,11 @@ grafo de plugins, así que no puede desviarse de lo que la app realmente carga.
 | `rag` | Recuperación sobre pgvector o Qdrant | `rag` |
 | `web` | Renderizado parcial con Jinja2 + HTMX | `web` |
 | `gateway` | Reverse proxy basado en prefijos | `gateway` |
+| `http` | Llamadas a servicios hermanos: deadlines, reintentos, circuit breaker | `http` |
 | `auth` | Verificación JWT, scopes, revocación, login social | `auth` |
+| `accounts` | Usuarios, login con contraseña, bloqueo, roles y permisos | `accounts` |
+| `outbox` | Jobs y eventos que se confirman con las filas de la request | `db` |
+| `idempotency` | `Idempotency-Key`: un POST reintentado recibe la primera respuesta | `db` |
 | `ratelimit` | Token bucket en Redis, por subject, tenant o IP | `cache` |
 | `websocket` | WebSockets autenticados con backplane Redis y registro de conexiones | `server` |
 | `storage` | Archivos en discos locales, S3 o MinIO | `storage` |
@@ -252,8 +258,8 @@ async def send_invoice_email(payload: dict) -> None: ...
 await queue.enqueue(Job(task="send_invoice_email", payload={"id": 7}))
 ```
 
-Empieza con PostgreSQL: encolar comparte la transacción que produjo el trabajo,
-así que un rollback se lleva el job con él. Redis compra latencia, RabbitMQ
+Empieza con PostgreSQL: encolado a través del plugin `outbox`, un job comparte la
+transacción que produjo el trabajo, así que un rollback se lleva el job con él. Redis compra latencia, RabbitMQ
 compra ruteo. [Cuál elegir, y por qué](docs/queues-and-events.md).
 
 La entrega es at-least-once — los handlers tienen que ser idempotentes. Los
@@ -284,6 +290,11 @@ cd admin && jfast new view Facturas
 `jfast new view` crea `src/ModuloFacturas/{Components,Pages,Routes,Services}` y
 lo registra en el router y en el sidebar en sus comentarios marcadores — de
 forma idempotente, fallando ruidosamente si un marcador ya no está.
+
+Viene en dos looks. `nexora`, el de por defecto, es el diseño liquid-glass con
+el que está hecho este sitio -- sidebar de vidrio, claro y oscuro, selector de
+color, pantalla de login. `--template classic` es el sencillo. Las vistas nuevas
+siguen el look con el que se generó el proyecto. Ve [Frontends](docs/frontend.md).
 
 Ambos frontends se instalan y se buildean en CI. Ese job existe por un bug
 real: el comentario marcador quedó dentro de un comentario de bloque, cuyo `*/`
@@ -358,9 +369,10 @@ cliente recibe un 401 pelado.
 `X-Tenant-ID` — que puede poner cualquiera con curl. Con auth, viene de un
 claim firmado.
 
-No hay `/auth/login`: verificar una contraseña contra tu tabla de usuarios es
-trabajo de tu aplicación. `auth.issuer` se provee para tu propia ruta.
-[docs/auth.md](docs/auth.md).
+`auth` no tiene store de usuarios propio. El plugin `accounts` lo es --
+usuarios, `/auth/login`, bloqueo, roles y permisos -- y un servicio con su propia
+tabla de usuarios llama a `auth.issuer` desde su propia ruta.
+[docs/auth.md](docs/auth.md), [docs/accounts.md](docs/accounts.md).
 
 ## Kubernetes
 
@@ -455,11 +467,13 @@ El sitio se construye desde estos mismos archivos: **<https://jfabrizzio5.github
 | [docs/agents.md](docs/agents.md) | Trabajar con agentes de IA: qué se hace cumplir, y qué no |
 | [docs/contracts.md](docs/contracts.md) | Reglas por proyecto, verificadas |
 | [docs/auth.md](docs/auth.md) | JWT: modos, los ataques rechazados, revocación, login con Google |
+| [docs/accounts.md](docs/accounts.md) | Usuarios, login con contraseña, bloqueo, roles y permisos |
+| [docs/transactions.md](docs/transactions.md) | Cuándo se confirma, conflictos, bloqueos, reintentos, el outbox y las idempotency keys |
 | [docs/ratelimit.md](docs/ratelimit.md) | Un token bucket que no se filtra bajo carga |
 | [docs/websockets.md](docs/websockets.md) | Sockets entre workers, y qué no se entrega |
 | [docs/upgrading.md](docs/upgrading.md) | Qué rompe al subir de versión, filtrado a lo que aplica a tu proyecto |
 | [docs/storage.md](docs/storage.md) | Discos, URLs firmadas, S3 y MinIO |
-| [docs/multitenancy.md](docs/multitenancy.md) | Subdominios, orden de confianza, qué no es |
+| [docs/multitenancy.md](docs/multitenancy.md) | Subdominios, orden de confianza, row-level security |
 | [docs/cloud.md](docs/cloud.md) | Gestores de secretos, funciones serverless, push |
 | [docs/kubernetes.md](docs/kubernetes.md) | Manifiestos, probes, qué no se genera |
 | [docs/service-contract.md](docs/service-contract.md) | Qué tiene que hacer todo servicio, en cualquier lenguaje |
@@ -501,8 +515,9 @@ que admite el hueco:
 
 - **RabbitMQ y Kafka** están escritos contra APIs documentadas pero nunca se
   probaron de ida y vuelta contra brokers reales en CI.
-- **Multi-tenancy** es una convención que hace cumplir `BaseRepository`, no una
-  garantía de aislamiento. Row-level security es fase 2.
+- **Multi-tenancy** lo impone el row-level security de PostgreSQL solo con
+  `[plugin.database] rls = true`, una política por tabla y un rol que no sea
+  superusuario. Sin las tres es el filtro del repositorio: una convención.
 - **RAG** trocea a ancho fijo y sin reranking.
 - **Angular, React Native, Laravel, .NET** no se generan en absoluto.
 

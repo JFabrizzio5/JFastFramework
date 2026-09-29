@@ -224,17 +224,69 @@ Waving an unrecognised file through would make the check decorative.
 
 Two consequences worth knowing before you configure a disk:
 
-- **Formats that can only be identified by parsing are absent** — SVG, JSON,
-  CSV, plain text. A sniffer that calls a file `text/plain` because it is full
-  of printable characters says yes to a shell script, and an uploaded `.svg` is
-  an XSS vector rather than an image. A disk that holds text or JSON should not
-  run `validate`.
+- **Formats identified by parsing are recognised only where a disk asks for
+  them.** XML, JSON, CSV and plain text have no magic number, and a sniffer that
+  calls anything printable `text/plain` says yes to a shell script. So they are
+  never guessed: a disk that lists one in `allow` gets it, checked by parsing,
+  and no other disk does. See below.
 - **Every OOXML and OpenDocument file is a zip.** Allowing `.docx` means
   allowing `application/zip`, and that allows every other zip too. Decide that
   in config review, where someone can see it.
 
 Listing a type `validate` cannot recognise is a startup error, not a rule that
 silently never matches.
+
+### XML, JSON, CSV and text
+
+A disk for CFDI invoices holds XML, and `validate` can hold it to that:
+
+```toml
+[plugin.storage.disks.cfdi]
+driver = "local"
+root = "storage/cfdi"
+pipeline = ["validate"]
+
+[plugin.storage.disks.cfdi.validate]
+max_bytes = "5MB"
+allow = ["application/xml"]
+```
+
+| In `allow` | The file must |
+| --- | --- |
+| `application/xml` | Be well-formed XML with **no DOCTYPE and no ENTITY declaration** -- that is where XXE and entity-expansion bombs live, and a data file needs neither -- and not be SVG or HTML, which a browser would render and run |
+| `application/json` | Parse to an object or an array |
+| `text/csv` | Be UTF-8 text that the `csv` module reads into at least one row |
+| `text/plain` | Be UTF-8 with no control characters beyond tab and newlines |
+
+They are tried only when the file matched no magic number, and in that order,
+so an XML file on a disk that allows both XML and text is XML. A disk that does
+not list them rejects them exactly as before.
+
+## Large files: `put_stream`
+
+`put()` takes bytes, so the whole file is in memory before anything is checked.
+For a multi-gigabyte archive, stream it instead:
+
+```python
+disk = storage.disk("archives")
+stored = await disk.put_stream("2026/04/cfdi.zip", request.stream())
+```
+
+Any async iterable of bytes works: a request body, a file read in chunks, a
+download from somewhere else. On the way:
+
+- **`max_bytes` is enforced as the bytes arrive.** An oversized upload stops at
+  the limit instead of after it has filled the disk.
+- **The type is decided from the head** -- the first 64 KB -- by the same
+  signatures, and for XML, JSON and text by what the head can show: XML opens
+  with a tag and declares no DOCTYPE or ENTITY (a DTD comes before the root
+  element, so it would be there), JSON opens an object or an array, text
+  decodes as UTF-8. A file that fails is refused before anything reaches S3.
+- **Nothing is visible until the last byte is written.** Locally the stream goes
+  to a temporary file renamed into place; on S3 it is a multipart upload,
+  aborted if anything fails, so the bucket keeps no orphan parts.
+- **A disk whose pipeline rewrites uploads refuses streams.** `optimise-image`
+  needs the whole file; use `put()` there.
 
 ### Optimising images
 
@@ -479,10 +531,6 @@ load balancer — so it is reported as degraded.
 - **No thumbnails.** `optimise-image` re-encodes *one* object into one object.
   Deriving a set of sizes from an upload is a job, not a pipeline step, because
   a pipeline step that produces four objects has nowhere to put three of them.
-- **No streaming uploads.** `put()` takes bytes, and the pipeline sees all of
-  them at once, so `max_bytes` is enforced after the body is already in memory.
-  A multi-gigabyte upload should go straight to S3 with a presigned
-  `upload_url()` and never pass through the application at all.
 - **No streaming downloads and no range requests.** The download route reads
   the whole object into memory before it answers. A 40 MB PDF is 40 MB of
   resident memory per concurrent download, and a video served through it cannot

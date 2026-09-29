@@ -1,8 +1,8 @@
 """`jfast check`: every *static* check this framework knows, one screen, one exit code.
 
-The checks already existed. What did not exist was a single thing to run, so
-CI ran three of them, an agent ran whichever one it remembered, and the two
-nobody wired up never ran at all. This command is the answer to "is this
+Checks that each have their own command get run piecemeal: CI runs three of
+them, an agent runs whichever one it remembers, and the ones nobody wired up
+never run at all. This command is the answer to "is this
 repository consistent with itself", and it belongs in a pipeline -- next to the
 tools below, never instead of them.
 
@@ -139,12 +139,11 @@ FAIL_ON_LEVELS = (*SEVERITY_ORDER, "never")
 #: What this command does **not** look at, what that would have caught, and the
 #: command that does look. Printed under every run and carried in `--json`.
 #:
-#: The list is here because of a specific, measured failure: with an unused
-#: import, a misformatted file, a `str` assigned to an `int` and a failing test
-#: all present at once, `jfast check` produced output byte-identical to the
-#: clean project and exited 0 -- `--ci` included. Nothing in the report was
-#: false. What was false was the impression the name left, and a team that acts
-#: on that impression loses four gates in one commit.
+#: Without it, a project with an unused import, a misformatted file, a `str`
+#: assigned to an `int` and a failing test all at once gets output
+#: byte-identical to a clean project's and exit 0 -- `--ci` included. Nothing
+#: in that report is false. What is false is the impression the name leaves,
+#: and a team that acts on that impression loses four gates in one commit.
 NOT_COVERED: tuple[tuple[str, str, str], ...] = (
     ("lint", "unused imports, undefined names, unreachable code", "ruff check ."),
     ("formatting", "a diff nobody agreed to review", "ruff format --check ."),
@@ -178,9 +177,9 @@ class CheckResult:
     #: that had nothing to look at and exit 0 is the honest answer; "the
     #: configuration did not load" is a check that could not look at something
     #: that is broken, and exit 0 there is a green run over a service that does
-    #: not start. The full battery hid this behind the config check's own
-    #: failure; `--only plugins` deselects that check, and the skip left was
-    #: reported as success.
+    #: not start. The full battery reports the config check's own failure;
+    #: `--only plugins` deselects that check, and without this field the skip
+    #: left behind would read as success.
     blocked_by: Code | None = None
 
     @property
@@ -244,10 +243,10 @@ def worst_code(results: Sequence[CheckResult], *, fail_on: str, strict: bool) ->
     only ever decides the code when nothing else failed -- see :data:`SKIP_CODE`.
 
     A skip that was **blocked** counts without ``--ci``, and carries the code of
-    what blocked it rather than :data:`SKIP_CODE`. `jfast check --only plugins`
-    against a jfast.toml that does not parse used to exit 0: the config check
-    was deselected, so nothing reported the parse failure, and the skip left
-    behind read as success. Reporting green over a service that cannot start is
+    what blocked it rather than :data:`SKIP_CODE`. Otherwise `jfast check --only
+    plugins` against a jfast.toml that does not parse exits 0: the config check
+    is deselected, so nothing reports the parse failure, and the skip left
+    behind reads as success. Reporting green over a service that cannot start is
     the one thing this command exists not to do.
 
     ``--fail-on never`` still wins over all of it. That flag is an explicit
@@ -361,9 +360,9 @@ def _plugins_check(root: Path, state: _State) -> CheckResult:
     declared: dict[str, str] = state.config.raw.get("plugins", {}).get("paths", {}) or {}
     available = registry.discover(extra_paths=declared, search_path=root)
     broken: dict[str, str] = getattr(registry.discover, "broken", {})
-    # `cli/main.py::_known_plugins` to the letter, because `analyze` is handed
-    # this set and has to answer here exactly what it answers on its own. A
-    # dotted path that does not import is a name nothing provides, however
+    # `cli/commands/project.py::_known_plugins` to the letter, because `analyze`
+    # is handed this set and has to answer here exactly what it answers on its
+    # own. A dotted path that does not import is a name nothing provides, however
     # confidently jfast.toml names it; only an installed distribution earns the
     # "broken, not missing" reading.
     state.known_plugins = frozenset(available) | frozenset(
@@ -520,8 +519,8 @@ def _pool_ceiling_findings(state: _State) -> list[Finding]:
     starts ``min(cpus, MAX_DERIVED_WORKERS)`` of them, so the connections a
     single deployed service can hold is that product -- 240 on an eight-core
     host with the defaults, against a PostgreSQL whose own default ceiling is
-    100. Nothing multiplied the two before, so the first sign was `FATAL: sorry,
-    too many clients already`, in production, from whichever service connected
+    100. Unless something multiplies the two, the first sign is `FATAL: sorry,
+    too many clients already`, in production, from whichever service connects
     last rather than from the one that took the room.
 
     The worker count is read from the environment when it is pinned there,
@@ -607,7 +606,10 @@ def _tenant_routing_findings(root: Path, state: _State) -> list[Finding]:
         if any(part in {".venv", "__pycache__", ".git", "migrations"} for part in path.parts):
             continue
         try:
-            if "tenant_session_dependency" in path.read_text(encoding="utf-8"):
+            text = path.read_text(encoding="utf-8")
+            # Either spelling opens one: code that uses the alias never names
+            # the dependency function.
+            if "tenant_session_dependency" in text or "TenantSession" in text:
                 return []
         except OSError:
             continue
@@ -621,12 +623,12 @@ def _tenant_routing_findings(root: Path, state: _State) -> list[Finding]:
                 f"and no route opens one"
             ),
             why=(
-                "Routing to a tenant's database is `tenant_session_dependency`; "
-                "`session_dependency`, which is what `jfast new module` generates, is "
+                "Routing to a tenant's database is `TenantSession`; "
+                "`DbSession`, which is what `jfast new module` generates, is "
                 "the shared primary. Nothing fails and nothing leaks -- the rows carry "
                 "tenant_id and the repository filters on it -- but they are all in the "
                 "primary while the per-tenant databases stay empty. Depend on "
-                "tenant_session_dependency in the routes that own tenant data, or drop "
+                "TenantSession in the routes that own tenant data, or drop "
                 "the template if one database is what this service actually wants."
             ),
             path=DEFAULT_CONFIG_FILE,

@@ -8,12 +8,13 @@ across every service built on JFast.
 
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from sqlalchemy import DateTime, MetaData, func
 from sqlalchemy.engine.interfaces import Dialect
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 from sqlalchemy.types import TypeDecorator
 
 NAMING_CONVENTION = {
@@ -94,6 +95,47 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class VersionedMixin:
+    """Optimistic locking: a write that lost a race fails instead of winning it.
+
+    Two requests read version 3 of a row and both write. Without a version the
+    second write silently replaces the first -- the lost update. With one,
+    SQLAlchemy's UPDATE carries ``WHERE version = 3``, the second matches no row,
+    and the flush raises; ``BaseRepository`` turns that into a 409. The same
+    column is what a client sends back to say which version it edited, which
+    ``BaseRepository.update(expected_version=...)`` checks as a 412.
+
+    List it **before** ``TimestampMixin``. Both set ``__mapper_args__`` and the
+    first one in the bases wins, so this one carries the timestamp mixin's
+    ``eager_defaults`` too; the other order would drop the versioning without
+    a word, which is why that order raises instead.
+    """
+
+    version: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
+
+    @declared_attr.directive
+    def __mapper_args__(cls: Any) -> dict[str, Any]:
+        args: dict[str, Any] = {"version_id_col": cls.__table__.c.version}
+        if issubclass(cls, TimestampMixin):
+            args["eager_defaults"] = True
+        return args
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        # Static lookup: the first __mapper_args__ in the MRO is the one the
+        # mapper will use. Anything but ours -- a plain dict from
+        # TimestampMixin, or one the model wrote itself -- would lose the
+        # version column unless it names it.
+        found = inspect.getattr_static(cls, "__mapper_args__", None)
+        if isinstance(found, dict) and "version_id_col" not in found:
+            raise TypeError(
+                f"{cls.__name__} lists a __mapper_args__ ahead of VersionedMixin, "
+                f"so its version column would never be checked. Put VersionedMixin "
+                f"before TimestampMixin in the bases, or add version_id_col to "
+                f"{cls.__name__}.__mapper_args__ yourself."
+            )
+        super().__init_subclass__(**kwargs)
 
 
 class TenantMixin:

@@ -1,0 +1,31 @@
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import { RouterProvider } from 'react-router-dom'
+
+import LiquidBackground from '@/components/LiquidBackground.jsx'
+import ToastHost from '@/components/ToastHost.jsx'
+import { restoreAccent } from '@/nexora/accent.js'
+import { restoreBackdrop } from '@/nexora/backdrop.js'
+import router from '@/router'
+import '@/style.css'
+
+// Before the first render, so nothing accent-coloured is ever painted in the
+// default and then repainted in the saved or configured one.
+restoreAccent()
+restoreBackdrop()
+
+// ToastHost sits outside the router on purpose: a toast raised during a route
+// transition has to survive it, and a host inside the routed tree unmounts
+// mid-navigation taking the message with it. Exactly once, too -- a second
+// host renders the same list twice rather than giving toasts a second home.
+//
+// LiquidBackground is outside it for the same reason and a costlier one: every
+// page wraps itself in LayoutAuthenticated, so a background mounted there would
+// tear down the WebGL scene and compile its shaders again on every navigation.
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <LiquidBackground />
+    <RouterProvider router={router} />
+    <ToastHost />
+  </React.StrictMode>,
+)

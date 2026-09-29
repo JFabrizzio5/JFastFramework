@@ -102,7 +102,7 @@ async def _app(**overrides: Any) -> Any:
 
     @app.post("/notes")
     async def create(
-        request: Request, session: Any = Depends(session_dependency)
+        request: Request, session: Any = Depends(session_dependency, scope="function")
     ) -> dict[str, str]:
         await session.execute(text("insert into notes (label) values ('one')"))
         # Raw SQL flushes nothing the ORM can see, so the write says so itself.
@@ -110,13 +110,17 @@ async def _app(**overrides: Any) -> Any:
         return {"ok": "yes"}
 
     @app.get("/notes")
-    async def read(session: Any = Depends(read_session_dependency)) -> dict[str, Any]:
+    async def read(
+        session: Any = Depends(read_session_dependency, scope="function"),
+    ) -> dict[str, Any]:
         rows = await session.execute(text("select label from notes order by id"))
         bind = str(session.get_bind().url)
         return {"labels": [row[0] for row in rows], "bind": bind}
 
     @app.post("/notes-on-a-read-session")
-    async def smuggle(session: Any = Depends(read_session_dependency)) -> dict[str, str]:
+    async def smuggle(
+        session: Any = Depends(read_session_dependency, scope="function"),
+    ) -> dict[str, str]:
         await session.execute(text("insert into notes (label) values ('smuggled')"))
         return {"ok": "no"}
 
