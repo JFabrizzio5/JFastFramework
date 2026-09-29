@@ -1,0 +1,38 @@
+<template>
+  <button :type="type" :disabled="disabled || loading" :aria-busy="loading || undefined"
+    class="btn-modern" :class="[variantClass, size === 'sm' && 'btn-sm']">
+    <span v-if="loading" class="nx-spinner" aria-hidden="true" />
+    <slot v-else name="icon" />
+    <slot />
+  </button>
+</template>
+
+<script setup>
+import { computed } from 'vue'
+
+// `loading` disables as well. The spinner says the click registered, so people
+// stop waiting and click again -- without the disable that sends the request
+// twice. It takes the icon slot's place rather than adding to the row, so the
+// button keeps its width and the layout does not shift under the cursor.
+const props = defineProps({
+  variant: { type: String, default: 'primary' },
+  size: { type: String, default: 'md' },
+  loading: Boolean,
+  disabled: Boolean,
+  // A <button> with no type submits the form it sits in, which turns a Cancel
+  // next to a form into a second Save.
+  type: { type: String, default: 'button' },
+})
+
+// The classes live in src/nexora/nexora.css. `danger` is tinted, not solid:
+// solid is the primary button, and two solid buttons on one screen say
+// nothing about which one is the safe way out.
+const VARIANTS = {
+  primary: 'btn-primary',
+  outline: 'btn-outline',
+  ghost: 'btn-ghost',
+  danger: 'btn-danger',
+}
+
+const variantClass = computed(() => VARIANTS[props.variant] ?? VARIANTS.primary)
+</script>

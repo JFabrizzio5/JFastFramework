@@ -1,0 +1,33 @@
+<template>
+  <span class="badge-status" :class="toneClass">
+    <span class="status-dot" aria-hidden="true" />
+    {{ label }}
+  </span>
+</template>
+
+<script setup>
+import { computed } from 'vue'
+
+// `label` is required and rendered unconditionally. The dot is decoration; the
+// word is the status. A badge that is only green is unreadable to a screen
+// reader, to a printout, and to anyone who cannot separate it from the red one.
+const props = defineProps({
+  label: { type: String, required: true },
+  tone: { type: String, default: 'neutral' },
+})
+
+// Status is the one thing the palette cannot express: the hue IS the meaning,
+// so these keep their own tokens (--success, --warning, --danger, --info)
+// instead of following the accent. `accent` is for a state that is simply the
+// brand's -- "new", "selected" -- never for success or failure.
+const TONES = {
+  neutral: '',
+  success: 'is-success',
+  warning: 'is-warning',
+  danger: 'is-danger',
+  info: 'is-info',
+  accent: 'is-accent',
+}
+
+const toneClass = computed(() => TONES[props.tone] ?? TONES.neutral)
+</script>

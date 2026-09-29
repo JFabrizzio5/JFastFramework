@@ -1,0 +1,157 @@
+<template>
+  <LayoutAuthenticated>
+    <SectionMain>
+      <SectionTitleLineWithButton :icon="mdiRocketLaunchOutline" title="Hola mundo" main
+        :description="`${appName} is running on Vue 3, Vite and the Nexora look.`">
+        <BaseButton variant="outline" :loading="checking" @click="checkHealth">
+          <template #icon>
+            <BaseIcon :path="mdiRefresh" size="sm" />
+          </template>
+          Check again
+        </BaseButton>
+      </SectionTitleLineWithButton>
+
+      <!-- Every figure here is real: the /health call, its round trip, and the
+           sidebar. A dashboard of invented numbers is the first thing somebody
+           has to delete, and the last thing they remember to. -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-head">
+            <span class="kpi-label">Backend</span>
+            <BaseBadge v-if="health" :tone="health.error ? 'danger' : 'success'"
+              :label="health.error ? 'Unreachable' : health.status" />
+          </div>
+          <div class="kpi-value">{{ health === null ? '…' : health.error ? 'Offline' : 'Online' }}</div>
+          <span class="kpi-foot">{{ health?.error ?? health?.service ?? 'Calling /health' }}</span>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-head">
+            <span class="kpi-label">Round trip</span>
+          </div>
+          <div class="kpi-value">{{ latency ?? '…' }}<small>ms</small></div>
+          <span class="kpi-foot">GET /health, measured in this browser</span>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-head">
+            <span class="kpi-label">Environment</span>
+          </div>
+          <div class="kpi-value">{{ health?.env ?? '—' }}</div>
+          <span class="kpi-foot">As the backend reports it</span>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-head">
+            <span class="kpi-label">Views</span>
+            <BaseBadge tone="accent" label="Sidebar" />
+          </div>
+          <div class="kpi-value">{{ menu.length }}<small>registered</small></div>
+          <span class="kpi-foot">jfast new view adds the next one</span>
+        </div>
+      </div>
+
+      <div class="nx-grid-main">
+        <CardBox>
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">Registered views</h2>
+              <p class="panel-sub">Every entry in src/menuAside.js, in sidebar order</p>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="erp-table">
+              <thead>
+                <tr>
+                  <th scope="col">View</th>
+                  <th scope="col">Route</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in menu" :key="item.to">
+                  <td>
+                    <RouterLink :to="item.to" class="cell-title hover:underline">{{ item.label }}</RouterLink>
+                  </td>
+                  <td class="cell-mono nx-dim">{{ item.to }}</td>
+                  <td><BaseBadge tone="success" label="Routed" /></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </CardBox>
+
+        <CardBox>
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">Next steps</h2>
+              <p class="panel-sub">API at <span class="nx-mono">{{ apiUrl }}</span></p>
+            </div>
+          </div>
+
+          <div class="nx-list">
+            <div v-for="step in steps" :key="step.title" class="nx-list-item">
+              <div class="min-w-0">
+                <p class="nx-list-title">{{ step.title }}</p>
+                <p class="nx-list-meta">{{ step.how }}</p>
+              </div>
+              <BaseBadge :tone="step.tone" :label="step.where" />
+            </div>
+          </div>
+        </CardBox>
+      </div>
+    </SectionMain>
+  </LayoutAuthenticated>
+</template>
+
+<script setup>
+import { mdiRefresh, mdiRocketLaunchOutline } from '@mdi/js'
+import { onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
+
+import BaseBadge from '@/components/BaseBadge.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import BaseIcon from '@/components/BaseIcon.vue'
+import CardBox from '@/components/CardBox.vue'
+import SectionMain from '@/components/SectionMain.vue'
+import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.vue'
+import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.vue'
+import menu from '@/menuAside.js'
+import { APP_NAME as appName } from '@/nexora/brand.js'
+import api from '@/services/api.js'
+
+const apiUrl = import.meta.env.VITE_API_URL
+const health = ref(null)
+const latency = ref(null)
+const checking = ref(false)
+
+const steps = [
+  { title: 'Add a page', how: 'jfast new view Facturas', where: 'CLI', tone: 'accent' },
+  { title: 'Add a backend module', how: 'jfast new module invoice', where: 'CLI', tone: 'accent' },
+  { title: 'Put the app behind sign-in', how: 'PUBLIC_BY_DEFAULT in src/router/index.js', where: 'Router', tone: 'info' },
+]
+
+// Proves the wiring end to end on first load: if VITE_API_URL is wrong, you
+// see it here rather than on the first real feature.
+async function checkHealth() {
+  checking.value = true
+  const started = performance.now()
+  try {
+    const { data } = await api.get('/health')
+    // A 200 from something that is not this backend -- another dev server on
+    // the port, a proxy's HTML page -- is not a healthy backend either.
+    if (typeof data !== 'object' || !data?.status) {
+      throw new Error('/health did not answer like a JFast service')
+    }
+    health.value = data
+  } catch (error) {
+    health.value = { error: error.message }
+  } finally {
+    latency.value = Math.round(performance.now() - started)
+    checking.value = false
+  }
+}
+
+onMounted(checkHealth)
+</script>

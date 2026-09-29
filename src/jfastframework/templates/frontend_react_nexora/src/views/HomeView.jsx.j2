@@ -1,0 +1,181 @@
+import { mdiRefresh, mdiRocketLaunchOutline } from '@mdi/js'
+import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+
+import BaseBadge from '@/components/BaseBadge.jsx'
+import BaseButton from '@/components/BaseButton.jsx'
+import CardBox from '@/components/CardBox.jsx'
+import SectionMain from '@/components/SectionMain.jsx'
+import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.jsx'
+import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.jsx'
+import menu from '@/menuAside.js'
+import { APP_NAME as appName } from '@/nexora/brand.js'
+import api from '@/services/api.js'
+
+const STEPS = [
+  { title: 'Add a page', how: 'jfast new view Facturas', where: 'CLI', status: 'accent' },
+  { title: 'Add a backend module', how: 'jfast new module invoice', where: 'CLI', status: 'accent' },
+  { title: 'Put the app behind sign-in', how: 'PUBLIC_BY_DEFAULT in src/router/index.jsx', where: 'Router', status: 'info' },
+]
+
+export default function HomeView() {
+  const apiUrl = import.meta.env.VITE_API_URL
+  const [health, setHealth] = useState(null)
+  const [latency, setLatency] = useState(null)
+  const [checking, setChecking] = useState(false)
+
+  // Proves the wiring end to end on first load: if VITE_API_URL is wrong, you
+  // see it here rather than on the first real feature.
+  const checkHealth = useCallback(async () => {
+    setChecking(true)
+    const started = performance.now()
+    let result
+    try {
+      const { data } = await api.get('/health')
+      // A 200 from something that is not this backend -- another dev server on
+      // the port, a proxy's HTML page -- is not a healthy backend either.
+      if (typeof data !== 'object' || !data?.status) {
+        throw new Error('/health did not answer like a JFast service')
+      }
+      result = data
+    } catch (error) {
+      result = { error: error.message }
+    }
+    setHealth(result)
+    setLatency(Math.round(performance.now() - started))
+    setChecking(false)
+  }, [])
+
+  useEffect(() => {
+    checkHealth()
+  }, [checkHealth])
+
+  const online = health !== null && !health.error
+
+  return (
+    <LayoutAuthenticated>
+      <SectionMain>
+        <SectionTitleLineWithButton
+          icon={mdiRocketLaunchOutline}
+          title="Hola mundo"
+          description={`${appName} is running on React, Vite and the Nexora look.`}
+          main
+        >
+          <BaseButton variant="outline" icon={mdiRefresh} loading={checking} onClick={checkHealth}>
+            Check again
+          </BaseButton>
+        </SectionTitleLineWithButton>
+
+        {/* Every figure here is real: the /health call, its round trip, and
+            the sidebar. A dashboard of invented numbers is the first thing
+            somebody has to delete, and the last thing they remember to. */}
+        <div className="kpi-grid">
+          <div className="kpi-card">
+            <div className="kpi-head">
+              <span className="kpi-label">Backend</span>
+              {health ? (
+                <BaseBadge status={online ? 'success' : 'danger'}>
+                  {online ? health.status : 'Unreachable'}
+                </BaseBadge>
+              ) : null}
+            </div>
+            <div className="kpi-value">{health === null ? '…' : online ? 'Online' : 'Offline'}</div>
+            <span className="kpi-foot">{health?.error ?? health?.service ?? 'Calling /health'}</span>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-head">
+              <span className="kpi-label">Round trip</span>
+            </div>
+            <div className="kpi-value">
+              {latency ?? '…'}
+              <small>ms</small>
+            </div>
+            <span className="kpi-foot">GET /health, measured in this browser</span>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-head">
+              <span className="kpi-label">Environment</span>
+            </div>
+            <div className="kpi-value">{health?.env ?? '—'}</div>
+            <span className="kpi-foot">As the backend reports it</span>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-head">
+              <span className="kpi-label">Views</span>
+              <BaseBadge status="accent">Sidebar</BaseBadge>
+            </div>
+            <div className="kpi-value">
+              {menu.length}
+              <small>registered</small>
+            </div>
+            <span className="kpi-foot">jfast new view adds the next one</span>
+          </div>
+        </div>
+
+        <div className="nx-grid-main">
+          <CardBox>
+            <div className="panel-head">
+              <div>
+                <h2 className="panel-title">Registered views</h2>
+                <p className="panel-sub">Every entry in src/menuAside.js, in sidebar order</p>
+              </div>
+            </div>
+
+            <div className="table-responsive">
+              <table className="erp-table">
+                <thead>
+                  <tr>
+                    <th scope="col">View</th>
+                    <th scope="col">Route</th>
+                    <th scope="col">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {menu.map((item) => (
+                    <tr key={item.to}>
+                      <td>
+                        <Link to={item.to} className="cell-title hover:underline">
+                          {item.label}
+                        </Link>
+                      </td>
+                      <td className="cell-mono nx-dim">{item.to}</td>
+                      <td>
+                        <BaseBadge status="success">Routed</BaseBadge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardBox>
+
+          <CardBox>
+            <div className="panel-head">
+              <div>
+                <h2 className="panel-title">Next steps</h2>
+                <p className="panel-sub">
+                  API at <span className="nx-mono">{apiUrl}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="nx-list">
+              {STEPS.map((step) => (
+                <div key={step.title} className="nx-list-item">
+                  <div className="min-w-0">
+                    <p className="nx-list-title">{step.title}</p>
+                    <p className="nx-list-meta">{step.how}</p>
+                  </div>
+                  <BaseBadge status={step.status}>{step.where}</BaseBadge>
+                </div>
+              ))}
+            </div>
+          </CardBox>
+        </div>
+      </SectionMain>
+    </LayoutAuthenticated>
+  )
+}

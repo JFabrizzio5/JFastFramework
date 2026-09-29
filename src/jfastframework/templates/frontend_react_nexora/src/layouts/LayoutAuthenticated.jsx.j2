@@ -1,0 +1,165 @@
+import { mdiLogin, mdiLogout } from '@mdi/js'
+import { useEffect, useState } from 'react'
+import { Link, NavLink, useMatches, useNavigate } from 'react-router-dom'
+
+import AccentPicker from '@/components/AccentPicker.jsx'
+import BaseIcon from '@/components/BaseIcon.jsx'
+import ThemeToggle from '@/components/ThemeToggle.jsx'
+import menu from '@/menuAside.js'
+import { APP_NAME as appName } from '@/nexora/brand.js'
+import { logout } from '@/services/auth.service.js'
+import { LOGIN_ROUTE, useAuthStore, useIsAuthenticated } from '@/stores/auth.store.js'
+
+// Which backend this build calls: the first thing to check when a panel is
+// empty, so it sits under the name rather than in a settings page.
+const API_HOST = (import.meta.env.VITE_API_URL ?? '').replace(/^https?:\/\//, '') || '/'
+
+function initialsOf(name) {
+  return name
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join('')
+}
+
+export default function LayoutAuthenticated({ children }) {
+  const navigate = useNavigate()
+  const matches = useMatches()
+  const title = matches[matches.length - 1]?.handle?.title ?? appName
+
+  const authenticated = useIsAuthenticated()
+  const user = useAuthStore((state) => state.user)
+  const clearSession = useAuthStore((state) => state.logout)
+  // Whatever the backend put on the session. Nothing is assumed about its
+  // shape beyond these two common fields.
+  const userName = user?.name ?? user?.email ?? 'Guest'
+
+  async function signOut() {
+    await logout()
+    clearSession()
+    navigate(LOGIN_ROUTE, { replace: true })
+  }
+
+  // Closed at load, at every width. Past the breakpoint the sidebar is static
+  // and this only governs the drawer.
+  const [open, setOpen] = useState(false)
+
+  // The drawer covers the page, so the page behind it must stop scrolling --
+  // same lock BaseModal.jsx uses, and for the same reason: without it a swipe
+  // aimed at the menu scrolls the article underneath and the menu slides away
+  // with it. The previous value is restored rather than cleared, so a modal
+  // that was already holding the lock keeps it.
+  useEffect(() => {
+    if (!open) return undefined
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [open])
+
+  // `open` outlives the breakpoint that made it a drawer. Past 960px there is
+  // nothing to close, so the lock would be invisible and the page simply would
+  // not scroll. The width is the one in nexora.css's drawer media query.
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 961px)')
+    const closeOnDesktop = (event) => {
+      if (event.matches) setOpen(false)
+    }
+    desktop.addEventListener('change', closeOnDesktop)
+    return () => desktop.removeEventListener('change', closeOnDesktop)
+  }, [])
+
+  return (
+    <div className="nx-shell">
+      {/* One <nav> for both breakpoints: a glass sidebar on desktop, the same
+          element as a drawer below 960px. Two lists of links -- a sidebar and
+          a separate mobile menu -- drift apart the first time somebody adds a
+          page to one of them. */}
+      <aside className={`nx-sidebar ${open ? 'is-open' : ''}`}>
+        <div className="nx-sidebar-brand">
+          <Link to="/" className="nx-logo" onClick={() => setOpen(false)}>
+            {appName}
+          </Link>
+          <span className="nx-sidebar-sub" title="VITE_API_URL">
+            {API_HOST}
+          </span>
+        </div>
+
+        <nav className="nx-sidebar-menu" aria-label="Main navigation">
+          <span className="nx-nav-label">Workspace</span>
+          {menu.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
+              onClick={() => setOpen(false)}
+              className={({ isActive }) => `nav-sublink ${isActive ? 'is-active' : ''}`}
+            >
+              {item.icon ? <BaseIcon path={item.icon} size="sm" /> : null}
+              <span>{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="nx-sidebar-footer">
+          <span className="nx-avatar" aria-hidden="true">
+            {initialsOf(userName)}
+          </span>
+          <div className="nx-user">
+            <p className="nx-user-name">{userName}</p>
+            <p className="nx-user-role">{authenticated ? 'Signed in' : 'Not signed in'}</p>
+          </div>
+          {authenticated ? (
+            <button type="button" className="nx-round-btn" aria-label="Sign out" title="Sign out" onClick={signOut}>
+              <BaseIcon path={mdiLogout} size="sm" />
+            </button>
+          ) : (
+            <Link to={LOGIN_ROUTE} className="nx-round-btn" aria-label="Sign in" title="Sign in">
+              <BaseIcon path={mdiLogin} size="sm" />
+            </Link>
+          )}
+        </div>
+      </aside>
+
+      {/* Drawer only. Tapping outside to close is the gesture people already
+          have. */}
+      {open ? <div className="nx-scrim" aria-hidden="true" onClick={() => setOpen(false)} /> : null}
+
+      <div className="nx-main">
+        <header className="nx-topbar">
+          <div className="nx-topbar-group">
+            <button
+              type="button"
+              className="nx-round-btn nx-menu-toggle"
+              aria-expanded={open}
+              aria-label="Toggle navigation"
+              onClick={() => setOpen((value) => !value)}
+            >
+              <svg
+                className="size-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M4 7h16M4 12h16M4 17h10" />
+              </svg>
+            </button>
+            <span className="nx-topbar-title">{title}</span>
+          </div>
+
+          <div className="nx-topbar-group">
+            <AccentPicker />
+            <ThemeToggle />
+          </div>
+        </header>
+
+        <main className="nx-content">{children}</main>
+      </div>
+    </div>
+  )
+}

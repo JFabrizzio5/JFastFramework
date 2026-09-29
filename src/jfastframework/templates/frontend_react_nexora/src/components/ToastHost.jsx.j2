@@ -1,0 +1,51 @@
+import { mdiAlertCircleOutline, mdiCheckCircleOutline, mdiClose, mdiInformationOutline } from '@mdi/js'
+
+import BaseIcon from '@/components/BaseIcon.jsx'
+import useToast from '@/hooks/useToast.js'
+
+// Each toast carries a word as well as a hue and an icon, because colour on
+// its own says nothing to a screen reader and not much to a red-green eye.
+// Keyed by `kind`, which is the field the notification store writes.
+const KINDS = {
+  success: { word: 'Done', icon: mdiCheckCircleOutline },
+  error: { word: 'Something went wrong', icon: mdiAlertCircleOutline },
+  info: { word: 'Heads up', icon: mdiInformationOutline },
+}
+
+// Mount this once, at the app root, next to the router. A live region has to
+// be in the document before content lands in it -- a host mounted on demand
+// alongside its first toast announces nothing.
+export default function ToastHost() {
+  const toasts = useToast((state) => state.toasts)
+  const dismiss = useToast((state) => state.dismiss)
+
+  return (
+    // The stack spans a corner of the viewport, so it is pointer-events: none
+    // in nexora.css and each capsule turns them back on.
+    <div role="region" aria-label="Notifications" className="nx-toasts">
+      {toasts.map((toast) => {
+        const kind = KINDS[toast.kind] ? toast.kind : 'info'
+        const { word, icon } = KINDS[kind]
+        return (
+          <div key={toast.id} role="status" className={`nx-toast is-${kind}`}>
+            <span className="nx-toast-icon" aria-hidden="true">
+              <BaseIcon path={icon} size="sm" />
+            </span>
+            <div className="nx-toast-body">
+              <p className="nx-toast-title">{word}</p>
+              <p className="nx-toast-message">{toast.message}</p>
+            </div>
+            <button
+              type="button"
+              className="nx-close-pill"
+              aria-label={`Dismiss ${word.toLowerCase()} notification`}
+              onClick={() => dismiss(toast.id)}
+            >
+              <BaseIcon path={mdiClose} size="sm" />
+            </button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}

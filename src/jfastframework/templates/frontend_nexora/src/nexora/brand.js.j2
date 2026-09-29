@@ -1,0 +1,8 @@
+// The name on the wordmark, the sign-in page and the section eyebrows.
+//
+// It is VITE_APP_NAME and nothing else -- no framework or template words
+// around it -- so rename the product in .env (for `npm run dev`) and
+// .env.production (for `npm run build`), not here. The fallback is only for a
+// build where the variable is missing, which would otherwise print "undefined"
+// in the sidebar.
+export const APP_NAME = (import.meta.env.VITE_APP_NAME ?? '').trim() || 'jfastframework'

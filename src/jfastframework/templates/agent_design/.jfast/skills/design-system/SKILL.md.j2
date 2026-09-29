@@ -1,39 +1,57 @@
 ---
 name: design-system
-description: The visual language for {{ service_title }} — colour, type, spacing and
-  component rules, so screens share one system instead of looking like default
-  templates.
-when_to_use: Building or restyling any user-facing surface, and before picking
-  a colour, a font size or a spacing value.
+description: The visual language for {{ service_title }} — which look it was generated
+  with, its tokens and component classes, and how to change the look when the
+  user asks for a different one.
+when_to_use: Building or restyling any user-facing surface, before picking a
+  colour, a font size or a spacing value, and whenever the user asks for a
+  different look, theme, template or brand.
 when_not_to_use: Backend-only work, or a change that touches no rendered
   output.
 ---
 
-## The contract
+## The user's look wins
 
-**Use a token, never a raw colour in a component.** A colour that appears once
-as `#dc2626` in one file is the colour nobody can change later.
+What the generator shipped is a starting point, not a constraint. When the
+user asks for another look — the other shipped template, a brand, "make it
+look like X" — **do it**. Do not keep the current look because this file
+describes it, and do not answer that the project has a design system.
 
 {% if is_web %}
+This service renders its pages on the server, so its look is
+`static/app.css` and the templates beside it: restyle those. For a Vue or
+React frontend with one of the shipped looks, generate one:
+
+```bash
+jfast new service admin --kind spa --frontend vue --template nexora    # or classic
+```
+{% else %}
+This project was generated with the **{{ frontend_template }}** look. The
+choice is recorded in `.jfast-template` (`frontend_template`), and
+`jfast new view` reads it from there so new pages match.
+
+| The user wants | Do this |
+| --- | --- |
+| The other shipped look (`nexora` or `classic`) in a new project | `jfast new service <name> --kind spa --frontend {{ frontend }} --template <look>` |
+| The other shipped look here | Generate it beside this one with the command above, then move the `src/Modulo<Name>/` folders across. Pages draw from the shared components, so they follow |
+| A look jfast does not ship | Restyle here: replace the tokens in the stylesheet below, then the markup of the components in `src/components/`. Keep their props — generated pages call them |
+
+After a restyle, pass `--template` to `jfast new view` if the recorded look no
+longer describes the project, or edit the page it writes.
+{% endif %}
+
+**"Use a token, never a raw colour" is about consistency inside whichever look
+the user chose.** It is not a reason to keep the default. A restyle changes
+the tokens; components keep reading them.
+
+{% if is_web %}
+## Tokens
+
 `static/app.css` holds the tokens, as CSS custom properties on `:root`. Add one
 there before using it. Every token is defined on bare `:root` and only
 *redefined* in the dark block, so no colour has its single definition inside a
 media query.
-{% else %}
-`src/style.css` holds the tokens, in Tailwind v4's `@theme`. Add one there
-before using it, and use the utility Tailwind generates from it — `bg-surface`,
-`text-ink`, `border-line` — rather than a literal value.
 
-The surface tokens are declared in `@theme inline`, which is the mechanism
-rather than a detail: the generated utilities emit `var(--ui-surface)` instead
-of resolving at build time, so swapping the variable flips the whole interface.
-That is why not one generated component carries a `dark:` class, and adding one
-is how the two themes start drifting apart.
-{% endif %}
-
-## Colour
-
-{% if is_web %}
 | Token | Use it for |
 | --- | --- |
 | `--accent` / `--accent-text` | The one action on the screen. `.btn-primary` is this pair |
@@ -44,7 +62,62 @@ is how the two themes start drifting apart.
 | `--muted` | Labels, hints, timestamps, empty-state copy |
 | `--danger` | Destructive actions and error text |
 | `--ok-bg` / `--ok-text`, `--off-bg` / `--off-text` | The two badge states |
+
+One family, from the token `--font` — the system UI stack. Spacing is
+`var(--space)` and multiples of it; radius is `var(--radius)`, except badges
+and avatars, which are pills.
+{% elif frontend_template == "nexora" %}
+## Nexora: tokens
+
+Liquid glass: frosted panels over a black studio (a light one too), a glass
+sidebar, an island top bar, a WebGL ribbon behind everything.
+
+`src/nexora/nexora.css` is the design system. Colour comes from two places:
+
+| Tokens | Hold |
+| --- | --- |
+| `--c-accent`, `--c-glow`, `--c-body`, `--c-accent-deep`, `--c-on-accent` | The palette, as RGB triplets: `rgb(var(--c-accent) / 0.2)` |
+| `--bg-primary`, `--card-bg`, `--card-border`, `--pill-bg`, `--nav-bg` | Surfaces, per theme |
+| `--text-main`, `--text-dim`, `--text-light`, `--accent-text` | Text, per theme. `--accent-text` is the accent made readable |
+| `--success`, `--warning`, `--danger`, `--info` | Status. The hue is the meaning, so these never follow the accent |
+
+`src/style.css` exposes them as Tailwind utilities for layout work:
+`bg-surface`, `bg-panel`, `border-line`, `text-ink`, `text-ink-soft`, and the
+`brand-50`…`brand-900` ramp, derived from the accent.
+
+**The accent is runtime state.** `src/nexora/accent.js` derives the whole
+palette from one colour and writes it on `<html>`: from the viewer's pick in
+`AccentPicker`, else `VITE_ACCENT` in `.env`, else the triplets in the
+stylesheet. To rebrand, set `VITE_ACCENT` or edit those triplets — never a
+colour in a component. The brand name is `VITE_APP_NAME`, read through
+`src/nexora/brand.js`.
+
+## Nexora: components and classes
+
+Use the components first: `BaseButton`, `CardBox`, `BaseInput`, `BaseModal`,
+`BaseBadge`, `EmptyState`, `SkeletonLoader`, `SectionTitleLineWithButton`.
+When markup needs a class directly, these exist:
+
+| Class | For |
+| --- | --- |
+| `card-panel`, `liquid-panel` | A pane of glass; the second has no padding |
+| `btn-modern` + `btn-primary` / `btn-outline` / `btn-ghost` / `btn-danger` | Buttons, pill-shaped |
+| `badge-status` + `is-success` / `is-warning` / `is-danger` / `is-info` / `is-accent` | Status, always with a word |
+| `page-header-row`, `page-title`, `nx-eyebrow`, `panel-head`, `panel-title` | Page and panel headings |
+| `kpi-grid`, `kpi-card`, `kpi-label`, `kpi-value` | Figures |
+| `table-responsive`, `erp-table`, `cell-title`, `cell-sub` | Tables |
+| `nx-list`, `nx-list-item` | A column of small items |
+
+Type: Plus Jakarta Sans for text, JetBrains Mono for figures and labels, Caveat
+for the wordmark only. The ribbon (`src/nexora/liquid.js`) is decoration:
+never put information in it, and never import it outside `background.js`.
 {% else %}
+## Classic: tokens
+
+`src/style.css` holds the tokens, in Tailwind v4's `@theme`. Add one there
+before using it, and use the utility Tailwind generates from it — `bg-surface`,
+`text-ink`, `border-line` — rather than a literal value.
+
 | Token | Use it for |
 | --- | --- |
 | `brand-600` / `brand-500` | Primary action, hover, focus ring. The full 50–900 ramp is declared |
@@ -55,74 +128,43 @@ is how the two themes start drifting apart.
 | `ink` | Body copy |
 | `ink-soft` | Labels, hints, timestamps |
 | `ink-faint` | Placeholder and disabled text |
+
+The surface tokens are declared in `@theme inline`: the utilities emit
+`var(--ui-surface)` instead of a value resolved at build time, so swapping the
+variable flips the whole interface. That is why no generated component carries
+a `dark:` class. One family — the system UI stack; spacing steps
+`2 / 3 / 4 / 6 / 8`; `rounded-lg` for cards and inputs, `rounded-md` for
+buttons, `rounded-full` for badges.
 {% endif %}
 
-The accent is an accent, not the palette. It marks the one thing on a screen
-that should be clicked; a page where three things carry it has no accent at all.
+## Rules that hold in any look
 
-Destructive actions share that weight, which is why a destructive button is
-**outlined**, never solid — solid is already taken by "proceed".
-
-The neutrals carry a hint of blue rather than being pure grey. Next to a
-saturated accent, a perfectly neutral grey reads as dirty.
-
-## Type
-
-One family, from the token{% if is_web %} `--font`{% endif %} — the system UI
-stack. Do not add a web font without saying so: it is a render-blocking request
-and a licence question, not a style tweak.
-
-Two sizes on a screen is usually right. Four is a screen that has stopped
-having a hierarchy. Emphasis is weight and size, never colour.
-
-## Spacing and shape
-
-{% if is_web %}
-- Spacing is `var(--space)` and multiples of it: `calc(var(--space) * 2)`. Not
-  arbitrary pixels.
-- Radius is `var(--radius)`, except badges and avatars, which are pills.
-{% else %}
-- Spacing steps: `2 / 3 / 4 / 6 / 8`. Not arbitrary pixels.
-- Radius: `rounded-lg` for cards and inputs, `rounded-md` for buttons,
-  `rounded-full` for badges and avatars.
-{% endif %}
+- **The accent is an accent, not the palette.** It marks the one thing on a
+  screen that should be clicked; three of them is no accent at all.
+- **A destructive button is never solid.** Solid is already "proceed".
+- **Emphasis is weight and size, never colour.** Two type sizes on a screen is
+  usually right.
 - **Borders over shadows on dark surfaces.** A shadow on near-black is
-  invisible, so the border is what makes a card a card.
-- Transitions: ~150ms, on colour, background, border and shadow only. An
-  interface that animates its layout feels slow.
-
-## The two states people forget
-
-**Loading is not the word "Loading...".** Use a skeleton shaped like the
-content that is coming, so the layout does not jump when it arrives.
-{% if is_web %}HTMX sets `.htmx-request` on the element while a request is in
-flight; that is the hook.{% endif %}
-
-**Empty is not an empty page.** An empty list says what would be there and
-offers the action that creates the first one.
+  invisible.
+- **Loading is a skeleton shaped like what is coming; empty says what would be
+  there and offers the action that creates it.**
+- **Never `outline: none` without a replacement.** Keyboard users lose the
+  page.
+- **Colour is never the only signal.** A red badge also says "Failed" in words.
+{% if not is_web %}
+- **No `dark:` class in a component.** The tokens already change with the
+  theme; a component that hardcodes both halves is two themes waiting to
+  diverge.
+{% endif %}
 
 ## Verification
 
-Before calling a screen done:
-
-- Does it render in both themes? There are three states, not two: system,
-  explicit `data-theme="dark"`, explicit `data-theme="light"`. Check all three.
-- Is every colour a token?
-- Does the focus ring show on keyboard navigation?
-- Is there a loading state and an empty state?
-- At 375px wide, does anything scroll the page sideways? Wide content scrolls
-  inside its own container.
-
-## Common mistakes
-
-- **A raw colour in a component.** Add the token instead.
-- **Colour used for emphasis.** Emphasis is weight and size. The accent is for
-  the action.
-- **`outline: none` with no replacement.** Keyboard users lose the page.
-- **Colour as the only signal.** A red badge also says "Failed" in words.
-- **An icon-only button with no `aria-label`.** It is unreadable to a screen
-  reader and to anyone who has not memorised the icon.
+- Every screen in all three theme states: system, `data-theme="dark"`,
+  `data-theme="light"`.
+- Every colour is a token of the look in use.
+- The focus ring shows on keyboard navigation; icon-only buttons have an
+  `aria-label`.
+- At 375px wide nothing scrolls the page sideways.
 {% if not is_web %}
-- **A `dark:` class in a component.** The token already changes with the theme.
-  A component that hardcodes both halves is two themes waiting to diverge.
+- `npm run build` passes, and a page from `jfast new view` still renders.
 {% endif %}

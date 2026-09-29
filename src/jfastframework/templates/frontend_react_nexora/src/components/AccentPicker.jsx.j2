@@ -1,0 +1,101 @@
+import { useEffect, useId, useRef, useState } from 'react'
+
+import { PRESETS, currentAccent, resetAccent, setAccent } from '@/nexora/accent.js'
+
+function orb(preset) {
+  return `radial-gradient(circle at 32% 28%, ${preset.glow ?? preset.accent} 0%, ${preset.accent} 45%, #000 100%)`
+}
+
+// A non-modal popover: it does not trap focus, it closes on Escape, on a click
+// outside, and returns focus to the button that opened it. The colour itself
+// is applied by accent.js, which is also what index.html replays on reload.
+export default function AccentPicker() {
+  const root = useRef(null)
+  const trigger = useRef(null)
+  const panel = useRef(null)
+  const panelId = useId()
+  const [open, setOpen] = useState(false)
+  const [current, setCurrent] = useState(currentAccent)
+
+  function choose(hex) {
+    setAccent(hex)
+    setCurrent(currentAccent())
+  }
+
+  function reset() {
+    resetAccent()
+    setCurrent(currentAccent())
+  }
+
+  function close(returnFocus = false) {
+    setOpen(false)
+    if (returnFocus) trigger.current?.focus()
+  }
+
+  // Listening only while open: a document listener per mounted picker that
+  // runs on every click in the app, for a popover that is closed nearly all
+  // the time, is cost for nothing.
+  useEffect(() => {
+    if (!open) return undefined
+    panel.current?.querySelector('button')?.focus()
+    const onPointerDown = (event) => {
+      if (!root.current?.contains(event.target)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open])
+
+  return (
+    <div
+      ref={root}
+      className="nx-accent"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && open) close(true)
+      }}
+    >
+      <button
+        ref={trigger}
+        type="button"
+        className="nx-round-btn"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={panelId}
+        aria-label="Accent colour"
+        title="Accent colour"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="nx-accent-swatch" aria-hidden="true" />
+      </button>
+
+      {open ? (
+        <div id={panelId} ref={panel} className="nx-accent-popover" role="dialog" aria-label="Accent colour">
+          <p className="nx-accent-title">Accent</p>
+
+          <div className="nx-accent-grid">
+            {PRESETS.map((preset) => (
+              <button
+                key={preset.name}
+                type="button"
+                className="nx-accent-option"
+                aria-pressed={current === preset.accent}
+                onClick={() => choose(preset.accent)}
+              >
+                <span className="nx-orb" style={{ background: orb(preset) }} aria-hidden="true" />
+                {preset.name}
+              </button>
+            ))}
+          </div>
+
+          <label className="nx-accent-custom">
+            <span>Custom colour</span>
+            <input type="color" value={current.toLowerCase()} onChange={(event) => choose(event.target.value)} />
+          </label>
+
+          <button type="button" className="btn-modern btn-ghost btn-sm nx-accent-reset" onClick={reset}>
+            Back to the default
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}

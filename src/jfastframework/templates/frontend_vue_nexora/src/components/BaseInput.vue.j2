@@ -1,0 +1,49 @@
+<template>
+  <div class="form-group">
+    <label :for="id" class="form-label" :class="hideLabel && 'sr-only'">
+      {{ label }}
+    </label>
+
+    <input v-bind="$attrs" :id="id" :type="type" :value="modelValue" :disabled="disabled"
+      :aria-invalid="error ? 'true' : undefined" :aria-describedby="describedBy" class="form-input"
+      @input="emit('update:modelValue', $event.target.value)" />
+
+    <p v-if="error" :id="messageId" class="form-error">{{ error }}</p>
+    <p v-else-if="hint" :id="messageId" class="form-hint">{{ hint }}</p>
+  </div>
+</template>
+
+<script setup>
+import { computed, useId } from 'vue'
+
+// $attrs go on the input rather than the wrapper, so placeholder, autocomplete
+// and maxlength reach the field they were meant for. They are bound first: the
+// props below must win, or a stray `value` would fight v-model.
+defineOptions({ inheritAttrs: false })
+
+// `label` is required and always rendered; `hideLabel` only takes it out of the
+// visual flow with sr-only. There is deliberately no way to render this field
+// without one -- a placeholder is not a label, it disappears on the first
+// keystroke and leaves the field unnamed for anyone who tabs back to it.
+const props = defineProps({
+  modelValue: { type: [String, Number], default: '' },
+  label: { type: String, required: true },
+  hideLabel: Boolean,
+  type: { type: String, default: 'text' },
+  error: { type: String, default: null },
+  hint: { type: String, default: null },
+  disabled: Boolean,
+})
+
+const emit = defineEmits(['update:modelValue'])
+
+// useId() rather than a counter: it survives two of these on one page and does
+// not collide across a hydrated render.
+const id = useId()
+const messageId = `${id}-message`
+
+// Only names the element that is actually in the DOM. Pointing aria-describedby
+// at a missing id is worse than omitting it -- the field reads as described and
+// then has nothing to read.
+const describedBy = computed(() => (props.error || props.hint ? messageId : undefined))
+</script>

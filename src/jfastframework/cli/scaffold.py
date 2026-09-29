@@ -12,14 +12,15 @@ Two Jinja environments, because HTML templates are themselves Jinja::
 
 Every generated tree carries a ``.jfast-template`` stamp recording which
 template produced it, so ``jfast upgrade`` can later re-apply a newer template
-and show a diff instead of a rewrite.
+and show a diff instead of a rewrite. For a frontend the stamp is also where
+its look is recorded, so ``jfast new view`` can match it later.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -53,6 +54,17 @@ CONTRACT_TEMPLATE_FOR: dict[str, str] = {
 MODULE_UIS = ("api", "htmx")
 SERVICE_KINDS = ("api", "web", "spa", "gateway")
 FRONTENDS = ("vue", "react")
+
+#: The look a generated frontend is drawn in, first entry the default.
+#:
+#: A look is only the files that draw: stylesheet, components, layout, the two
+#: shipped screens and the page `jfast new view` writes. Router, stores, the
+#: axios instance and the generator markers are one set shared by every look,
+#: so a view generator or a 401 fix never has to be written twice. The look's
+#: trees are rendered first and win any file both sides carry -- see
+#: `Scaffolder.render_trees`.
+FRONTEND_TEMPLATES = ("nexora", "classic")
+DEFAULT_FRONTEND_TEMPLATE = FRONTEND_TEMPLATES[0]
 
 
 @dataclass(frozen=True)
@@ -294,6 +306,7 @@ class Scaffolder:
         *,
         force: bool = False,
         dry_run: bool = False,
+        skip: Collection[Path] = (),
     ) -> list[WrittenFile]:
         source = self.template_root / template
         if not source.is_dir():
@@ -311,6 +324,8 @@ class Scaffolder:
             # named "orders" lands in modules/orders/, not modules/{{module}}/.
             rendered_name = self.env.from_string(str(relative).replace(".j2", "")).render(**context)
             destination = target / rendered_name
+            if destination in skip:
+                continue
 
             if destination.exists() and not force:
                 written.append(WrittenFile(destination, created=False))
@@ -340,13 +355,22 @@ class Scaffolder:
         Composition instead of multiplication: a layout tree plus an optional
         UI overlay covers layered/screaming x api/htmx with three trees rather
         than four copies that drift apart.
+
+        The first tree to claim a path owns it. That is what lets a frontend
+        look replace a stylesheet or a component of the shared frontend tree
+        without a copy of the rest -- and it holds under ``--force`` too, where
+        "the last write wins" would hand every overridden file back to the
+        tree underneath.
         """
         written: list[WrittenFile] = []
+        claimed: set[Path] = set()
         for tree in trees:
             merged = {**context, **tree.extra} if tree.extra else context
-            written.extend(
-                self.render_tree(tree.template, tree.target, merged, force=force, dry_run=dry_run)
+            files = self.render_tree(
+                tree.template, tree.target, merged, force=force, dry_run=dry_run, skip=claimed
             )
+            claimed.update(file.path for file in files)
+            written.extend(files)
         return written
 
     def _write_stamp(self, target: Path, template: str, context: dict[str, Any]) -> None:
@@ -402,6 +426,7 @@ def service_context(
     workspace_name: str = "workspace",
     api_base_url: str = "",
     frontend: str | None = None,
+    frontend_template: str | None = None,
     routes: Sequence[dict[str, str]] = (),
     language: str = "python",
     sample_module: str = "item",
@@ -439,6 +464,11 @@ def service_context(
         "grpc": grpc,
         "grpc_port": port + 9,
         "frontend": frontend,
+        # Stamped into `.jfast-template` with the rest of the context, which is
+        # the one place `jfast new view` reads the look back from.
+        "frontend_template": (frontend_template or DEFAULT_FRONTEND_TEMPLATE)
+        if kind == "spa"
+        else None,
         "workspace_name": workspace_name,
         "api_base_url": api_base_url or f"http://localhost:{port}",
         "routes": list(routes),
@@ -462,7 +492,9 @@ def service_context(
     return context
 
 
-def view_context(name: str, *, frontend: str = "vue") -> dict[str, Any]:
+def view_context(
+    name: str, *, frontend: str = "vue", frontend_template: str = "classic"
+) -> dict[str, Any]:
     """Context for a frontend module (his `Modulo<Name>` structure)."""
     pascal = to_pascal(name)
     slug = to_kebab(name)
@@ -475,6 +507,7 @@ def view_context(name: str, *, frontend: str = "vue") -> dict[str, Any]:
         "view_title": re.sub(r"(?<=[a-z])(?=[A-Z])", " ", pascal),
         "view_path": f"/{slug}",
         "frontend": frontend,
+        "frontend_template": frontend_template,
     }
 
 
@@ -527,6 +560,7 @@ def service_trees(
     grpc: bool = False,
     agent_docs: bool = False,
     layout: str | None = None,
+    frontend_template: str = DEFAULT_FRONTEND_TEMPLATE,
 ) -> list[Tree]:
     """Which template trees make up a service of this kind.
 
@@ -546,6 +580,9 @@ def service_trees(
     tell a reader to consult ``.jfast/skills/design-system/SKILL.md``, and
     without this that path is written into every frontend and points at
     nothing.
+
+    ``frontend_template`` is the look of an SPA and means nothing for any other
+    kind. A non-default look is its own trees in front of the shared one.
     """
     if kind not in SERVICE_KINDS:
         raise ValueError(f"Unknown kind {kind!r}. Choose from: {', '.join(SERVICE_KINDS)}")
@@ -570,7 +607,14 @@ def service_trees(
                 f"Choose from: {', '.join(FRONTENDS)}. "
                 f"Angular is not generated -- see PLAN.md phase 3."
             )
-        spa: list[Tree] = [Tree(f"frontend_{frontend}", target)]
+        check_frontend_template(frontend_template)
+        spa: list[Tree] = []
+        if frontend_template != "classic":
+            # Framework-specific files first, then what one look shares between
+            # Vue and React, then the base: the first tree to claim a path wins.
+            spa.append(Tree(f"frontend_{frontend}_{frontend_template}", target))
+            spa.append(Tree(f"frontend_{frontend_template}", target))
+        spa.append(Tree(f"frontend_{frontend}", target))
         if agent_docs:
             # The design skill lives with the thing it describes, which for a
             # frontend project is the frontend project.
@@ -623,10 +667,57 @@ def detect_frontend(root: Path) -> str | None:
     return None
 
 
-def view_trees(frontend: str, target: Path) -> list[Tree]:
+def check_frontend_template(template: str) -> None:
+    """Raise on a look nobody ships, naming the ones that exist."""
+    if template not in FRONTEND_TEMPLATES:
+        raise ValueError(
+            f"Unknown frontend template {template!r}. Choose from: {', '.join(FRONTEND_TEMPLATES)}."
+        )
+
+
+def detect_frontend_template(root: Path) -> str | None:
+    """The look a frontend project was generated with, read from its stamp.
+
+    The stamp is the single record of it: the choice is made once, at
+    generation, and every later `jfast new view` has to draw its page in the
+    same look or the new screen is the odd one out.
+
+    A project stamped before looks existed has a frontend entry and no
+    template in it, and that project can only be classic -- the one look there
+    was. ``None`` means there is no frontend stamp here at all.
+    """
+    stamp = root / STAMP_FILE
+    if not stamp.is_file():
+        return None
+    try:
+        templates = json.loads(stamp.read_text(encoding="utf-8")).get("templates", {})
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(templates, dict):
+        return None
+
+    stamped_frontend = False
+    for name, entry in templates.items():
+        if not name.startswith("frontend_") or not isinstance(entry, dict):
+            continue
+        stamped_frontend = True
+        chosen = (entry.get("context") or {}).get("frontend_template")
+        if chosen in FRONTEND_TEMPLATES:
+            return str(chosen)
+    return "classic" if stamped_frontend else None
+
+
+def view_trees(frontend: str, target: Path, *, frontend_template: str = "classic") -> list[Tree]:
     if frontend not in FRONTENDS:
         raise ValueError(
             f"Frontend {frontend!r} is not supported for view generation. "
             f"Choose from: {', '.join(FRONTENDS)}."
         )
-    return [Tree(f"view_{frontend}", target)]
+    check_frontend_template(frontend_template)
+    trees: list[Tree] = []
+    if frontend_template != "classic":
+        # Only the page is drawn differently; routes, service and folders are
+        # the shared tree's.
+        trees.append(Tree(f"view_{frontend}_{frontend_template}", target))
+    trees.append(Tree(f"view_{frontend}", target))
+    return trees

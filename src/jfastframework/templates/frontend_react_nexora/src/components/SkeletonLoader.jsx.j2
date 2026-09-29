@@ -1,0 +1,27 @@
+const SHAPES = {
+  text: 'h-3 rounded-full',
+  block: 'h-24 w-full rounded-2xl',
+  circle: 'h-10 w-10 rounded-full',
+}
+
+// Shape it like the content that is coming, otherwise the layout jumps when the
+// data lands and the wait was for nothing. The shimmer is nexora.css's
+// `nx-skeleton`, which prefers-reduced-motion stops like every other loop.
+export default function SkeletonLoader({ lines = 3, shape = 'text', className = '' }) {
+  const shapeClass = SHAPES[shape] ?? SHAPES.text
+
+  return (
+    <div role="status" className={`space-y-3 ${className}`}>
+      <span className="sr-only">Loading…</span>
+      {Array.from({ length: lines }, (_, index) => (
+        <div
+          key={index}
+          aria-hidden="true"
+          className={`nx-skeleton ${shapeClass} ${
+            shape === 'text' ? (index === lines - 1 && lines > 1 ? 'w-2/3' : 'w-full') : ''
+          }`}
+        />
+      ))}
+    </div>
+  )
+}

@@ -1,0 +1,31 @@
+<template>
+  <!-- The still frame is always there. It is what shows under reduced motion,
+       without WebGL, and for the moment before three.js arrives, so none of
+       those cases is a blank page. -->
+  <div class="nx-ambient" aria-hidden="true">
+    <div class="nx-ambient-glow" />
+  </div>
+  <canvas ref="canvas" class="nx-liquid-canvas" aria-hidden="true" />
+</template>
+
+<script setup>
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+
+import { useTheme } from '@/composables/useTheme.js'
+import { createLiquidBackground } from '@/nexora/background.js'
+
+// Mount once, in App.vue. Every decision about whether the ribbon runs --
+// reduced motion, WebGL, a hidden tab -- is in background.js.
+const canvas = ref(null)
+const { resolved } = useTheme()
+let background = null
+
+onMounted(() => {
+  background = createLiquidBackground(canvas.value, { mode: resolved.value })
+})
+
+// The glass is lit differently on white: glowing light washes out there.
+watch(resolved, (mode) => background?.setMode(mode))
+
+onBeforeUnmount(() => background?.destroy())
+</script>

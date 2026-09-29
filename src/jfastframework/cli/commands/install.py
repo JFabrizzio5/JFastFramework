@@ -21,10 +21,13 @@ from jfastframework.cli.generate import (
 )
 from jfastframework.cli.scaffold import (
     DATASTORE_PLUGINS,
+    DEFAULT_FRONTEND_TEMPLATE,
     DEFAULT_LAYOUT,
+    FRONTEND_TEMPLATES,
     FRONTENDS,
     PLUGIN_CATALOG,
     Scaffolder,
+    check_frontend_template,
     module_context,
     module_trees,
     to_snake,
@@ -36,6 +39,12 @@ def start(
     name: str = typer.Argument("app", help="Project name."),
     port: int = typer.Option(8000, "--port", "-p", help="Base port for the first block."),
     frontend: str = typer.Option("vue", "--frontend", "-f", help=f"{', '.join(FRONTENDS)}."),
+    template: str = typer.Option(
+        DEFAULT_FRONTEND_TEMPLATE,
+        "--template",
+        "-T",
+        help=f"The frontend's look: {', '.join(FRONTEND_TEMPLATES)}.",
+    ),
     queue_backend: str = typer.Option("postgres", "--queue", help="postgres (default) or redis."),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files."),
 ) -> None:
@@ -52,6 +61,10 @@ def start(
     """
     if frontend not in FRONTENDS:
         raise typer.BadParameter(f"choose from: {', '.join(FRONTENDS)}", param_hint="--frontend")
+    try:
+        check_frontend_template(template)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--template") from exc
     if queue_backend not in ("postgres", "redis"):
         raise typer.BadParameter("choose from: postgres, redis", param_hint="--queue")
 
@@ -104,6 +117,7 @@ def start(
         port=None,
         plugins=[],
         frontend=frontend,
+        frontend_template=template,
         target=Path(f"{slug}-web"),
         workspace=workspace,
         force=force,
@@ -132,7 +146,7 @@ def start(
             ("stack", "modular monolith"),
             ("data", "PostgreSQL + pgvector, Redis"),
             ("jobs", f"background jobs on {queue_backend}"),
-            ("web", f"{frontend} frontend behind Caddy"),
+            ("web", f"{frontend} frontend, {template} look, behind Caddy"),
         ],
     )
 
@@ -165,7 +179,7 @@ def start(
 def init(
     name: str | None = typer.Argument(None, help="Service name. Prompted if omitted."),
 ) -> None:
-    """Interactive installer: pick a kind, a frontend and your datastores.
+    """Interactive installer: pick a kind, a frontend and its look, and your datastores.
 
     The flag-driven `jfast new service` does the same thing without questions.
     This is the front door for the first service in a project.
@@ -179,13 +193,14 @@ def init(
         [
             ui.Choice("api", "", "A JSON API"),
             ui.Choice("web", "", "Server-rendered pages: Jinja2 and HTMX, no build step"),
-            ui.Choice("spa", "", "A frontend project: Vue or React, with Tailwind"),
+            ui.Choice("spa", "", "A frontend project: Vue or React, with Tailwind and a look"),
             ui.Choice("gateway", "", "A reverse proxy in front of other services"),
         ],
         default="api",
     )
 
     frontend: str | None = None
+    template: str | None = None
     if kind == "spa":
         frontend = ui.select(
             "Which frontend?",
@@ -196,6 +211,14 @@ def init(
             default="vue",
         )
         ui.note("Angular is not generated: no CI job builds it, so it would be untested.")
+        template = ui.select(
+            "Which look?",
+            [
+                ui.Choice("nexora", "Nexora", "Liquid glass: glass panels, island top bar, WebGL"),
+                ui.Choice("classic", "Classic", "Plain Tailwind panels, one crimson accent"),
+            ],
+            default=DEFAULT_FRONTEND_TEMPLATE,
+        )
 
     chosen: list[str] = []
     if kind in ("api", "web"):
@@ -276,7 +299,7 @@ def init(
         "About to generate",
         [
             ("service", service_name),
-            ("kind", kind + (f" ({frontend})" if frontend else "")),
+            ("kind", kind + (f" ({frontend}, {template})" if frontend else "")),
             ("ports", f"{port}-{port + 9}"),
             ("plugins", ", ".join(chosen) if chosen else "observability, metrics"),
             ("packages", ", ".join(extras_chosen) if extras_chosen else "none"),
@@ -292,6 +315,7 @@ def init(
             port=port,
             plugins=chosen,
             frontend=frontend,
+            frontend_template=template,
             target=None,
             workspace=workspace,
             agent_docs=agent_docs,

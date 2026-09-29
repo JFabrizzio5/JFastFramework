@@ -1,0 +1,76 @@
+<template>
+  <div class="nx-auth">
+    <div class="nx-auth-corner flex items-center gap-2">
+      <AccentPicker />
+      <ThemeToggle />
+    </div>
+
+    <section class="nx-auth-hero">
+      <span class="nx-logo">{{ appName }}</span>
+      <h1>
+        <span class="nx-display">Welcome back.</span><br />
+        <span class="nx-display-faded">Sign in to continue.</span>
+      </h1>
+      <p>Your session stays on this device until you sign out or it expires.</p>
+    </section>
+
+    <div class="liquid-panel nx-auth-card">
+      <span class="nx-eyebrow">Secure sign-in</span>
+      <h2 class="mt-2">Sign in</h2>
+
+      <form novalidate class="nx-auth-form" @submit.prevent="submit">
+        <BaseInput v-model="email" label="Email" type="email" autocomplete="username" required />
+        <BaseInput v-model="password" label="Password" type="password" autocomplete="current-password"
+          required :error="error" />
+        <BaseButton type="submit" class="mt-2 w-full" :loading="pending">Sign in</BaseButton>
+      </form>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+
+import AccentPicker from '@/components/AccentPicker.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import BaseInput from '@/components/BaseInput.vue'
+import ThemeToggle from '@/components/ThemeToggle.vue'
+import { APP_NAME as appName } from '@/nexora/brand.js'
+import { useAuthStore } from '@/stores/auth.store.js'
+
+const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
+
+const email = ref('')
+const password = ref('')
+const error = ref(null)
+const pending = ref(false)
+
+// The router guard and the 401 handler both arrive here with ?next, so signing
+// in returns to the page that was asked for rather than dumping everyone on
+// the home page.
+//
+// Only a path, never an absolute URL: `next` comes from the address bar, and
+// following one that starts with a host is an open redirect.
+function destination() {
+  const next = route.query.next
+  return typeof next === 'string' && next.startsWith('/') && !next.startsWith('//') ? next : '/'
+}
+
+async function submit() {
+  error.value = null
+  pending.value = true
+  try {
+    await auth.login({ email: email.value, password: password.value })
+    // replace, not push: the back button must not return to a sign-in form
+    // that is already satisfied.
+    await router.replace(destination())
+  } catch (failure) {
+    error.value = failure.message
+  } finally {
+    pending.value = false
+  }
+}
+</script>

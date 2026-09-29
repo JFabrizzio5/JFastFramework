@@ -110,17 +110,24 @@ def _scaffold(tmp_path: Path, layout: str, *, ui: str = "api") -> Path:
     return root
 
 
-def _scaffold_rendered(tmp_path: Path, kind: str, frontend: str | None) -> Path:
+def _scaffold_rendered(
+    tmp_path: Path, kind: str, frontend: str | None, template: str = "nexora"
+) -> Path:
     """A service whose agent surface includes the design skill.
 
     The design skill names the stylesheet it is about, and that file is in a
-    different place for a server-rendered service than for an SPA -- the same
-    class of promise as a module's file map, so it is checked the same way.
+    different place for a server-rendered service than for an SPA -- and for
+    a nexora SPA than for a classic one. The same class of promise as a
+    module's file map, so it is checked the same way.
     """
     root = tmp_path / "ui"
     scaffolder = Scaffolder()
-    context = service_context("ui", kind=kind, frontend=frontend, agent_docs=True)
-    scaffolder.render_trees(service_trees(kind, frontend, root, agent_docs=True), context)
+    context = service_context(
+        "ui", kind=kind, frontend=frontend, agent_docs=True, frontend_template=template
+    )
+    scaffolder.render_trees(
+        service_trees(kind, frontend, root, agent_docs=True, frontend_template=template), context
+    )
     if kind == "web":
         scaffolder.render_trees(
             module_trees("layered", "api", root / "modules", root),
@@ -387,13 +394,19 @@ def test_the_contract_beside_the_document_is_this_layouts_contract(
 
 
 @pytest.mark.parametrize(
-    ("kind", "frontend"),
-    [("web", None), ("spa", "vue"), ("spa", "react")],
+    ("kind", "frontend", "template"),
+    [
+        ("web", None, "nexora"),
+        ("spa", "vue", "nexora"),
+        ("spa", "react", "nexora"),
+        ("spa", "vue", "classic"),
+        ("spa", "react", "classic"),
+    ],
 )
 def test_the_design_skill_names_the_stylesheet_that_is_there(
-    tmp_path: Path, kind: str, frontend: str | None
+    tmp_path: Path, kind: str, frontend: str | None, template: str
 ) -> None:
-    root = _scaffold_rendered(tmp_path, kind, frontend)
+    root = _scaffold_rendered(tmp_path, kind, frontend, template)
     docs = _agent_docs(root)
     assert any(document.parent.name == "design-system" for document in docs)
 
@@ -426,3 +439,24 @@ def test_the_repo_skills_only_name_layouts_that_exist() -> None:
     assert named <= set(MODULE_LAYOUTS), (
         f"unknown layouts named in skills: {named - set(MODULE_LAYOUTS)}"
     )
+
+
+@pytest.mark.parametrize(
+    ("kind", "frontend", "template"),
+    [("web", None, "nexora"), ("spa", "vue", "nexora"), ("spa", "react", "classic")],
+)
+def test_the_design_skill_lets_the_user_change_the_look(
+    tmp_path: Path, kind: str, frontend: str | None, template: str
+) -> None:
+    """The skill used to say "stick to these tokens" and nothing else, and an
+    agent read that as a reason to refuse a different look. It has to say the
+    opposite, and name the way to get one."""
+    root = _scaffold_rendered(tmp_path, kind, frontend, template)
+    body = (root / ".jfast/skills/design-system/SKILL.md").read_text(encoding="utf-8")
+
+    assert "The user's look wins" in body
+    assert "--template" in body
+    if kind == "spa":
+        # It describes the look this project actually has, and only that one.
+        assert f"generated with the **{template}** look" in body
+        assert ("src/nexora/nexora.css" in body) is (template == "nexora")

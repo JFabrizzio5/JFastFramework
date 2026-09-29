@@ -1,0 +1,94 @@
+import { useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+
+import AccentPicker from '@/components/AccentPicker.jsx'
+import BaseButton from '@/components/BaseButton.jsx'
+import BaseInput from '@/components/BaseInput.jsx'
+import ThemeToggle from '@/components/ThemeToggle.jsx'
+import { APP_NAME as appName } from '@/nexora/brand.js'
+import { login } from '@/services/auth.service.js'
+import { useAuthStore } from '@/stores/auth.store.js'
+
+// The router guard and the 401 handler both arrive here with ?next, so signing
+// in returns to the page that was asked for rather than dumping everyone on
+// the home page.
+//
+// Only a path, never an absolute URL: `next` comes from the address bar, and
+// following one that starts with a host is an open redirect.
+function destination(next) {
+  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/'
+}
+
+export default function LoginView() {
+  const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const signIn = useAuthStore((state) => state.login)
+
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+
+  async function submit(event) {
+    event.preventDefault()
+    setError('')
+    setPending(true)
+    try {
+      signIn(await login({ email, password }))
+      // replace, not push: the back button must not return to a sign-in form
+      // that is already satisfied.
+      navigate(destination(params.get('next')), { replace: true })
+    } catch (failure) {
+      setError(failure.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <div className="nx-auth">
+      <div className="nx-auth-corner flex items-center gap-2">
+        <AccentPicker />
+        <ThemeToggle />
+      </div>
+
+      <section className="nx-auth-hero">
+        <span className="nx-logo">{appName}</span>
+        <h1>
+          <span className="nx-display">Welcome back.</span>
+          <br />
+          <span className="nx-display-faded">Sign in to continue.</span>
+        </h1>
+        <p>Your session stays on this device until you sign out or it expires.</p>
+      </section>
+
+      <div className="liquid-panel nx-auth-card">
+        <span className="nx-eyebrow">Secure sign-in</span>
+        <h2 className="mt-2">Sign in</h2>
+
+        <form noValidate className="nx-auth-form" onSubmit={submit}>
+          <BaseInput
+            label="Email"
+            type="email"
+            autoComplete="username"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+          <BaseInput
+            label="Password"
+            type="password"
+            autoComplete="current-password"
+            required
+            error={error}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          <BaseButton type="submit" className="mt-2 w-full" loading={pending}>
+            Sign in
+          </BaseButton>
+        </form>
+      </div>
+    </div>
+  )
+}

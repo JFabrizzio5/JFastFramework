@@ -1,0 +1,27 @@
+<template>
+  <LiquidBackground />
+  <RouterView />
+  <ToastHost />
+</template>
+
+<script setup>
+import { RouterView } from 'vue-router'
+
+import LiquidBackground from '@/components/LiquidBackground.vue'
+import ToastHost from '@/components/ToastHost.vue'
+import { restoreAccent } from '@/nexora/accent.js'
+
+// Before the first render, so nothing accent-coloured is ever painted in the
+// default and then repainted in the saved or configured one.
+restoreAccent()
+
+// Both mounted here and nowhere else.
+//
+// The background lives above the router so a navigation does not tear down
+// the WebGL scene and compile its shaders again: every page wraps itself in
+// LayoutAuthenticated, so anything mounted in the layout is rebuilt on every
+// route change.
+//
+// The toast queue lives in the notification store, so a second <ToastHost>
+// would render the same toasts twice rather than give a view its own.
+</script>

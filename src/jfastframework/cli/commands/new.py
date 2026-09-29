@@ -28,7 +28,9 @@ from jfastframework.cli.patcher import (
 )
 from jfastframework.cli.scaffold import (
     BASE_PLUGINS,
+    DEFAULT_FRONTEND_TEMPLATE,
     DEFAULT_LAYOUT,
+    FRONTEND_TEMPLATES,
     FRONTENDS,
     MODULE_LAYOUTS,
     MODULE_UIS,
@@ -36,7 +38,9 @@ from jfastframework.cli.scaffold import (
     PLURAL_LANGUAGES,
     SERVICE_KINDS,
     Scaffolder,
+    check_frontend_template,
     detect_frontend,
+    detect_frontend_template,
     module_context,
     module_trees,
     to_pascal,
@@ -209,6 +213,15 @@ def new_service(
     frontend: str | None = typer.Option(
         None, "--frontend", "-f", help=f"For --kind spa: {', '.join(FRONTENDS)}."
     ),
+    template: str | None = typer.Option(
+        None,
+        "--template",
+        "-T",
+        help=(
+            f"For --kind spa, the look: {', '.join(FRONTEND_TEMPLATES)}. "
+            f"Defaults to {DEFAULT_FRONTEND_TEMPLATE}; `jfast new view` follows it."
+        ),
+    ),
     language: str = typer.Option(
         "python",
         "--language",
@@ -251,9 +264,11 @@ def new_service(
         jfast new service billing --with database,cache
         jfast new service storefront --kind web
         jfast new service admin --kind spa --frontend vue
+        jfast new service admin --kind spa --frontend react --template classic
     """
     if kind not in SERVICE_KINDS:
         raise typer.BadParameter(f"choose from: {', '.join(SERVICE_KINDS)}", param_hint="--kind")
+    _check_template(template, kind=kind)
     if layout is not None and layout not in MODULE_LAYOUTS:
         raise typer.BadParameter(f"choose from: {', '.join(MODULE_LAYOUTS)}", param_hint="--layout")
 
@@ -270,6 +285,7 @@ def new_service(
             port=port,
             plugins=chosen,
             frontend=frontend,
+            frontend_template=template,
             target=target,
             workspace=workspace,
             language=language,
@@ -415,6 +431,26 @@ def new_enum(
 ICON = "mdiViewDashboardOutline"
 
 
+def _check_template(template: str | None, *, kind: str = "spa") -> None:
+    """Reject a look nobody ships, before anything is written.
+
+    Also a look given to a service that draws nothing: `--kind api --template
+    classic` would otherwise be accepted and ignored, and the person who typed
+    it would reasonably believe it did something.
+    """
+    if template is None:
+        return
+    try:
+        check_frontend_template(template)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--template") from exc
+    if kind != "spa":
+        raise typer.BadParameter(
+            f"only a frontend has a look, and --kind {kind} is not one. Use --kind spa.",
+            param_hint="--template",
+        )
+
+
 @new_app.command("view")
 def new_view(
     name: str = typer.Argument(..., help="View name in PascalCase, e.g. 'Facturas'."),
@@ -423,6 +459,15 @@ def new_view(
         "--frontend",
         "-f",
         help=f"Choose from: {', '.join(FRONTENDS)}. Detected from the project when omitted.",
+    ),
+    template: str | None = typer.Option(
+        None,
+        "--template",
+        "-T",
+        help=(
+            f"Choose from: {', '.join(FRONTEND_TEMPLATES)}. Read from the project's "
+            ".jfast-template stamp when omitted, so the page matches the rest."
+        ),
     ),
     root: Path = typer.Option(
         Path("."), "--root", "-r", help="Frontend project root (the folder holding src/)."
@@ -446,7 +491,12 @@ def new_view(
 
     Running it twice is safe: an already-registered module is detected and
     skipped rather than duplicated.
+
+    The page is drawn in the project's look -- nexora or classic, whichever it
+    was generated with -- so a new screen does not arrive in a different
+    design from every screen around it.
     """
+    _check_template(template)
     resolved = frontend or detect_frontend(root)
     if resolved is None:
         typer.echo(
@@ -457,10 +507,19 @@ def new_view(
         )
         raise typer.Exit(1)
 
+    look = template or detect_frontend_template(root)
+    if look is None:
+        # No stamp: a project generated before stamps existed, or not by jfast
+        # at all. Either way classic was the only look there was, and its page
+        # needs nothing but Tailwind -- a nexora page would name classes this
+        # project does not have.
+        look = "classic"
+        ui.note("No .jfast-template here; drawing the classic page. Pass --template to choose.")
+
     scaffolder = Scaffolder()
     try:
-        context = view_context(name, frontend=resolved)
-        trees = view_trees(resolved, root)
+        context = view_context(name, frontend=resolved, frontend_template=look)
+        trees = view_trees(resolved, root, frontend_template=look)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     frontend = resolved
