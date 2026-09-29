@@ -14,7 +14,7 @@ import re
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urldefrag
+from urllib.parse import urldefrag, urlsplit
 
 
 class Collector(HTMLParser):
@@ -102,6 +102,9 @@ def check(site: Path) -> list[str]:
             target, fragment = urldefrag(href)
             if not target or target.startswith(("http://", "https://", "mailto:", "data:")):
                 continue
+            # `site.css?v=<hash>` names the file site.css; the query only
+            # busts caches.
+            target = urlsplit(target).path
             if target.startswith("/"):
                 problems.append(f"{name}: absolute link {href!r} breaks under a versioned path")
                 continue
@@ -120,7 +123,7 @@ def check(site: Path) -> list[str]:
         for src in collector.assets:
             if src.startswith(("http://", "https://", "data:")):
                 continue
-            if not (page.parent / src).resolve().exists():
+            if not (page.parent / urlsplit(src).path).resolve().exists():
                 problems.append(f"{name}: missing asset {src!r}")
 
         # A page in es/ that says it is English is read aloud in the wrong
