@@ -317,6 +317,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "Guard",
         (
             "auth",
+            "accounts",
             "ratelimit",
             "storage",
             "multitenancy",
@@ -376,6 +377,12 @@ PAGES: tuple[Page, ...] = (
         "Alembic and pytest.",
     ),
     Page("auth", "Authentication", DOCS / "auth.md", "JWT, scopes, rotation, revocation."),
+    Page(
+        "accounts",
+        "Accounts",
+        DOCS / "accounts.md",
+        "Users, password login, roles and permissions.",
+    ),
     Page(
         "ratelimit",
         "Rate limiting",
@@ -509,6 +516,7 @@ NAV_ES: dict[str, str] = {
     "migrations": "Migraciones y tests",
     "timezones": "Zonas horarias",
     "auth": "Autenticación",
+    "accounts": "Cuentas",
     "ratelimit": "Límite de peticiones",
     "websockets": "Websockets",
     "storage": "Almacenamiento",
@@ -563,6 +571,7 @@ PAGE_ICON: dict[str, str] = {
     "migrations": "arrows",
     "timezones": "history",
     "auth": "lock",
+    "accounts": "users",
     "ratelimit": "gauge",
     "websockets": "arrows",
     "storage": "database",

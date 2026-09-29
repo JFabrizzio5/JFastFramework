@@ -66,6 +66,36 @@ generated module wired its session that way.
   serialisation failure or deadlock, and on nothing else.
 - **`docs/transactions.md`**, in English and Spanish.
 
+### Added -- the rest of the transaction story
+
+- **`outbox` plugin.** `outbox.enqueue(session, job)` and
+  `outbox.publish(session, topic, event)` write through the request's session,
+  so a message exists if and only if the rows it is about were committed. On
+  the PostgreSQL queue in the same database the job goes straight into
+  `jfast_jobs`; everything else goes through `jfast_outbox` and a relay that
+  runs in every process with `FOR UPDATE SKIP LOCKED`, backs off, and sets a
+  message aside as dead after `max_attempts`. `claim_once(session, id)` is
+  the consumer's half, and `current_job()` gives a handler its job id to
+  deduplicate on.
+- **`idempotency` plugin.** `IdempotencyKey` / `RequiredIdempotencyKey`: the
+  key is recorded in the request's transaction, a retry replays the stored
+  response with `Idempotent-Replayed: true`, a different body with the same key
+  is 422, and a concurrent duplicate waits on the first insert and gets 409 or
+  the replay. Per tenant, expiring after `ttl_hours`.
+- **Row-level security.** `enable_tenant_rls(op, table)` in a migration and
+  `[plugin.database] rls = true`: every transaction sets its tenant with a
+  transaction-local `set_config`, a query with no tenant sees no rows, and a
+  write for another tenant is refused by PostgreSQL. `bypass_rls()` for work
+  across tenants, on tables that allow it. Production refuses to start with RLS
+  on under a superuser or `BYPASSRLS` role, which ignore every policy.
+- **`accounts` plugin.** The user store `auth` leaves out: users, argon2id
+  password login, lockout after repeated failures, roles and permissions that
+  travel as token scopes (`require_permission`), per-tenant administration
+  under `/accounts`, a bootstrap administrator, and `auth`'s `on_refresh` and
+  `on_identity` hooks registered for you -- so a removed permission or a
+  deactivated account ends at the next refresh, and a provider identity links
+  to an account only through a verified email.
+
 ### Changed
 
 - **Generated modules.** Every layout depends on `DbSession`. `limit` is
@@ -88,6 +118,24 @@ generated module wired its session that way.
   STATUS said installing needs `--pre`, which it does not while only
   pre-releases exist; STATUS said there were no upper bounds, which `0.1.0a8`
   added; CI said the package was not on PyPI.
+
+### Fixed -- framework tables and autogenerate
+
+- **`alembic revision --autogenerate` proposed dropping `jfast_jobs`.** The
+  queue creates its table at startup and it is not among the service's models,
+  so autogenerate read it as a table the service had deleted. Every
+  framework-owned table is `jfast_*` now, and the generated `env.py` passes
+  `include_name` to skip them. `jfast upgrade --check` names an `env.py`
+  without it.
+
+### Changed -- the CLI
+
+- **`cli/main.py` went from 2,786 lines to 90.** The commands moved to
+  `cli/commands/` by responsibility, with `register(app)` like the existing
+  `migrations` and `check` modules; shared generation helpers live in
+  `cli/generate.py` so no command module imports another. Command names,
+  options, help text and order are unchanged -- the `--help` output of the root
+  and all 52 subcommands is identical before and after.
 
 ### Documentation site
 
@@ -114,8 +162,9 @@ generated module wired its session that way.
 
 ### Not done, and named
 
-The outbox (`enqueue` still commits in its own transaction), idempotency keys,
-and row-level security. All three are in `PLAN-NEXT.md`.
+A service-to-service HTTP client with timeouts, retries and a circuit breaker;
+distributed tracing; recurring jobs; and, in `accounts`, email verification,
+password reset and MFA. All in `PLAN-NEXT.md`.
 
 
 ## [0.1.0a8] - 2026-09-03

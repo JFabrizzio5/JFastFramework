@@ -117,6 +117,10 @@ jobs:
             tests/test_websocket.py::test_a_message_published_on_one_worker_reaches_a_socket_on_the_other \
             tests/test_database_postgres.py \
             tests/test_transactions.py \
+            tests/test_outbox.py \
+            tests/test_idempotency.py \
+            tests/test_rls.py \
+            tests/test_accounts.py \
             | tee /tmp/server-tests.log
           if grep -qE '^SKIPPED|no tests ran' /tmp/server-tests.log; then
             echo '::error::a test needing a real server skipped; a service container is not reachable'

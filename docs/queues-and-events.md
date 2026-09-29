@@ -84,13 +84,39 @@ with no tenant and a repository opened inside one read every tenant's rows.
 A job queued outside a request -- a cron, a script -- still carries none unless
 it is given one: `Job(task=..., tenant_id="acme")`.
 
-### Enqueueing is not part of the request's transaction
+### Enqueue in the request's transaction: the outbox
 
-`enqueue` writes the job in a transaction of its own. The request's rows commit
-separately, so the two can disagree: the request rolls back after the job was
-queued, and the worker looks for a row that never existed. Until the outbox
-lands (planned in `PLAN-NEXT.md`), make handlers tolerate a missing
-row -- log and ack -- rather than retrying it into the dead-letter queue.
+`queue.enqueue(job)` commits in a transaction of its own, apart from the
+request's rows, so the two can disagree. Enable the `outbox` plugin and
+enqueue through the request's session instead; the job then exists if and only
+if the request committed:
+
+```python
+outbox = request.app.state.jfast.require("outbox")
+await outbox.enqueue(session, Job(task="send_receipt", payload={"id": order.id}))
+await outbox.publish(session, "orders", Event(type="order.placed", data={"id": order.id}))
+```
+
+On the PostgreSQL queue in the same database the job is inserted straight into
+`jfast_jobs`. Anything else -- Redis, RabbitMQ, Kafka events -- goes through
+`jfast_outbox` and a relay that runs in every process, claims rows with `FOR
+UPDATE SKIP LOCKED`, retries with backoff, and sets a message aside as dead
+after `max_attempts`. `/ready` turns degraded when a message is stuck.
+
+The consumer's half is `claim_once`: record the message id in the same
+transaction as the work, and a redelivery is skipped.
+
+```python
+from jfastframework.outbox import claim_once
+from jfastframework.queues import current_job
+
+@tasks.task("send_receipt")
+async def send_receipt(payload: dict) -> None:
+    async with sessionmaker() as session, session.begin():
+        if not await claim_once(session, current_job().id, consumer="receipts"):
+            return
+        ...
+```
 
 ### Choosing a backend
 

@@ -158,6 +158,13 @@ class DatabaseSettings(PluginSettings):
     # something outside this service already guarantees it.
     session_timezone: str = "UTC"
 
+    # Row-level security. Every transaction tells PostgreSQL its tenant, so a
+    # table put under `enable_tenant_rls` in a migration returns only that
+    # tenant's rows whatever the query says. See jfastframework.db.rls -- and
+    # connect as a role that is neither a superuser nor BYPASSRLS, or the
+    # policies do not apply: production refuses to start otherwise.
+    rls: bool = False
+
     # Named instances. Empty means one instance called `default`, configured by
     # the fields above.
     connections: dict[str, ConnectionSettings] = Field(default_factory=dict)
@@ -764,7 +771,9 @@ class DatabasePlugin(Plugin):
             engines[name] = engine
             # expire_on_commit=False keeps ORM objects usable after the request
             # scope commits, which is what response serialisation needs.
-            sessionmakers[name] = async_sessionmaker(engine, expire_on_commit=False)
+            sessionmakers[name] = async_sessionmaker(
+                engine, expire_on_commit=False, **self._session_options()
+            )
 
         read_only = tuple(n for n, c in connections.items() if c.read_only)
         if settings.read_write_split and not read_only:
@@ -811,7 +820,43 @@ class DatabasePlugin(Plugin):
                 )
             )
 
+    def _session_options(self) -> dict[str, Any]:
+        settings: DatabaseSettings = self.settings
+        if not settings.rls:
+            return {}
+        from jfastframework.db.rls import TenantScopedSession
+
+        return {"sync_session_class": TenantScopedSession}
+
+    async def _check_rls_role(self, ctx: AppContext) -> None:
+        from jfastframework.db.rls import role_problem
+
+        assert self._registry is not None
+        try:
+            problem = await role_problem(self._registry.engine())
+        except Exception as exc:  # noqa: BLE001 - an unreachable database is /ready's to report
+            # Refusing to boot because the database is not up yet would turn a
+            # blip into a crash loop. /ready reports the database; the role is
+            # checked on the next start.
+            ctx.logger.warning(
+                "rls is on and the database role could not be checked",
+                extra={"error": str(exc)},
+            )
+            return
+        if problem is None:
+            return
+        message = (
+            f"[plugin.database] rls is on, but {problem}: every policy is ignored and "
+            f"each tenant can read the others' rows. Connect as a role without "
+            f"SUPERUSER or BYPASSRLS (docs/multitenancy.md shows the grants)."
+        )
+        if ctx.settings.is_production:
+            raise PluginError(message)
+        ctx.logger.warning(message)
+
     async def startup(self, ctx: AppContext) -> None:
+        if self.settings.rls:
+            await self._check_rls_role(ctx)
         # Here rather than in `register`: routers are mounted after plugins
         # register, and by startup every route the service serves exists.
         violations = session_scope_violations(ctx.app)

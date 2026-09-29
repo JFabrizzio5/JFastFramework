@@ -86,14 +86,39 @@ corría sin tenant y un repositorio abierto dentro de él leía las filas de
 todos los tenants. Un job encolado fuera de una request -- un cron, un script --
 sigue sin tenant a menos que se lo den: `Job(task=..., tenant_id="acme")`.
 
-### Encolar no es parte de la transacción de la request
+### Encolar dentro de la transacción de la request: el outbox
 
-`enqueue` escribe el job en una transacción propia. Las filas de la request se
-confirman aparte, así que pueden no coincidir: la request hace rollback después
-de encolar el job, y el worker busca una fila que nunca existió. Hasta que
-llegue el outbox (planeado en `PLAN-NEXT.md`), haz que los handlers
-toleren una fila ausente -- registrar y hacer ack -- en vez de reintentarla
-hasta la cola de muertos.
+`queue.enqueue(job)` confirma en una transacción propia, aparte de las filas de
+la request, así que pueden no coincidir. Activa el plugin `outbox` y encola a
+través de la sesión de la request; entonces el job existe si y solo si la
+request se confirmó:
+
+```python
+outbox = request.app.state.jfast.require("outbox")
+await outbox.enqueue(session, Job(task="send_receipt", payload={"id": order.id}))
+await outbox.publish(session, "orders", Event(type="order.placed", data={"id": order.id}))
+```
+
+Con la cola de PostgreSQL en la misma base, el job se inserta directo en
+`jfast_jobs`. Lo demás -- Redis, RabbitMQ, eventos de Kafka -- pasa por
+`jfast_outbox` y un relay que corre en cada proceso, toma filas con `FOR UPDATE
+SKIP LOCKED`, reintenta con backoff y aparta un mensaje como muerto tras
+`max_attempts`. `/ready` se marca degradado cuando un mensaje se atora.
+
+La mitad del consumidor es `claim_once`: registra el id del mensaje en la misma
+transacción que el trabajo, y una reentrega se salta.
+
+```python
+from jfastframework.outbox import claim_once
+from jfastframework.queues import current_job
+
+@tasks.task("send_receipt")
+async def send_receipt(payload: dict) -> None:
+    async with sessionmaker() as session, session.begin():
+        if not await claim_once(session, current_job().id, consumer="receipts"):
+            return
+        ...
+```
 
 ### Elegir un backend
 

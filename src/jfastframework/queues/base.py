@@ -26,9 +26,24 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
+
+#: The job the current handler is running. A handler receives only its
+#: payload; this is how it reaches the job id to deduplicate on
+#: (``claim_once(session, current_job().id)``) without every handler in every
+#: service changing signature.
+_current_job: ContextVar[Job | None] = ContextVar("jfast_current_job", default=None)
+
+
+def current_job() -> Job:
+    """The job whose handler is running. Raises outside a handler."""
+    job = _current_job.get()
+    if job is None:
+        raise RuntimeError("current_job() was called outside a queue handler")
+    return job
 
 
 def _context(name: str) -> str | None:

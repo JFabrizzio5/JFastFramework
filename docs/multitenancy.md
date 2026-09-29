@@ -202,19 +202,72 @@ auth and leave the signed claim unreadable, because no principal exists that
 early. The plugin appends instead, so every source — including the token —
 is available when it resolves.
 
-## What this is not
+## Isolation the database enforces: row-level security
 
 The resolved tenant reaches `BaseRepository`, so a query that forgets to filter
-is still filtered by the repository. **That is a convention, not isolation.**
+is still filtered by the repository. That is a convention: raw SQL, a join
+through an unscoped table, a bug in a repository method all read every tenant's
+rows. Row-level security moves the rule into PostgreSQL, where a query that
+forgets the filter gets no rows instead of someone else's.
 
-Any of these defeats it: raw SQL, a join through an unscoped table, a bug in a
-repository method, a background job that runs without a request. The guarantee
-you want is PostgreSQL row-level security, where the database refuses the read
-regardless of what the query asked for. That is not generated yet — see
-PLAN.md phase 2.
+**1. Put each tenant table under a policy**, in a migration:
 
-Until then, treat tenancy as defence in depth over correct queries, not as a
-replacement for them.
+```python
+from jfastframework.db.rls import enable_tenant_rls, disable_tenant_rls
+
+def upgrade() -> None:
+    enable_tenant_rls(op, "invoices")
+
+def downgrade() -> None:
+    disable_tenant_rls(op, "invoices")
+```
+
+**2. Turn it on**, and every transaction tells PostgreSQL its tenant -- the
+request's, or a queue job's, which the worker restores:
+
+```toml
+[plugin.database]
+rls = true
+```
+
+It is `set_config('jfast.tenant_id', ..., true)` as each transaction begins:
+transaction-local, so a pooled connection never carries a tenant into the next
+request, and safe behind PgBouncer in transaction mode.
+
+**3. Connect as a role the policies bind.** A superuser, or a role with
+`BYPASSRLS`, ignores every policy -- and the generated compose file connects as
+the database's superuser. Give the service a role of its own:
+
+```sql
+CREATE ROLE app LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO app;
+```
+
+Run migrations as the owner and the service as `app`. With `rls = true` the
+database plugin checks the role at startup: production refuses to start under a
+superuser or `BYPASSRLS` role, anywhere else it warns.
+
+What that buys, each verified against PostgreSQL in `tests/test_rls.py`:
+
+| | |
+| --- | --- |
+| `SELECT * FROM invoices`, no `WHERE` at all | only this tenant's rows |
+| A transaction with no tenant | no rows, and no writes |
+| `INSERT` with another tenant's id | refused by the policy |
+| The next transaction on the same connection | starts with no tenant |
+
+Work that is about every tenant by definition -- a report, a data fix -- says
+so: create that table's policy with `allow_bypass=True` and run the work inside
+`with bypass_rls():`. Tables without the flag stay closed even there.
+
+The repository filter stays: it is what makes queries use the index, and it is
+the first line. Row-level security is the one that holds when the first fails.
 
 ## See also
 

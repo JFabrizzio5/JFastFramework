@@ -62,7 +62,7 @@ Honest answers matter more here than another feature.
 | The team already has a house framework and conventions that work | Yours. The value here is the opinions, and you already have some |
 | You need Django's admin, its ORM ecosystem or its auth out of the box | Django. This is not trying to be that |
 | You are on a synchronous stack and do not want async | Flask, or FastAPI without this |
-| You need production-grade multi-tenancy isolation today | Not yet — tenancy here is a convention, not row-level security. [STATUS.md](STATUS.md) is explicit about it |
+| You need a user store with MFA, email verification and password reset today | Not yet — the `accounts` plugin has users, login, roles and lockout, and none of those three. [STATUS.md](STATUS.md) is explicit about it |
 
 ---
 

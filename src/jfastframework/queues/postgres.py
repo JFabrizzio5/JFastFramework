@@ -105,31 +105,49 @@ class PostgresQueue:
                 )
             )
 
+    @property
+    def engine(self) -> Any:
+        """The engine this queue writes through, so an outbox can tell whether
+        a request's session is on the same database."""
+        return self._engine
+
     async def enqueue(self, job: Job) -> str:
+        async with self._engine.begin() as conn:
+            await conn.execute(*self._insert(job))
+        return job.id
+
+    async def enqueue_in(self, session: Any, job: Job) -> str:
+        """Enqueue through the caller's session, inside the caller's transaction.
+
+        The job then exists if and only if that transaction commits: a request
+        that rolls back takes its job with it, and one that commits cannot lose
+        it. ``Outbox.enqueue`` uses this when the queue and the session share a
+        database, which is what makes the relay unnecessary for them.
+        """
+        await session.execute(*self._insert(job))
+        return job.id
+
+    def _insert(self, job: Job) -> tuple[Any, dict[str, Any]]:
         from sqlalchemy import text
 
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                text(
-                    f"INSERT INTO {self._table} "  # nosec B608
-                    f"(id, task, payload, attempts, max_attempts, available_at, "
-                    f" request_id, tenant_id) "
-                    f"VALUES (:id, :task, CAST(:payload AS jsonb), :attempts, :max_attempts, "
-                    f" COALESCE(:available_at, NOW()), :request_id, :tenant_id) "
-                    f"ON CONFLICT (id) DO NOTHING"
-                ),
-                {
-                    "id": job.id,
-                    "task": job.task,
-                    "payload": json.dumps(job.payload, default=str),
-                    "attempts": job.attempts,
-                    "max_attempts": job.max_attempts,
-                    "available_at": job.available_at,
-                    "request_id": job.request_id,
-                    "tenant_id": job.tenant_id,
-                },
-            )
-        return job.id
+        statement = text(
+            f"INSERT INTO {self._table} "  # nosec B608
+            f"(id, task, payload, attempts, max_attempts, available_at, "
+            f" request_id, tenant_id) "
+            f"VALUES (:id, :task, CAST(:payload AS jsonb), :attempts, :max_attempts, "
+            f" COALESCE(:available_at, NOW()), :request_id, :tenant_id) "
+            f"ON CONFLICT (id) DO NOTHING"
+        )
+        return statement, {
+            "id": job.id,
+            "task": job.task,
+            "payload": json.dumps(job.payload, default=str),
+            "attempts": job.attempts,
+            "max_attempts": job.max_attempts,
+            "available_at": job.available_at,
+            "request_id": job.request_id,
+            "tenant_id": job.tenant_id,
+        }
 
     async def dequeue(self, *, timeout: float = 5.0) -> Job | None:
         """Claim one job.

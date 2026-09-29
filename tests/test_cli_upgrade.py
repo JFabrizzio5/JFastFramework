@@ -1029,3 +1029,22 @@ def test_the_scoped_aliases_are_not_reported(tmp_path: Path) -> None:
     found = upgrades.applicable(project_scan.load(root), current="0.1.0a8", installed="0.1.0a9")
 
     assert "session-commits-after-response" not in [c.code for c, _ in found]
+
+
+def test_an_env_py_that_would_drop_framework_tables_is_named(tmp_path: Path) -> None:
+    root = _service(tmp_path, _DB_CONFIG)
+    write(root / "migrations" / "env.py", "target_metadata = Base.metadata\n")
+
+    found = upgrades.applicable(project_scan.load(root), current="0.1.0a8", installed="0.1.0a9")
+
+    reported = [a for change, a in found if change.code == "autogenerate-drops-framework-tables"]
+    assert reported == [["migrations/env.py"]]
+
+
+def test_an_env_py_with_the_filter_is_not(tmp_path: Path) -> None:
+    root = _service(tmp_path, _DB_CONFIG)
+    write(root / "migrations" / "env.py", "context.configure(include_name=include_name)\n")
+
+    found = upgrades.applicable(project_scan.load(root), current="0.1.0a8", installed="0.1.0a9")
+
+    assert "autogenerate-drops-framework-tables" not in [c.code for c, _ in found]

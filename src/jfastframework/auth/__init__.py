@@ -7,8 +7,9 @@
         ...
 
 The plugin verifies tokens and can mint them. It does not know who your users
-are — there is no login endpoint, because checking a password against your user
-table is your application's job. Use ``auth.issuer`` from your own login route.
+are; the ``accounts`` plugin does -- users, password login and roles -- and
+calls ``auth.issuer`` for you. A service with its own user store calls
+``auth.issuer`` from its own login route instead.
 """
 
 from jfastframework.auth.jwks import JWKSClient, JWKSError

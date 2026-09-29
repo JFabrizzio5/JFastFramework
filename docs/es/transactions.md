@@ -180,15 +180,61 @@ HTTP --: ocurren una vez por intento.
 
 ---
 
+## Un mensaje que se confirma con las filas: el outbox
+
+Guardar un pedido y encolar su recibo son dos escrituras. Como dos
+transacciones, cualquiera puede ocurrir sola: el job se encola y el pedido hace
+rollback, o el pedido se confirma y el proceso muere antes de que exista el
+job. El plugin `outbox` las vuelve una:
+
+```python
+from jfastframework.queues import Job
+
+@router.post("/orders", status_code=201)
+async def create(payload: OrderIn, request: Request, session: DbSession):
+    order = await OrderRepository(session).create(**payload.model_dump())
+    outbox = request.app.state.jfast.require("outbox")
+    await outbox.enqueue(session, Job(task="send_receipt", payload={"id": order.id}))
+    return order
+```
+
+`outbox.enqueue` y `outbox.publish` escriben a través de la sesión de la
+request, así que el mensaje existe si y solo si existe el pedido. Con la cola de
+PostgreSQL en la misma base, el job entra directo a ella; si no, un relay en
+cada proceso mueve los mensajes confirmados a la cola o al bus de eventos, con
+`FOR UPDATE SKIP LOCKED` para que dos relays nunca envíen el mismo mensaje. Ver
+[Colas y eventos](queues-and-events.md) para la mitad del consumidor.
+
+## Un POST reintentado: idempotency keys
+
+Un cliente cuya conexión se cae después de enviar `POST /payments` no sabe si
+llegó, así que reintenta -- y sin ayuda el servidor cobra dos veces. Con el
+plugin `idempotency`, una ruta que pide la llave la registra en la misma
+transacción que el pago:
+
+```python
+from jfastframework.idempotency import IdempotencyKey
+
+@router.post("/payments", status_code=201)
+async def pay(payload: PaymentIn, session: DbSession, key: IdempotencyKey): ...
+```
+
+| El cliente manda `Idempotency-Key: k` y | Recibe |
+| --- | --- |
+| `k` es nueva | La request corre; su respuesta se registra |
+| la misma request otra vez | La respuesta registrada, con `Idempotent-Replayed: true` |
+| otra request distinta con `k` | 422: una llave nombra una sola operación |
+| la misma request mientras la primera sigue corriendo | 409 |
+
+Si la primera request falla, la llave hace rollback con ella y el reintento
+corre desde cero. Las llaves son por tenant y vencen tras `ttl_hours` (24).
+`RequiredIdempotencyKey` rechaza una request que no la trae.
+
+---
+
 ## Lo que esto no es
 
-- **No es un circuit breaker.** Un breaker deja de llamar a algo que está caído.
-  No hace nada por un trabajo que falló a la mitad; eso lo hace la frontera de
-  la transacción.
-- **No es un outbox.** `enqueue` y `publish` siguen confirmando por su cuenta,
-  aparte de las filas de la request. Ver [Colas y eventos](queues-and-events.md).
-- **No son idempotency keys.** Un cliente que reintenta un `POST` después de un
-  timeout todavía puede crear dos filas cuando no hay una llave única natural
-  que lo impida.
-
-Los tres están en `PLAN-NEXT.md`.
+**No es un circuit breaker.** Un breaker deja de llamar a algo que está caído.
+No hace nada por un trabajo que falló a la mitad; eso lo hacen la frontera de la
+transacción, el outbox y la idempotency key. El cliente entre servicios con
+timeouts, reintentos y breaker está en `PLAN-NEXT.md`.

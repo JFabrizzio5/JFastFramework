@@ -13,7 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from jfastframework.queues.base import Job, QueueBackend
+from jfastframework.queues.base import Job, QueueBackend, _current_job
 
 Handler = Callable[[dict[str, Any]], Awaitable[Any]]
 
@@ -208,6 +208,7 @@ class Worker:
 
         request_token = request_id_var.set(job.request_id)
         tenant_token = tenant_id_var.set(job.tenant_id)
+        job_token = _current_job.set(job)
         try:
             await asyncio.wait_for(handler(job.payload), timeout=self.job_timeout)
         except TimeoutError:
@@ -223,6 +224,7 @@ class Worker:
             await self.backend.ack(job)
             logger.info("job done", extra={"job_id": job.id, "task": job.task})
         finally:
+            _current_job.reset(job_token)
             tenant_id_var.reset(tenant_token)
             request_id_var.reset(request_token)
             limiter.release()

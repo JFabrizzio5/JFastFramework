@@ -64,7 +64,7 @@ Acá importan más las respuestas honestas que una feature más.
 | El equipo ya tiene un framework propio y convenciones que funcionan | El tuyo. Acá el valor son las opiniones, y ya tienes algunas |
 | Necesitas el admin de Django, su ecosistema de ORM o su auth de fábrica | Django. Esto no intenta ser eso |
 | Estás en un stack síncrono y no quieres async | Flask, o FastAPI sin esto |
-| Necesitas hoy aislamiento multi-tenant de nivel producción | Todavía no — aquí el tenancy es una convención, no row-level security. [STATUS.md](STATUS.md) es explícito al respecto |
+| Necesitas hoy un store de usuarios con MFA, verificación de email y recuperación de contraseña | Todavía no — el plugin `accounts` tiene usuarios, login, roles y bloqueo, y ninguna de esas tres. [STATUS.md](STATUS.md) es explícito al respecto |
 
 ---
 

@@ -176,13 +176,61 @@ they happen once per attempt.
 
 ---
 
+## A message that commits with the rows: the outbox
+
+Saving an order and queueing its receipt are two writes. As two transactions,
+either can happen alone: the job is queued and the order rolls back, or the
+order commits and the process dies before the job exists. The `outbox` plugin
+makes them one:
+
+```python
+from jfastframework.queues import Job
+
+@router.post("/orders", status_code=201)
+async def create(payload: OrderIn, request: Request, session: DbSession):
+    order = await OrderRepository(session).create(**payload.model_dump())
+    outbox = request.app.state.jfast.require("outbox")
+    await outbox.enqueue(session, Job(task="send_receipt", payload={"id": order.id}))
+    return order
+```
+
+`outbox.enqueue` and `outbox.publish` write through the request's session, so
+the message exists if and only if the order does. With the PostgreSQL queue on
+the same database the job goes straight into it; otherwise a relay in every
+process moves committed messages to the queue or the event bus, with `FOR
+UPDATE SKIP LOCKED` so two relays never send one message. See
+[Queues and events](queues-and-events.md) for the consumer's half.
+
+## A retried POST: idempotency keys
+
+A client whose connection drops after sending `POST /payments` cannot tell
+whether it went through, so it retries -- and without help the server charges
+twice. With the `idempotency` plugin, a route that asks for the key records it
+in the same transaction as the payment:
+
+```python
+from jfastframework.idempotency import IdempotencyKey
+
+@router.post("/payments", status_code=201)
+async def pay(payload: PaymentIn, session: DbSession, key: IdempotencyKey): ...
+```
+
+| The client sends `Idempotency-Key: k` and | It gets |
+| --- | --- |
+| `k` is new | The request runs; its response is recorded |
+| the same request again | The recorded response, with `Idempotent-Replayed: true` |
+| a different request with `k` | 422: a key names one operation |
+| the same request while the first is still running | 409 |
+
+If the first request fails, the key rolls back with it and the retry runs from
+scratch. Keys are per tenant and expire after `ttl_hours` (24).
+`RequiredIdempotencyKey` refuses a request without one.
+
+---
+
 ## What this is not
 
-- **Not a circuit breaker.** A breaker stops calling something that is down.
-  It does nothing for work that failed half way; the transaction boundary does.
-- **Not an outbox.** `enqueue` and `publish` still commit on their own, apart
-  from the request's rows. See [Queues and events](queues-and-events.md).
-- **Not idempotency keys.** A client that retries a `POST` after a timeout can
-  still create two rows when there is no natural unique key to stop it.
-
-All three are in `PLAN-NEXT.md`.
+**Not a circuit breaker.** A breaker stops calling something that is down. It
+does nothing for work that failed half way; the transaction boundary, the
+outbox and the idempotency key do. The service-to-service client with timeouts,
+retries and a breaker is in `PLAN-NEXT.md`.

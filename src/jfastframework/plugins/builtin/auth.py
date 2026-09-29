@@ -19,10 +19,9 @@ Then guard a route:
         ...
 
 **What this plugin does and does not do.** It verifies tokens, and it can mint
-them. It does not know who your users are: there is no login endpoint, because
-checking a password against your user table is your application's job, not a
-framework's. `auth.issuer` is provided for you to call from your own login
-route.
+them. It does not know who your users are: the ``accounts`` plugin does, and
+mounts the login route. A service with a user store of its own calls
+`auth.issuer` from its own login route instead.
 
 The security decisions are documented where they are made -- see
 ``jfastframework.auth.tokens`` for algorithm pinning and claim verification,
@@ -139,7 +138,7 @@ class AuthSettings(PluginSettings):
     # is that much longer a stolen token can be replayed unnoticed.
     refresh_grace_seconds: int = 10
     # Mounts /auth/refresh and /auth/logout. Not /auth/login: this plugin has
-    # no user store and will not pretend otherwise.
+    # no user store. The accounts plugin mounts that one.
     mount_router: bool = True
     prefix: str = "/auth"
 

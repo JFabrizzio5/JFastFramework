@@ -70,23 +70,25 @@ The smallest thing that makes every later phase possible.
 
 ---
 
-## Phase 2 — Multi-tenancy (not started)
+## Phase 2 — Multi-tenancy (partial)
 
 The pitch of every SaaS factory and the part everyone gets wrong late. Decide
 the strategy before writing any of it, because changing it afterwards is a data
 migration, not a refactor.
 
-- [ ] Choose: column `tenant_id` + enforced filter · PostgreSQL row-level
-      security · schema-per-tenant. **Leaning RLS** — the only option where
-      forgetting a filter is not a data leak.
-- [ ] Tenant resolution from JWT claim / header / subdomain
-- [ ] Tenant context propagated to the DB session (`SET LOCAL app.tenant_id`)
+- [x] Choose: column `tenant_id` + enforced filter · PostgreSQL row-level
+      security · schema-per-tenant. **RLS**, on top of the column: the only
+      option where forgetting a filter is not a data leak. (0.1.0a9)
+- [x] Tenant resolution from JWT claim / header / subdomain
+- [x] Tenant context propagated to the DB session (transaction-local
+      `set_config('jfast.tenant_id', ...)`, `[plugin.database] rls = true`)
 - [ ] Per-tenant rate limiting and quotas
-- [ ] Tests that a query without tenant context returns zero rows
+- [x] Tests that a query without tenant context returns zero rows
+      (`tests/test_rls.py`, against PostgreSQL as a non-superuser role)
 
-**Trade-off to accept now:** `BaseRepository` filters by tenant, but a raw
-`session.execute` bypasses it. Until RLS lands, tenant isolation is a
-convention, not a guarantee. Do not sell it as a guarantee.
+**What is still a convention:** a service that does not turn `rls` on, or that
+connects as a superuser, has the repository filter and nothing else. Production
+refuses the second case; the first is a choice the service makes.
 
 ---
 
@@ -233,7 +235,7 @@ missing pieces surface, and you want to find them with one service at risk.
 - [ ] Integration tests against real RabbitMQ and Kafka containers.
       **Until this exists, those two backends are unverified.**
 - [ ] `worker` CLI entry point (`jfast worker run`)
-- [ ] Outbox pattern: publish an event in the same transaction as the write
+- [x] Outbox pattern: publish an event in the same transaction as the write (0.1.0a9)
 
 ## Phase 3d — More languages and frontends (not started)
 
@@ -309,9 +311,8 @@ template tree, add the CI job.
       default, and it writes scripts rather than running them
 - [x] `notifications` plugin: FCM HTTP v1, with a console backend for
       development
-- [ ] **PostgreSQL row-level security.** Until this exists, tenancy is a
-      convention enforced by the repository, not isolation enforced by the
-      database. This is the single most important gap on this page.
+- [x] **PostgreSQL row-level security.** `enable_tenant_rls` in a migration and
+      `[plugin.database] rls = true`. (0.1.0a9)
 - [ ] Per-tenant storage prefixes applied automatically rather than by
       convention in the key
 - [ ] Streaming uploads and downloads. `put()` takes bytes; a large upload
