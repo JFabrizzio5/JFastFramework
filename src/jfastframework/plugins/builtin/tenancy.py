@@ -52,13 +52,12 @@ from __future__ import annotations
 import logging
 import re
 from datetime import tzinfo
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from jfastframework.errors import PluginError
 from jfastframework.plugins.base import HealthReport, Plugin, PluginMeta, PluginSettings
@@ -137,7 +136,7 @@ def tenant_from_path(path: str, prefix: str) -> str | None:
     return candidate if TENANT_SLUG.match(candidate) else None
 
 
-def current_tenant(request: Request) -> str:
+async def current_tenant(request: Request) -> str:
     """The tenant of this request; 401 without a session, 403 without a tenant::
 
         @router.get("/invoices")
@@ -165,7 +164,7 @@ def current_tenant(request: Request) -> str:
     return str(tenant)
 
 
-def tenant_zone(request: Request) -> tzinfo:
+async def tenant_zone(request: Request) -> tzinfo:
     """The zone this request's days are measured in.
 
     Falls back to the business zone -- ``[app] timezone`` -- for a tenant with
@@ -176,9 +175,11 @@ def tenant_zone(request: Request) -> tzinfo:
     return resolved if isinstance(resolved, tzinfo) else default_zone()
 
 
-class TenancyMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: Any, *, settings: TenancySettings) -> None:
-        super().__init__(app)
+class TenancyMiddleware:
+    """Resolve the tenant once per request. Plain ASGI: no task group, no stream."""
+
+    def __init__(self, app: ASGIApp, *, settings: TenancySettings) -> None:
+        self.app = app
         self._settings = settings
         self._reserved = set(settings.reserved)
         # Resolved once at construction, not per request: `zone()` caches, but
@@ -217,31 +218,40 @@ class TenancyMiddleware(BaseHTTPMiddleware):
                     return raw, "header"
         return None, None
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         from jfastframework.errors import ForbiddenError, problem_response
         from jfastframework.plugins.builtin.observability import tenant_id_var
 
+        # A Request is only a view over the scope: building one costs nothing
+        # and gives _resolve the same headers and state the old code read.
+        request = Request(scope, receive)
         tenant, source = self._resolve(request)
-        exempt = any(request.url.path.startswith(p) for p in self._settings.exempt_paths)
+        exempt = any(scope["path"].startswith(p) for p in self._settings.exempt_paths)
 
         if tenant is None and self._settings.require_tenant and not exempt:
-            # Returned, not raised: this middleware runs inside the others but
-            # still outside FastAPI's exception handlers, so raising here would
-            # surface as a 500 rather than the documented problem+json 403.
-            return problem_response(
+            # Answered here, not raised: this runs outside FastAPI's exception
+            # handlers, so raising would surface as a 500 rather than the
+            # documented problem+json 403.
+            response = problem_response(
                 ForbiddenError("this request is not scoped to a tenant"), request
             )
+            await response(scope, receive, send)
+            return
 
-        request.state.tenant_id = tenant
-        request.state.tenant_source = source
+        state = scope.setdefault("state", {})
+        state["tenant_id"] = tenant
+        state["tenant_source"] = source
         # `default_zone()` is read per request rather than captured at
         # construction so that a service which sets the business zone after
         # wiring its middleware is not pinned to whatever UTC it started with.
-        request.state.tenant_timezone = self._zones.get(tenant or "", default_zone())
+        state["tenant_timezone"] = self._zones.get(tenant or "", default_zone())
         token = tenant_id_var.set(tenant)
         try:
-            response: Response = await call_next(request)
-            return response
+            await self.app(scope, receive, send)
         finally:
             tenant_id_var.reset(token)
 

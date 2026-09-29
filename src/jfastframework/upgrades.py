@@ -888,6 +888,56 @@ def _screaming_contract_without_public_layer(project: Project) -> list[str]:
     return [] if "public" in contract.layers else ["contracts.toml has no [layers.public]"]
 
 
+_NOW_ASYNC = frozenset({"require_auth", "optional_auth", "current_tenant", "tenant_zone"})
+
+
+def _direct_calls_to_async_dependencies(project: Project) -> list[str]:
+    """Plain calls to a dependency that is a coroutine function since 0.1.0a10.
+
+    ``Depends(require_auth)`` passes the function and is unaffected. A call --
+    ``require_auth(request)`` in a service factory -- now returns a coroutine,
+    and the first attribute read on it fails.
+    """
+    found = []
+    for relative, tree in _parsed_files(project.root):
+        awaited = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
+        }
+        found += [
+            f"{relative}:{node.lineno} {_called_name(node.func)}(...)"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _called_name(node.func) in _NOW_ASYNC
+            and id(node) not in awaited
+        ]
+    return found
+
+
+def _sync_request_factories(project: Project) -> list[str]:
+    """``def get_service(request, session: DbSession)``: a threadpool hop per request.
+
+    It still works. It is the single largest per-request cost the 0.1.0a10
+    benchmark found -- about 80 us, more than every middleware together --
+    because FastAPI runs a plain ``def`` dependency in its threadpool.
+    """
+    found = []
+    for relative, tree in _parsed_files(project.root):
+        if not relative.startswith("modules/"):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name in ("get_service", "get_use_cases"):
+                found.append(f"{relative}:{node.lineno} def {node.name}")
+    return found
+
+
+def _metrics_enabled(project: Project) -> list[str]:
+    if "metrics" not in project.plugins:
+        return []
+    return ["[plugins] enabled includes metrics"]
+
+
 def _job_timeout_past_the_claim(project: Project) -> list[str]:
     """A worker allowed to run a handler past the claim that protects it.
 
@@ -998,6 +1048,63 @@ def _client_env_vars(project: Project) -> set[str]:
 # `jfast upgrade` answered "nothing between those versions affects this
 # project" to every one of them.
 CHANGES: tuple[Change, ...] = (
+    Change(
+        version="0.1.0a10",
+        kind="breaking",
+        code="async-dependencies",
+        summary="require_auth, optional_auth, current_tenant and tenant_zone are async.",
+        detail=(
+            "FastAPI runs a plain `def` dependency in its threadpool, and that hop cost "
+            "75-85 us per request in the 0.1.0a10 benchmark -- more than every middleware "
+            "together -- for functions that only read request.state. As Depends(...) nothing "
+            "changes. A direct call now returns a coroutine, and the first attribute read "
+            "on it fails."
+        ),
+        detect=_direct_calls_to_async_dependencies,
+        remedy=(
+            "Inside plain code use `principal_of(request)` (from "
+            "jfastframework.plugins.builtin.auth) or `request.state.principal`; for the "
+            "tenant, `request.state.tenant_id`. Or make the caller `async def` and await it. "
+            "Better still, take them as parameters: `tenant: str = Depends(current_tenant)`."
+        ),
+    ),
+    Change(
+        version="0.1.0a10",
+        kind="behaviour",
+        code="sync-service-factories",
+        summary="A `def` service factory costs a threadpool hop on every request.",
+        detail=(
+            "Modules generated before 0.1.0a10 wire their service with `def get_service("
+            "request, session: DbSession)`. FastAPI runs a plain def dependency in its "
+            "threadpool: about 80 us per request, the largest single cost measured. New "
+            "modules generate `async def`. Nothing breaks either way."
+        ),
+        detect=_sync_request_factories,
+        remedy=(
+            "Add `async` in front of each listed `def`. The body stays the same -- it awaits "
+            "nothing, and it does not need to."
+        ),
+    ),
+    Change(
+        version="0.1.0a10",
+        kind="behaviour",
+        code="metrics-route-labels",
+        summary="Metrics are labelled by route template; the in-flight gauge by method only.",
+        detail=(
+            "The middleware read the matched route before routing had run, found none, and "
+            "labelled every request by its raw path: /users/41, /users/42... one series per "
+            "id, and a registry that grew without bound under a scanner. `endpoint` is now "
+            "the route template (/users/{user_id}), `<unmatched>` for a path no route "
+            "matched, and http_requests_in_progress carries `method` only, because the route "
+            "is not known while a request is still in flight."
+        ),
+        detect=_metrics_enabled,
+        remedy=(
+            "Dashboards and alerts that filter http_requests_total or "
+            "http_request_duration_seconds on a raw path must use the template; queries on "
+            "http_requests_in_progress must drop the endpoint label."
+        ),
+    ),
     Change(
         version="0.1.0a10",
         kind="breaking",

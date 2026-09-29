@@ -19,9 +19,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic_settings import SettingsConfigDict
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from jfastframework.plugins.base import (
     HealthReport,
@@ -45,30 +43,78 @@ class MetricsSettings(PluginSettings):
     grafana_port_offset: int = 6
 
 
-class PrometheusMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: Any, *, requests: Any, latency: Any, in_progress: Any) -> None:
-        super().__init__(app)
+#: The label for a request no route matched. Scanners probing random paths
+#: must not mint one time series per path they try.
+UNMATCHED = "<unmatched>"
+
+
+def route_template(scope: Scope, root_path: str = "") -> str:
+    """``/users/{user_id}``, not ``/users/42``: one series per route, not per id.
+
+    Only known once the router has run -- it writes ``scope["route"]`` when it
+    matches -- so it is read after the app, never before.
+    """
+    # FastAPI 0.121+ includes routers lazily: the route keeps its own path
+    # (/login) and the prefix (/auth) lives in the effective route context it
+    # puts in its private scope. Read that when it is there, and fall back to
+    # the route itself -- the public, older shape -- when it is not.
+    context = (scope.get("fastapi") or {}).get("effective_route_context")
+    path = getattr(context, "path_format", None) or getattr(context, "path", None)
+    if not isinstance(path, str) or not path:
+        path = getattr(scope.get("route"), "path", None)
+    if not isinstance(path, str):
+        return UNMATCHED
+    # A Mount appends its prefix to root_path in the shared scope, and its
+    # routes' paths are relative to it: /login under /auth. What the mounts
+    # added goes back in front; the deployment's own root_path (/api behind a
+    # proxy) does not, so the same route is the same series everywhere.
+    mounted = scope.get("root_path", "")
+    prefix = mounted[len(root_path) :] if mounted.startswith(root_path) else ""
+    return prefix + path
+
+
+class PrometheusMiddleware:
+    """RED metrics per route template.
+
+    Plain ASGI rather than ``BaseHTTPMiddleware`` (about 75 us of CPU per
+    request each, measured), and it labels by the matched route *after* the
+    app has run. Through 0.1.0a9 it read the route before routing, found
+    none, and fell back to the raw path: ``/users/41``, ``/users/42``... one
+    series each, a registry that grew without bound. The in-flight gauge is
+    labelled by method only, because the route is not known while a request
+    is still in flight.
+    """
+
+    def __init__(self, app: ASGIApp, *, requests: Any, latency: Any, in_progress: Any) -> None:
+        self.app = app
         self.requests = requests
         self.latency = latency
         self.in_progress = in_progress
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
-        # Use the route template, not the raw path: /users/42 and /users/43
-        # must not create two time series.
-        route = request.scope.get("route")
-        endpoint = getattr(route, "path", request.url.path)
-        method = request.method
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        self.in_progress.labels(method=method, endpoint=endpoint).inc()
-        started = time.perf_counter()
+        method = scope["method"]
+        root_path = scope.get("root_path", "")
         status = 500
+
+        async def send_capturing_status(message: Message) -> None:
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message["status"]
+            await send(message)
+
+        gauge = self.in_progress.labels(method=method)
+        gauge.inc()
+        started = time.perf_counter()
         try:
-            response: Response = await call_next(request)
-            status = response.status_code
-            return response
+            await self.app(scope, receive, send_capturing_status)
         finally:
             elapsed = time.perf_counter() - started
-            self.in_progress.labels(method=method, endpoint=endpoint).dec()
+            gauge.dec()
+            endpoint = route_template(scope, root_path)
             self.requests.labels(method=method, endpoint=endpoint, status=str(status)).inc()
             self.latency.labels(method=method, endpoint=endpoint).observe(elapsed)
 
@@ -114,7 +160,7 @@ class MetricsPlugin(Plugin):
         in_progress = Gauge(
             "http_requests_in_progress",
             "In-flight HTTP requests",
-            ["method", "endpoint"],
+            ["method"],
             registry=registry,
         )
         info = Gauge("service_info", "Service metadata", ["service", "version"], registry=registry)

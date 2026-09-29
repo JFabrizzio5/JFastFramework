@@ -20,7 +20,10 @@ router = APIRouter(prefix="/{{ table }}", tags=["{{ module }}"])
 
 # DbSession commits when the endpoint returns, before the response is sent,
 # so a write that fails to commit is a 500 and not a 201 for a missing row.
-def get_service(request: Request, session: DbSession) -> {{ Module }}Service:
+# `async def`, not `def`, although nothing here awaits: FastAPI runs a plain
+# `def` dependency in its threadpool, a hop that costs more per request than
+# the whole middleware stack.
+async def get_service(request: Request, session: DbSession) -> {{ Module }}Service:
     tenant_id = getattr(request.state, "tenant_id", None)
     return {{ Module }}Service({{ Module }}Repository(session, tenant_id=tenant_id))
 

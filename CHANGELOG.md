@@ -63,9 +63,39 @@ account is its own".
   `shared/` for enums and types. `jfast upgrade --check` lists the lines each
   rule reports in a project. A screaming contract from 0.1.0a9 needs the new
   `[layers.public]` block.
+- **`require_auth`, `optional_auth`, `current_tenant` and `tenant_zone` are
+  `async def`**, and so are the dependencies `require_scopes`/`require_roles`
+  return. Through `Depends(...)` nothing changes; a direct call now returns a
+  coroutine. `principal_of(request)` is the synchronous way to read the
+  caller. `jfast upgrade --check` lists every direct call.
+- **Metrics are labelled by route template.** The middleware read the route
+  before routing had run, found none, and labelled by raw path: one series per
+  id (`/users/41`, `/users/42`...), a registry that grew without bound under a
+  scanner. `endpoint` is now `/users/{user_id}` (prefix of included routers
+  and mounts kept), `<unmatched>` when no route matched, and
+  `http_requests_in_progress` is labelled by `method` only.
 - **`VectorStore` protocol:** `delete_document` and `search` take `tenant_id`;
   new `existing_hashes`, `sync_document` and `supports_hybrid`. A custom store
   needs those methods.
+
+### Performance
+
+Measured with `ab` on one uvicorn worker (table in `docs/deploy.md#performance`):
+a service with auth, tenancy, metrics and logs went from **2,411 to 8,581
+requests a second** on the same endpoint; FastAPI with JWT and tenant written
+by hand does 9,494. JFast with its default plugins went from 4,228 to 12,443.
+
+- **Every middleware is plain ASGI.** Observability, metrics, auth, tenancy
+  and the read/write pin were `BaseHTTPMiddleware`, which runs the app in a
+  task group and streams the response through a memory channel: about 75 us
+  of CPU per request each. Same behaviour, a wrapped `send` instead.
+- **Framework dependencies and generated `get_service` factories are `async
+  def`.** FastAPI runs a `def` dependency in its threadpool; that hop cost
+  75-85 us per request, more than every middleware together.
+- `tests/test_performance_guards.py` fails if a `BaseHTTPMiddleware` or a sync
+  framework dependency comes back.
+- `docs/deploy.md` gains a Performance section with the numbers, what the rest
+  costs, and the rules that keep your own code fast.
 
 ### Added
 

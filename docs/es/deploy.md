@@ -418,6 +418,55 @@ hsts_seconds = 600            # pídelo donde sea, corto, para probar
 hsts_preload = false          # entrar a la preload list es ~irreversible
 ```
 
+## Rendimiento
+
+Lo que cuesta una petición encima de FastAPI, medido para 0.1.0a10 con `ab -k -n
+20000 -c 50` contra un worker de uvicorn, en un `/ping` que no toca base de datos
+(mediana de tres corridas, laptop Apple serie M):
+
+| | 0.1.0a9 | 0.1.0a10 |
+| --- | --- | --- |
+| FastAPI solo | 25,500 req/s | 25,500 req/s |
+| JFast, plugins por defecto, logs en `INFO` (una línea por petición) | 4,374 | 9,937 |
+| JFast, plugins por defecto, logs en `WARNING` | 4,228 | 12,443 |
+| FastAPI + JWT y tenant a mano, dependencia `def` | 9,494 | 9,494 |
+| JFast + auth + tenancy + métricas, logs en `WARNING` | 2,411 | 8,581 |
+| FastAPI + JWT y tenant a mano, dependencia `async def` | 15,116 | 15,116 |
+
+Dos cosas explicaban casi toda la diferencia, y las dos se fueron:
+
+- **`BaseHTTPMiddleware`.** Corre la app en un task group y pasa la respuesta
+  por un canal en memoria: unos 75 us de CPU por petición, por middleware.
+  Todos los middlewares del framework son ASGI puro ahora, y
+  `tests/test_performance_guards.py` falla si vuelve uno.
+- **Dependencias `def`.** FastAPI corre una dependencia `def` en su
+  threadpool; el salto costaba 75-85 us por petición, más que toda la pila de
+  middlewares. `require_auth`, `require_scopes`, `current_tenant` y las
+  fábricas `get_service` generadas son `async def` ahora.
+
+Lo que queda -- unos 25 us por petición -- es el trabajo en sí: verificar el
+token, una muestra de métricas, los headers de seguridad, el request id. En un
+endpoint que consulta PostgreSQL (1-5 ms) es ruido; en uno que llama a un
+modelo ni se nota.
+
+**Las reglas que lo mantienen así en tu propio código:**
+
+- **`async def` para las dependencias**, aunque adentro nada haga `await`. Una
+  dependencia `def` es un salto al threadpool por petición; usa `def` solo para
+  trabajo bloqueante de verdad que no puedas hacer async, y ahí está haciendo
+  su trabajo.
+- **Los logs en `INFO` escriben una línea JSON por petición.** Útil, y 14 MB
+  cada 60,000 peticiones a stdout. Detrás de un pipeline de logs es lo que
+  quieres; en un endpoint caliente que nadie lee, `WARNING` sale gratis.
+- **Workers:** la imagen generada corre un worker de uvicorn por CPU hasta
+  ocho. El throughput escala con ellos hasta que la base de datos es el
+  límite, que casi siempre llega primero.
+
+Para medir tu propio servicio, arráncalo con un worker y sin access log, y
+apunta `ab`, `wrk` u `oha` a un endpoint real con un token real; compara con el
+mismo endpoint en una app de FastAPI sin nada antes de creerle a cualquier
+número, incluidos los de esta página.
+
 ## Checklist antes de producción
 
 - [ ] `JFAST_ENV=prod` — esto por sí solo deshabilita `/info`, cierra `/docs`

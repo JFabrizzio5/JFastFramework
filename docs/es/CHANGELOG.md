@@ -120,9 +120,40 @@ para "cada cuenta es la suya".
   sugiere `shared/` para enums y tipos. `jfast upgrade --check` lista las
   líneas que cada regla reporta en un proyecto. Un contrato screaming de
   0.1.0a9 necesita el nuevo bloque `[layers.public]`.
+- **`require_auth`, `optional_auth`, `current_tenant` y `tenant_zone` son
+  `async def`**, igual que las dependencias que regresan
+  `require_scopes`/`require_roles`. Con `Depends(...)` no cambia nada; una
+  llamada directa ahora regresa una corrutina. `principal_of(request)` es la
+  forma síncrona de leer al usuario. `jfast upgrade --check` lista cada llamada
+  directa.
+- **Las métricas se etiquetan por plantilla de ruta.** El middleware leía la
+  ruta antes de que corriera el router, no encontraba ninguna y etiquetaba por
+  la ruta cruda: una serie por id (`/users/41`, `/users/42`...), un registro que
+  crecía sin límite ante un escáner. `endpoint` ahora es `/users/{user_id}` (con
+  el prefijo de routers incluidos y montajes), `<unmatched>` cuando ninguna ruta
+  coincidió, y `http_requests_in_progress` lleva solo `method`.
 - **Protocolo `VectorStore`:** `delete_document` y `search` reciben
   `tenant_id`; nuevos `existing_hashes`, `sync_document` y `supports_hybrid`.
   Un store propio necesita esos métodos.
+
+### Rendimiento
+
+Medido con `ab` contra un worker de uvicorn (tabla en `docs/deploy.md#rendimiento`):
+un servicio con auth, tenancy, métricas y logs pasó de **2,411 a 8,581
+peticiones por segundo** en el mismo endpoint; FastAPI con JWT y tenant hechos a
+mano da 9,494. JFast con sus plugins por defecto pasó de 4,228 a 12,443.
+
+- **Todos los middlewares son ASGI puro.** Observability, métricas, auth,
+  tenancy y el pin de lectura/escritura eran `BaseHTTPMiddleware`, que corre la
+  app en un task group y pasa la respuesta por un canal en memoria: unos 75 us
+  de CPU por petición cada uno. Mismo comportamiento, con un `send` envuelto.
+- **Las dependencias del framework y las fábricas `get_service` generadas son
+  `async def`.** FastAPI corre una dependencia `def` en su threadpool; ese
+  salto costaba 75-85 us por petición, más que todos los middlewares juntos.
+- `tests/test_performance_guards.py` falla si vuelve un `BaseHTTPMiddleware` o
+  una dependencia síncrona del framework.
+- `docs/deploy.md` suma una sección de Rendimiento con las cifras, lo que
+  cuesta el resto y las reglas para que tu propio código siga rápido.
 
 ### Agregado
 
