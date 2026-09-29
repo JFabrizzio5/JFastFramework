@@ -110,6 +110,8 @@ validation = ["email-validator>=2.2", "phonenumbers>=8.13"]
 locale = ["babel>=2.16"]
 retry = ["tenacity>=9.0"]
 gateway = ["httpx>=0.28"]
+# The client for sibling services: deadlines, retries, breakers, bulkheads.
+http = ["httpx>=0.28"]
 auth = ["pyjwt[crypto]>=2.10", "httpx>=0.28"]
 # Login, users and roles on top of `auth`. argon2id is the password hash
 # OWASP recommends; the cffi binding is the reference implementation.
@@ -152,7 +154,7 @@ dev = [
     "jfastframework[all]",
 ]
 all = [
-    "jfastframework[server,db,cache,metrics,sentry,mongo,qdrant,rag,web,gateway,auth,accounts,queue,rabbitmq,kafka,worker,storage,images,s3,fcm,oidc,aws,mail,exports,xml,validation,locale,retry]",
+    "jfastframework[server,db,cache,metrics,sentry,mongo,qdrant,rag,web,gateway,http,auth,accounts,queue,rabbitmq,kafka,worker,storage,images,s3,fcm,oidc,aws,mail,exports,xml,validation,locale,retry]",
 ]
 
 [project.scripts]
@@ -184,6 +186,7 @@ websocket = "jfastframework.plugins.builtin.websocket:WebSocketPlugin"
 outbox = "jfastframework.plugins.builtin.outbox:OutboxPlugin"
 idempotency = "jfastframework.plugins.builtin.idempotency:IdempotencyPlugin"
 accounts = "jfastframework.plugins.builtin.accounts:AccountsPlugin"
+http = "jfastframework.plugins.builtin.http:HttpPlugin"
 
 [project.urls]
 Homepage = "https://github.com/JFabrizzio5/JFastFramework"

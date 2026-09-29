@@ -1,8 +1,8 @@
 """Structured logging and request correlation.
 
 Default-enabled and dependency-free. Every log line carries the request id, so
-a trace across services is one grep. Downstream calls must forward
-``X-Request-ID`` themselves: there is no internal HTTP client yet.
+a trace across services is one grep. The ``http`` plugin's client forwards
+``X-Request-ID`` on every call; any other client has to forward it itself.
 """
 
 from __future__ import annotations
