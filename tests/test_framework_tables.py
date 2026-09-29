@@ -56,7 +56,8 @@ def test_the_prefix_is_the_rule() -> None:
 def test_every_framework_table_carries_the_prefix(tmp_path: Path) -> None:
     import jfastframework.accounts.models
     import jfastframework.idempotency
-    import jfastframework.outbox  # noqa: F401 - registers the tables
+    import jfastframework.outbox
+    import jfastframework.queues.sql_ticks  # noqa: F401 - registers the tables
     from jfastframework.db.framework import framework_metadata
 
     assert framework_metadata.tables

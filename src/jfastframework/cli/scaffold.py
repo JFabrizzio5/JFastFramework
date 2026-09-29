@@ -87,6 +87,7 @@ PLUGIN_CATALOG: dict[str, PluginSpec] = {
     "web": PluginSpec("web", "Jinja2 templates + HTMX (server-rendered pages)"),
     "sentry": PluginSpec("sentry", "Sentry error and performance reporting"),
     "gateway": PluginSpec("gateway", "Prefix-based reverse proxy"),
+    "http": PluginSpec("http", "Calls to sibling services: deadlines, retries, breakers"),
     "storage": PluginSpec("storage", "File storage on local disks, S3 or MinIO"),
     "tenancy": PluginSpec("", "Multi-tenancy by subdomain, token claim or path"),
     "notifications": PluginSpec("fcm", "Push notifications via Firebase (FCM)"),

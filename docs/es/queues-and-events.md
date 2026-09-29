@@ -152,10 +152,45 @@ que muere deja su job visible para recuperarlo; una cola ingenua con `BRPOP` lo
 pierde. Al arrancar y al apagarse, el worker devuelve lo que haya quedado en su
 propia lista de procesamiento.
 
-**RabbitMQ** reintenta a través de un dead-letter exchange con TTL: un job
-rechazado va a una cola de retraso cuyos mensajes expiran de vuelta a la cola
-principal. Dormir dentro del worker, en cambio, mantendría una conexión ocupada
-y perdería el retraso al reiniciar.
+**RabbitMQ** sostiene en el broker los jobs diferidos y el backoff de los
+reintentos, sin plugin; ver [Retrasos en RabbitMQ](#retrasos-en-rabbitmq).
+Dormir dentro del worker, en cambio, mantendría una conexión ocupada y perdería
+el retraso al reiniciar.
+
+### Retrasos en RabbitMQ
+
+`Job(available_at=...)` y cada reintento van por el mismo camino. El diseño
+obvio -- una cola de retraso, un TTL por mensaje -- está mal: RabbitMQ solo
+expira el mensaje que está a la **cabeza** de la cola, así que un job diferido
+diez minutos detiene a uno diferido un segundo que se publicó después. Una
+tarea periódica que se vuelve a encolar con retraso deja de ser periódica.
+
+En su lugar el backend declara una cascada. El nivel `n` es una cola cuyo TTL
+es `2**n` × 100 ms *para todos sus mensajes*, así que expiran en el orden en
+que llegaron y nada espera detrás de uno más largo. El retraso se escribe en
+binario en la routing key y se publica en el nivel más alto; el topic exchange
+de cada nivel mete el mensaje en su cola cuando su bit es 1 y lo pasa al nivel
+de abajo cuando es 0, y un mensaje expirado va por dead-letter al nivel
+inferior. El tiempo en la cascada es la suma de los niveles cuyo bit está
+encendido.
+
+- **Precisión:** redondeada hacia arriba a 100 ms. Un job puede empezar hasta
+  100 ms tarde y nunca antes.
+- **Alcance:** 25 niveles sostienen unos 38 días. Un retraso mayor pasa por la
+  cascada al máximo llevando su hora debida en un header, y el worker que lo
+  recibe antes de tiempo lo manda otra vuelta -- el único paso que compara
+  relojes.
+- **Topología:** para una cola llamada `jfast.jobs` el broker tiene
+  `jfast.jobs.delay.0` a `jfast.jobs.delay.24`, cada uno un exchange y una
+  cola. Se declaran en el setup; `GET /queue/stats` reporta su total como
+  `delayed`.
+- **Lo que no sobrevive:** el dead-lettering de un nivel al siguiente no está
+  cubierto por publisher confirms, así que un broker que se cae durante el
+  salto puede perder ese mensaje.
+
+La unidad y el número de niveles son topología del broker: una cola declarada
+con un TTL se niega a redeclararse con otro. Cambiar cualquiera de los dos
+requiere otro nombre de cola.
 
 ### Reintentos
 
@@ -176,6 +211,83 @@ Los jobs encolados por el deploy de ayer siguen en la cola cuando sale el de
 hoy. Renombra una task y esos jobs quedan sin poder entregarse. Agrega el
 nombre nuevo, mantén el viejo hasta que la cola se drene, y recién entonces
 quítalo.
+
+### Tareas recurrentes
+
+Declara el horario donde declaras la task, y enciende el scheduler:
+
+```toml
+[plugin.queue]
+scheduler = true
+```
+
+```python
+from datetime import timedelta
+
+@tasks.task("refresh_rates", every=timedelta(minutes=5))
+async def refresh_rates(payload: dict) -> None: ...
+
+@tasks.task("nightly_report", cron="0 3 * * *", timezone="America/Mexico_City")
+async def nightly_report(payload: dict) -> None:
+    day = payload["scheduled_for"]   # la hora del tick, ISO-8601 en UTC
+    ...
+
+# Una task declarada en otro lado, o una task con un segundo horario:
+tasks.schedule("purge_sessions", cron="@hourly", payload={"older_than_days": 30})
+tasks.schedule("report", cron="0 8 * * mon", name="report-weekly", payload={"span": "week"})
+```
+
+Cada tick se vuelve un job normal en la cola, así que los reintentos, el
+dead-lettering y la entrega at-least-once son los de la cola. Un handler que no
+debe correr dos veces para un mismo tick deduplica sobre `current_job().id` con
+`claim_once`: el id se deriva del nombre del horario y la hora del tick, y es
+el mismo en todas las réplicas.
+
+**Córrelo en todos lados.** El scheduler está hecho para correr en cada réplica
+y en cada proceso worker, sin líder. Antes de encolar un tick, cada proceso lo
+reclama en un almacén que todos comparten, y solo el reclamo que entra encola:
+
+| Almacén (`scheduler_store`) | `auto` lo elige cuando | El reclamo |
+| --- | --- | --- |
+| `database` | el plugin `database` está encendido | una fila en `jfast_schedule_ticks`, llave primaria `(name, fire_at)`, `INSERT … ON CONFLICT DO NOTHING` |
+| `cache` | solo el plugin `cache` está encendido | `SET NX` sobre una llave por tick, que expira tras dos periodos (mínimo diez minutos) |
+| `memory` | ninguno de los dos | por proceso: cada proceso dispara cada tick. Producción se niega a arrancar con él |
+
+Con la cola de PostgreSQL en la misma base, el reclamo y el job se commitean en
+una sola transacción. Con cualquier otra combinación son dos escrituras: un
+encolado que falla libera el reclamo para que la siguiente pasada tome el tick,
+pero un proceso que muere entre las dos pierde ese tick. El id del job es la
+segunda línea de defensa: la cola de PostgreSQL inserta una sola vez un id
+duplicado.
+
+**Cuándo dispara.**
+
+- **Intervalos:** se cuentan desde el epoch de Unix en UTC, así que
+  `every=timedelta(hours=1)` dispara en punto y todas las réplicas coinciden en
+  cuándo es eso sin hablar entre ellas. Para "todos los días a las 03:00 hora
+  local", usa cron.
+- **Cron:** acepta los cinco campos estándar -- `*`, listas, rangos, pasos,
+  nombres de mes y de día -- más `@hourly`, `@daily`, `@weekly`, `@monthly`,
+  `@yearly`. Día del mes y día de la semana son un OR cuando ambos están
+  restringidos, como en Vixie cron. Se rechazan `?`, `L`, `W` y `#` de Quartz.
+- **Zonas horarias:** cron se lee en UTC salvo que el horario nombre una zona
+  de zoneinfo. En un cambio de horario, una hora de reloj que no existe dispara
+  una vez, movida hacia adelante lo que salta el reloj (02:30 se vuelve 03:30);
+  una hora que ocurre dos veces dispara en la primera, salvo que el campo de
+  hora sea `*`, en cuyo caso el job sigue corriendo cada hora real.
+- **Ticks perdidos:** después de una caída -- un reinicio, un deploy, un event
+  loop bloqueado una hora -- el tick perdido más reciente dispara **una vez**.
+  Los anteriores se saltan, nunca se repiten en ráfaga. `catch_up=False` salta
+  también ese. Un horario sin ningún reclamo registrado es nuevo y empieza con
+  su siguiente tick.
+- **Los nombres son contratos**, igual que los de las tasks: los ticks se
+  reclaman bajo el nombre del horario, así que renombrarlo lo vuelve nuevo, y
+  un horario nuevo no se pone al día.
+
+`/ready` reporta el scheduler dentro del check de la cola: el almacén, cada
+horario y su siguiente tick, y el último error. Un scheduler detenido o que
+falla deja la disponibilidad en `degraded`, no en `unavailable`: el trabajo
+recurrente va atrasado, y los requests que atiende la réplica no.
 
 ---
 
@@ -289,9 +401,23 @@ jobs, el drenado del worker al apagarse, y que un worker ocioso ceda en vez de
 hacer busy-waiting — contra un backend en memoria que implementa el mismo
 protocolo.
 
-**Sin probar:** los backends de PostgreSQL, Redis, RabbitMQ y Kafka contra
-servidores reales. El SQL y las llamadas a los clientes están escritos contra
-el comportamiento documentado pero no se han probado de ida y vuelta en CI. Una
-suite de integración con contenedores reales es la fase 6 de PLAN.md; hasta
-entonces, trata tu primer despliegue de un backend que no sea el default como
-la prueba.
+**Contra un RabbitMQ 3.13 real** (`tests/test_rabbitmq_queue.py`, que CI no
+deja saltar): un job diferido espera su hora, un retraso largo no detiene a uno
+corto detrás de él, los jobs diferidos llegan en el orden en que vencen, un
+reintento espera su backoff en el broker, un job agotado va a dead-letter, un
+retraso más largo que la cascada da otra vuelta, y un worker reintenta un
+handler que falla a través de todo eso.
+
+**Contra PostgreSQL y Redis reales** (`tests/test_scheduler.py`, que CI
+tampoco deja saltar): veinte reclamos concurrentes de un tick desde dos engines
+entran una vez, el reclamo y el job se commitean en una transacción, un id de
+job duplicado es una fila, la poda conserva el último reclamo de cada horario,
+dos servicios corriendo con el scheduler encendido encolan cada tick una vez, y
+el almacén de Redis reclama una vez y nunca mueve hacia atrás su último tick.
+El parser de cron, el catch-up y los casos de dos réplicas corren en todos
+lados con un reloj falso.
+
+**Sin probar:** los backends de Redis y Kafka contra servidores reales. La cola
+de PostgreSQL solo toca un servidor real en la suite del outbox, que encola a
+través de la sesión de un request y reclama lo que escribió. RabbitMQ no se ha probado en clúster, con un
+reinicio del broker ni con quorum queues.

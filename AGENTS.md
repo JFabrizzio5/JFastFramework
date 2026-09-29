@@ -140,8 +140,9 @@ that does not import, or a Jinja environment eats the `{{ }}` a Vue file needed
 at runtime. `pytest` alone catches neither — that is not hypothetical, it is
 how the router bug in 0.4.0 survived every grep-based check.
 
-**Still not covered:** RabbitMQ and Kafka against real brokers. Say so rather
-than implying a green build.
+**Still not covered:** Kafka against a real broker, and RabbitMQ anywhere but
+the queue backend (`tests/test_rabbitmq_queue.py`). Say so rather than implying
+a green build.
 
 ---
 

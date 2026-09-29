@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from datetime import timedelta
 from typing import Any
 
 from jfastframework.queues.base import Job, QueueBackend, _current_job
+from jfastframework.queues.schedule import Schedule
 
 Handler = Callable[[dict[str, Any]], Awaitable[Any]]
 
@@ -35,24 +37,112 @@ class TaskRegistry:
 
     def __init__(self) -> None:
         self._handlers: dict[str, Handler] = {}
+        self._schedules: dict[str, Schedule] = {}
 
     def register(self, name: str, handler: Handler) -> None:
         if name in self._handlers:
             raise ValueError(f"Task {name!r} is already registered")
         self._handlers[name] = handler
 
-    def task(self, name: str) -> Callable[[Handler], Handler]:
-        """Decorator form::
+    def task(
+        self,
+        name: str,
+        *,
+        every: timedelta | None = None,
+        cron: str | None = None,
+        timezone: str = "UTC",
+        payload: Mapping[str, Any] | None = None,
+        catch_up: bool = True,
+    ) -> Callable[[Handler], Handler]:
+        """Decorator form, optionally recurring::
 
         @tasks.task("send_invoice_email")
         async def send_invoice_email(payload): ...
+
+        @tasks.task("refresh_rates", every=timedelta(minutes=5))
+        async def refresh_rates(payload): ...
+
+        @tasks.task("nightly_report", cron="0 3 * * *", timezone="America/Mexico_City")
+        async def nightly_report(payload): ...
+
+        A recurring task runs only where the scheduler does: ``[plugin.queue]
+        scheduler = true``. See :meth:`schedule`.
         """
+        # Parsed now, so a malformed expression fails at import rather than
+        # in a scheduler loop nobody is watching.
+        recurring = None
+        if every is not None or cron is not None:
+            recurring = Schedule.build(
+                name,
+                name,
+                every=every,
+                cron=cron,
+                timezone=timezone,
+                payload=payload,
+                catch_up=catch_up,
+            )
 
         def decorator(handler: Handler) -> Handler:
             self.register(name, handler)
+            if recurring is not None:
+                self._add_schedule(recurring)
             return handler
 
         return decorator
+
+    def schedule(
+        self,
+        task: str,
+        *,
+        every: timedelta | None = None,
+        cron: str | None = None,
+        timezone: str = "UTC",
+        payload: Mapping[str, Any] | None = None,
+        name: str | None = None,
+        catch_up: bool = True,
+        max_attempts: int = 3,
+    ) -> Schedule:
+        """Run ``task`` on a schedule: ``every`` an interval, or on a ``cron`` expression.
+
+        ``name`` identifies the schedule and defaults to the task's; give one to
+        run the same task on two schedules, e.g. with different payloads. Like
+        a task name it is a contract: ticks are claimed under it, so renaming a
+        schedule makes it look new, and a new schedule does not catch up.
+
+        Intervals count from the Unix epoch in UTC, so ``every=timedelta(hours=1)``
+        fires on the hour and every replica agrees on when that is. Cron
+        expressions are read in ``timezone`` (a zoneinfo name, UTC by default).
+        After downtime the most recent missed tick runs once, never a burst;
+        ``catch_up=False`` skips it.
+
+        The handler receives ``payload`` plus ``scheduled_for``, the tick's time
+        as ISO-8601 UTC -- the time the run is *for*, which after a catch-up is
+        not now.
+        """
+        schedule = Schedule.build(
+            name or task,
+            task,
+            every=every,
+            cron=cron,
+            timezone=timezone,
+            payload=payload,
+            catch_up=catch_up,
+            max_attempts=max_attempts,
+        )
+        self._add_schedule(schedule)
+        return schedule
+
+    def _add_schedule(self, schedule: Schedule) -> None:
+        if schedule.name in self._schedules:
+            raise ValueError(
+                f"Schedule {schedule.name!r} is already registered; pass name= to run "
+                f"the same task on a second schedule"
+            )
+        self._schedules[schedule.name] = schedule
+
+    @property
+    def schedules(self) -> tuple[Schedule, ...]:
+        return tuple(self._schedules[name] for name in sorted(self._schedules))
 
     def get(self, name: str) -> Handler:
         try:
