@@ -58,6 +58,10 @@ class Collector(HTMLParser):
 
 def check(site: Path) -> list[str]:
     problems: list[str] = []
+    # Absolute, because links are resolved to absolute paths below and compared
+    # with the page's folder: with CI's relative `site/latest/` the two never
+    # matched, and every Spanish link read as leaving Spanish.
+    site = site.resolve()
     # The Spanish pages too. They sit one directory down, and checking only the
     # top level is how es/docs.html shipped loading a stylesheet that is not
     # there, and every Spanish sidebar link shipped leading to English.
