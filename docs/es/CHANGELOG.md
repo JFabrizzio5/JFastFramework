@@ -197,6 +197,52 @@ módulos generados conectaban la sesión de esa forma.
   salida de `--help` de la raíz y de los 52 subcomandos es idéntica antes y
   después.
 
+### Agregado -- lo que necesitó un servicio real
+
+Salió de reconstruir un servicio de facturación (E-Cont) sobre el framework:
+cada una de estas piezas la había escrito él mismo, y cada una la tenía mal en
+el mismo lugar.
+
+- **`@transactional`, para dependencias de sesión propias.** La revisión al
+  arrancar solo conocía las tres dependencias de sesión del framework, así que
+  una dependencia `yield` del servicio -- usada en 120 rutas en esa
+  reconstrucción -- hacía commit después de la respuesta y nada lo decía.
+  Marcada, queda sujeta a la misma regla: una ruta que dependa de ella sin
+  `scope="function"` impide que el servicio arranque. Las dependencias
+  generadoras sin marcar que llaman `.commit(` después de su `yield` aparecen
+  en una advertencia al arrancar.
+- **Row-level security con más que el tenant.**
+  `@transaction_setting("app.companies")` registra un valor que cada
+  transacción con tenant pone junto al tenant, y
+  `enable_rls_policy(op, table, predicate=...)` escribe una policy que lo lee.
+  Los nombres se validan, los del framework se rechazan, y `None` deja el valor
+  sin poner -- cero filas.
+- **Subidas que no caben en memoria.** `Disk.put_stream(key, chunks)` en los
+  drivers local y S3 -- un archivo temporal que se renombra al final, o un
+  multipart que se aborta si falla -- y `guard_stream`, que corre el paso
+  `validate` del disco sobre los primeros 64 KiB y aplica `max_bytes` conforme
+  llegan los pedazos.
+- **XML, JSON, CSV y texto se reconocen parseándolos.** No tienen bytes
+  mágicos, así que `validate.allow` no podía nombrarlos. Un XML con `DOCTYPE` o
+  `ENTITY` se rechaza antes de parsearlo, y una raíz SVG o HTML no se acepta
+  como `application/xml`.
+- **`jfastframework.encryption`.** AES-256-GCM para valores que el servicio
+  tiene que leer de vuelta, en una columna (`EncryptedString(context=...)`) o a
+  mano (`SecretBox`). El contexto se autentica, así que un valor copiado a otra
+  fila no se descifra; las llaves vienen de `JFAST_ENCRYPTION_KEYS` y rotan sin
+  migración. Extra `encryption`.
+- **Nombres de tabla en español.** `[scaffold] language = "es"` en
+  `jfast.toml`, o `--language es`: `camion` → `camiones`, `orden_compra` →
+  `ordenes_compra`.
+
+### Cambiado -- modular por defecto
+
+- **`jfast new module` sin `--layout` genera un módulo `modular`**, y el prompt
+  interactivo, `jfast start` y `contracts init` también empiezan ahí. Antes era
+  `layered`. Los módulos existentes conservan el layout que tienen registrado en
+  `jfast.toml`; `--layout layered` sigue generando la forma anterior. Las guías
+  para agentes les dicen que usen `modular` salvo que el usuario pida otro.
+
 ### Sitio de documentación
 
 - **Las páginas en español llevan a páginas en español.** Todo enlace del menú

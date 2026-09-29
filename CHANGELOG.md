@@ -137,6 +137,49 @@ generated module wired its session that way.
   options, help text and order are unchanged -- the `--help` output of the root
   and all 52 subcommands is identical before and after.
 
+### Added -- what a real service needed
+
+Found by rebuilding an invoicing service (E-Cont) on the framework: each of
+these it had written itself, and each one it got wrong in the same place.
+
+- **`@transactional`, for session dependencies of your own.** The startup
+  check only knew the framework's three session dependencies, so a service's
+  own `yield` dependency -- used on 120 routes in that rebuild -- committed
+  after the response and nothing said so. Marked, it is held to the same rule:
+  a route that depends on it without `scope="function"` stops the service from
+  starting. Unmarked generator dependencies that call `.commit(` after their
+  `yield` are named in a startup warning.
+- **Row-level security on more than the tenant.**
+  `@transaction_setting("app.companies")` registers a value that every
+  tenant-scoped transaction sets next to the tenant, and
+  `enable_rls_policy(op, table, predicate=...)` writes a policy that reads it.
+  Setting names are validated, the framework's own are refused, and `None`
+  leaves the setting unset -- no rows.
+- **Uploads that do not fit in memory.** `Disk.put_stream(key, chunks)` on the
+  local and S3 drivers -- a temporary file renamed into place, or a multipart
+  upload aborted on failure -- and `guard_stream`, which runs a disk's
+  `validate` step on the first 64 KiB and enforces `max_bytes` as the chunks
+  arrive.
+- **XML, JSON, CSV and text are recognised by parsing.** They have no magic
+  bytes, so `validate.allow` could not name them. XML with a `DOCTYPE` or an
+  `ENTITY` is refused before it is parsed, and an SVG or HTML root is not
+  accepted as `application/xml`.
+- **`jfastframework.encryption`.** AES-256-GCM for values the service must read
+  back, on a column (`EncryptedString(context=...)`) or by hand (`SecretBox`).
+  The context is authenticated, so a value copied to another row does not
+  decrypt; keys come from `JFAST_ENCRYPTION_KEYS` and rotate without a
+  migration. `encryption` extra.
+- **Spanish table names.** `[scaffold] language = "es"` in `jfast.toml`, or
+  `--language es`: `camion` → `camiones`, `orden_compra` → `ordenes_compra`.
+
+### Changed -- modular by default
+
+- **`jfast new module` without `--layout` generates a `modular` module**, and
+  the interactive prompt, `jfast start` and `contracts init` start there too.
+  It was `layered`. Existing modules keep the layout recorded for them in
+  `jfast.toml`; `--layout layered` still generates the old shape. The agent
+  guides tell agents to use `modular` unless the user asks for another.
+
 ### Documentation site
 
 - **Spanish pages lead to Spanish pages.** Every sidebar link, pager link and
