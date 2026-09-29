@@ -35,7 +35,9 @@ cd billing
 test ! -f contracts.toml || fail "a service with no module cannot know its layout"
 
 step "the first module writes it, for its own layout"
-"${JFAST}" new module invoice > /dev/null
+# Layered on purpose: the steps below edit layered files. The default layout
+# is modular, and its contract is checked at the end.
+"${JFAST}" new module invoice --layout layered > /dev/null
 test -f contracts.toml || fail "the first module wrote no contracts.toml"
 grep -qF 'modules/*/router.py' contracts.toml || fail "not the layered contract"
 
@@ -83,8 +85,11 @@ grep -q 'layer-package' /tmp/contracts.txt || fail "wrong rule fired: $(cat /tmp
 echo "caught: $(grep layer-package /tmp/contracts.txt | head -1)"
 
 step "a waiver clears it, and is listed"
-sed -i 's|^from fastapi import APIRouter$|from fastapi import APIRouter  # contracts: allow spike, JF-1|' \
+# -i.bak rather than -i: BSD sed (macOS) reads a bare -i's next argument as
+# the backup suffix.
+sed -i.bak 's|^from fastapi import APIRouter$|from fastapi import APIRouter  # contracts: allow spike, JF-1|' \
   modules/invoice/repository.py
+rm modules/invoice/repository.py.bak
 "${JFAST}" contracts check
 "${JFAST}" contracts waivers | grep -q 'spike, JF-1' || fail "waiver not listed"
 
@@ -117,6 +122,14 @@ step "CONTRACTS.md renders"
 "${JFAST}" contracts render
 grep -q 'May import' CONTRACTS.md || fail "no layer table"
 grep -q 'contracts: allow' CONTRACTS.md || fail "no waiver instructions"
+
+step "a module nobody chose a layout for gets the modular contract"
+cd "${WORK}"
+"${JFAST}" new service orders --with database > /dev/null
+cd orders
+"${JFAST}" new module order > /dev/null
+grep -qF 'modules/*/api/*.py' contracts.toml || fail "not the modular contract"
+"${JFAST}" contracts check
 
 step "the screaming layout gets its own defaults, without being asked twice"
 cd "${WORK}"

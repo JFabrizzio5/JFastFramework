@@ -80,7 +80,8 @@ grep -q 'hx-delete="/ui/products/{{ item.id }}"' templates/product/_row.html \
 echo "overlay OK"
 
 step "table names are pluralised (and dodge SQL reserved words)"
-grep -q '__tablename__ = "products"' modules/product/models.py \
+# -r: where the model lives depends on the layout, and the default is modular.
+grep -rq '__tablename__ = "products"' modules/product \
   || { echo "expected products table"; exit 1; }
 grep -q '__tablename__ = "invoices"' modules/invoice/storage.py \
   || { echo "expected invoices table"; exit 1; }
