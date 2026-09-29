@@ -15,6 +15,7 @@ Screaming layout: the directory listing is the feature list.
 | `use_cases/` | One file per capability | the domain, the repository interface |
 | `storage.py` | SQLAlchemy model and repository | SQLAlchemy, the domain |
 | `http.py` | Router and wire schemas | FastAPI, the use cases |
+| `public.py` | The only file other modules may import. Takes a session and `tenant_id`, returns DTOs | storage, the use cases, the domain |
 
 The import direction only ever points inward: `http` knows `use_cases`,
 `use_cases` knows the domain, and the domain knows nothing.

@@ -36,6 +36,8 @@ LAYER_FILES: dict[str, dict[str, str]] = {
         "service": "modules/order/service.py",
         "storage": "modules/order/repository.py",
         "schemas": "modules/order/schemas.py",
+        # The facade: the one file another module may import.
+        "public": "modules/order/public.py",
     },
     "modular": {
         "http": "modules/order/api/routes.py",
@@ -43,18 +45,24 @@ LAYER_FILES: dict[str, dict[str, str]] = {
         "validation": "modules/order/validations/order_validation.py",
         "storage": "modules/order/repositories/order_repository.py",
         "schemas": "modules/order/models/order_models.py",
+        # The facade: the one file another module may import.
+        "public": "modules/order/public.py",
     },
     "screaming": {
         "domain": "modules/order/order.py",
         "use_cases": "modules/order/use_cases/create_order.py",
         "storage": "modules/order/storage.py",
         "http": "modules/order/http.py",
+        # The facade: the one file another module may import.
+        "public": "modules/order/public.py",
     },
     "hexagonal": {
         "domain": "modules/order/domain/entities.py",
         "application": "modules/order/application/use_cases.py",
         "infrastructure": "modules/order/infrastructure/orm.py",
         "adapters": "modules/order/adapters/http.py",
+        # The facade: the one file another module may import.
+        "public": "modules/order/public.py",
     },
 }
 

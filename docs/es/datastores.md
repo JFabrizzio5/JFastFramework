@@ -418,16 +418,18 @@ vale la pena devolverla como string, no vale la pena lanzar una excepción.
 ## Búsqueda vectorial: pgvector o Qdrant
 
 El plugin `rag` habla contra un protocolo `VectorStore`, así que el backend es
-una línea de config.
+una línea de config. Cómo ingerir, buscar y responder con él -- tenants,
+búsqueda híbrida, ingesta incremental -- está en
+[RAG y búsqueda vectorial](rag.md); aquí solo se elige el store.
 
 ```toml
 [plugins]
 enabled = ["observability", "database", "rag"]
 
 [plugin.rag]
-store = "pgvector"       # the default
+store = "pgvector"       # el default
 collection = "rag_chunks"
-dimensions = 768
+dimensions = 1536
 ```
 
 Cambiar a Qdrant:
@@ -440,10 +442,10 @@ enabled = ["observability", "qdrant", "rag"]
 store = "qdrant"
 ```
 
-No cambia nada más. Los mismos endpoints, la misma forma de `SearchHit`, los
-mismos scores — cada store normaliza a similitud coseno en [0, 1], así que
-quien llama nunca tiene que saber si el backend devolvió una distancia o una
-similitud.
+El servicio `rag`, la forma de `SearchHit` y los scores no cambian -- cada store
+normaliza a similitud coseno en [0, 1]. Lo que sí cambia: Qdrant aquí no tiene
+búsqueda híbrida (texto completo + vectores), y el servicio cae a búsqueda
+vectorial.
 
 ### Cuál
 
@@ -451,7 +453,9 @@ similitud.
 | --- | --- | --- |
 | Costo operativo | ninguno — es la base de datos que ya corres | un segundo servicio que correr y respaldar |
 | Escala | cómodo hasta unos pocos millones de chunks | mucho más allá de eso |
-| Filtrado | tenant id, y el SQL que escribas | filtros ricos sobre el payload, indexados |
+| Búsqueda híbrida | sí, texto completo + vectores | no (necesita vectores dispersos) |
+| Row-level security | sí, como cualquier tabla | no — el filtro del store es el único |
+| Filtrado | tenant, documentos, metadata | tenant, documentos, metadata, indexados |
 | Cuantización | no | sí |
 
 **Empieza con pgvector.** Pasa a Qdrant cuando choques con un muro específico
@@ -469,47 +473,19 @@ rag store 'qdrant' needs the 'qdrant' plugin. Add "qdrant" to [plugins].enabled.
 
 No en la primera búsqueda, en producción, un viernes.
 
----
-
-## Un store propio
-
-Implementa el protocolo — `ensure_schema`, `upsert`, `search`,
-`delete_document`, `health` — y apunta la config ahí. La clase se construye
-con el `AppContext`, así que puede sacar del registro de providers lo que
-necesite:
-
-```python
-from jfastframework.vectors import Chunk, SearchHit
-
-
-class WeaviateStore:
-    def __init__(self, ctx):
-        self._client = ctx.require("weaviate.client")
-
-    async def ensure_schema(self) -> None: ...
-    async def upsert(self, chunks: list[Chunk], embeddings: list[list[float]]) -> int: ...
-    async def search(self, embedding, *, limit=5, tenant_id=None) -> list[SearchHit]: ...
-    async def delete_document(self, document_id: str) -> None: ...
-    async def health(self) -> tuple[bool, str]: ...
-```
-
-```toml
-[plugin.rag]
-store = "myapp.stores:WeaviateStore"
-```
-
-La misma escotilla de escape existe para los embedders
-(`embedder = "myapp:OpenAIEmbedder"` — cualquier cosa con `dimensions` y un
-`embed` async).
+Un store propio -- Weaviate, pgvecto.rs, lo que sea -- implementa el protocolo
+descrito en [RAG: un store propio](rag.md#un-store-propio).
 
 ---
 
 ## Dimensiones del embedding
 
 El error que cuesta una tarde: `dimensions` tiene que coincidir con el modelo
-de embedding. `nomic-embed-text` es 768; `mxbai-embed-large` es 1024. Si no
-coinciden falla al insertar, y cambiarlo después significa volver a embeber
-cada documento que ya ingestaste. Decídelo antes del primer ingest.
+de embedding. `nomic-embed-text` es 768; `mxbai-embed-large` es 1024;
+`text-embedding-3-small` es 1536. El plugin compara al arrancar las
+`dimensions` del embedder con las de la tabla, pero cambiarlo después sigue
+significando volver a embeber cada documento que ya ingestaste. Decídelo antes
+del primer ingest.
 
 ---
 

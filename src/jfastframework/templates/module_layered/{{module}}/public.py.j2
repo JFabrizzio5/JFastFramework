@@ -1,0 +1,57 @@
+"""The {{ module_title }} module's public facade.
+
+The only file another module may import from this one. Everything else here --
+the service, the repository, the model -- is private, and `jfast contracts
+check` rejects an import of it from outside.
+
+Three rules keep this file worth having:
+
+* **It returns DTOs, never the ORM model.** A model carries its session and its
+  lazy relations across the boundary, and every column becomes part of the API
+  the day someone reads it.
+* **It takes the caller's session and an explicit tenant_id.** The read joins
+  the caller's transaction instead of opening a second one, and the tenant is
+  an argument rather than something inferred from a request that a worker or
+  another module does not have.
+* **Queries only.** To make another module react to something that happened
+  here, publish an event through the outbox; do not call back into it.
+
+The payoff comes later: when this module becomes its own service, this file
+becomes an HTTP client with the same signatures, and no caller changes.
+
+A caller declares the dependency in contracts.toml:
+
+    [modules.<caller>]
+    depends_on = ["{{ module }}"]
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from .repository import {{ Module }}Repository
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@dataclass(frozen=True, slots=True)
+class {{ Module }}Summary:
+    """What other modules may know about a {{ module }}. Add fields deliberately."""
+
+    id: int
+    name: str
+    is_active: bool
+
+
+async def get_{{ module }}(
+    session: AsyncSession, *, tenant_id: str | None, {{ module }}_id: int
+) -> {{ Module }}Summary | None:
+    """One {{ module }}, or None when it does not exist for this tenant."""
+    # A read with no rule to enforce goes straight to the repository. A write
+    # added here goes through the service, so its rules hold for every caller.
+    item = await {{ Module }}Repository(session, tenant_id=tenant_id).get({{ module }}_id)
+    if item is None:
+        return None
+    return {{ Module }}Summary(id=item.id, name=item.name, is_active=item.is_active)

@@ -157,6 +157,14 @@ def contracts_show(
             f"layers       : {', '.join(contract.layers) or '-'}",
             f"provides     : {', '.join(i.name for i in contract.provides) or '-'}",
             f"consumes     : {', '.join(i.name for i in contract.consumes) or '-'}",
+            "depends_on   : "
+            + (
+                "; ".join(
+                    f"{name} -> {', '.join(deps) or 'nothing'}"
+                    for name, deps in sorted(contract.module_deps.items())
+                )
+                or "-"
+            ),
             f"invariants   : {len(contract.invariants)}",
         ]
     )

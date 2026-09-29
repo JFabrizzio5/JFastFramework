@@ -4,14 +4,19 @@ Code more than one module needs.
 
 ## The rule
 
-**Modules do not import each other.** When a second module needs the same
-thing, it moves here — and `jfast contracts check` reports the cross-import
-and names the file to move it to:
+**This is vocabulary, not behaviour.** An enum, a type or a pure function that
+two modules both speak moves here -- and `jfast contracts check` reports the
+cross-import and names the file to move it to:
 
 ```
-modules/nomina/service.py:4: cross-module: module 'nomina' imports module 'cheques'
-  (two modules that need the same thing should share it: move it to shared/enums.py)
+modules/nomina/service.py:4: cross-module: module 'nomina' imports modules.cheques.enums, private to module 'cheques'
+  (an enum or type two modules both speak is vocabulary: move it to shared/enums.py and import it from both)
 ```
+
+**Data is not.** When one module needs another's rows, it calls a function in
+`modules/<other>/public.py` that returns DTOs, and declares the dependency in
+`contracts.toml`. A repository or a service moved here to dodge that check is
+two modules sharing a table.
 
 **The direction is one-way.** Modules import `shared/`; `shared/` imports
 nothing from a module. That is checked too, because without it this directory

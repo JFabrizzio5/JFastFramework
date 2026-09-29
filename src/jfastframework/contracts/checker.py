@@ -31,9 +31,10 @@ from jfastframework.contracts._scan import (
     python_files,
     waived,
 )
+from jfastframework.contracts._scan import resolve_relative as _resolve_relative
 from jfastframework.contracts.blocking import check_blocking
 from jfastframework.contracts.model import Contract, Layer, match_path
-from jfastframework.contracts.placement import check_placement
+from jfastframework.contracts.placement import check_placement, crosses_to_facade
 
 __all__ = [
     "SKIP_DIRS",
@@ -44,24 +45,6 @@ __all__ = [
     "layer_matches",
     "waivers",
 ]
-
-
-def _resolve_relative(module: str | None, level: int, current: Path, root: Path) -> str | None:
-    """Turn a relative import into a repo-relative module path.
-
-    ``from .storage import X`` inside ``modules/order/http.py`` resolves to
-    ``modules/order/storage``.
-    """
-    if level == 0:
-        return module
-    base = current.parent
-    for _ in range(level - 1):
-        base = base.parent
-    try:
-        prefix = base.relative_to(root).as_posix().replace("/", ".")
-    except ValueError:
-        return None
-    return f"{prefix}.{module}" if module else prefix
 
 
 def _module_to_paths(dotted: str) -> list[str]:
@@ -99,12 +82,14 @@ def check_imports(contract: Contract, root: Path) -> list[Violation]:
         lines = source.splitlines()
 
         for node in ast.walk(tree):
+            imported: tuple[str, ...] = ()
             if isinstance(node, ast.Import):
                 names = [(alias.name, node.lineno) for alias in node.names]
                 dotted_targets = [(name, line) for name, line in names]
             elif isinstance(node, ast.ImportFrom):
                 resolved = _resolve_relative(node.module, node.level, path, root)
                 dotted_targets = [(resolved, node.lineno)] if resolved else []
+                imported = tuple(alias.name for alias in node.names)
             else:
                 continue
 
@@ -113,9 +98,14 @@ def check_imports(contract: Contract, root: Path) -> list[Violation]:
                     continue
                 reason = waived(lines, line)
 
-                # 1. Layer boundaries.
+                # 1. Layer boundaries. Another module's public.py is not a
+                # layer of this one: that edge belongs to `placement`.
                 if layer is not None:
-                    target_layer = _layer_of_module(contract, dotted)
+                    target_layer = (
+                        None
+                        if crosses_to_facade(relative, dotted, imported)
+                        else _layer_of_module(contract, dotted)
+                    )
                     if (
                         target_layer is not None
                         and target_layer.name != layer.name

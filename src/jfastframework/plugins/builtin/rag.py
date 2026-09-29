@@ -1,26 +1,32 @@
-"""Retrieval-Augmented Generation with a pluggable vector store.
-
-Two things are swappable here, and neither requires touching the router:
-
-* the **store** -- ``pgvector`` (default) or ``qdrant``, or your own class;
-* the **embedder** -- ``ollama`` (default), or your own class.
-
-::
+"""Retrieval-Augmented Generation over a pluggable vector store.
 
     [plugins]
-    enabled = ["observability", "qdrant", "rag"]
+    enabled = ["observability", "database", "cache", "llm", "rag"]
 
     [plugin.rag]
-    store = "qdrant"
-    embedder = "myapp.embeddings:OpenAIEmbedder"
+    store = "pgvector"          # or "qdrant", or "package.module:Class"
+    embedder = "llm"            # or "ollama", or "package.module:Class"
+    dimensions = 1536
+    collection = "rag_chunks"
 
-Backend dependencies are checked at build time with an actionable message:
-choosing ``pgvector`` without the ``database`` plugin, or ``qdrant`` without
-the ``qdrant`` plugin, fails at startup rather than at the first search.
+Modules use the service, not the store::
 
-Status: both stores and the Ollama embedder are implemented. Chunking is
-fixed-size with overlap -- adequate for prose, not for code or tables. No
-reranking, no hybrid search. See PLAN.md phase 3.
+    rag = get_context(request.app).require("rag")      # jfastframework.rag.RagService
+    await rag.ingest(doc_id, text, tenant_id=tenant)
+    hits = await rag.search(question, tenant_id=tenant)
+
+What changed in 0.1.0a10, because each was a real failure:
+
+* **Tenant isolation.** A chunk's identity includes the tenant, and a
+  tenant-scoped store (``tenant_scoped = true``, the default) refuses to read
+  or write without one. Before, two tenants with the same document id
+  overwrote each other, and a search with no tenant searched everyone.
+* **HNSW instead of IVFFlat** on pgvector, hybrid (full-text + vector) search,
+  structure-aware chunking, and re-ingest that embeds only changed chunks.
+* **The HTTP router is off by default and authenticated when on.** It took
+  the tenant from the request body -- anyone could read any tenant -- and did
+  not check a token. Now it needs the ``auth`` plugin, a signed-in caller, and
+  takes the tenant from the tenancy plugin or the token, never from the body.
 
 Requires: ``pip install jfastframework[rag]`` plus the extra for the store.
 """
@@ -28,27 +34,19 @@ Requires: ``pip install jfastframework[rag]`` plus the extra for the store.
 from __future__ import annotations
 
 import importlib
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 
 from jfastframework.errors import PluginError, ServiceUnavailableError
 from jfastframework.plugins.base import HealthReport, Plugin, PluginMeta, PluginSettings
-from jfastframework.vectors.base import Chunk, VectorStore
+from jfastframework.rag import Embedder, RagService, chunk_text
+from jfastframework.vectors.base import TenantRequiredError, VectorStore
 
 if TYPE_CHECKING:
     from jfastframework.context import AppContext
-
-
-@runtime_checkable
-class Embedder(Protocol):
-    """Anything that turns text into vectors."""
-
-    dimensions: int
-
-    async def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
 class OllamaEmbedder:
@@ -58,6 +56,7 @@ class OllamaEmbedder:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.dimensions = dimensions
+        self.model_id = f"ollama:{model}:{dimensions}"
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         import httpx
@@ -69,33 +68,6 @@ class OllamaEmbedder:
                     f"Ollama embedding failed ({response.status_code}): {response.text[:200]}"
                 )
             return list(response.json()["embeddings"])
-
-
-def chunk_text(text: str, *, size: int, overlap: int) -> list[str]:
-    """Fixed-size character chunking with overlap.
-
-    Deliberately dumb. Structure-aware splitters are phase 3; swapping this out
-    must not change the store's interface.
-    """
-    if size <= 0:
-        raise ValueError("chunk size must be positive")
-    if overlap >= size:
-        raise ValueError("overlap must be smaller than chunk size")
-
-    stride = size - overlap
-    chunks: list[str] = []
-    start = 0
-    while start < len(text):
-        piece = text[start : start + size].strip()
-        if piece:
-            chunks.append(piece)
-        # Stop once the window reaches the end. Striding past it would emit a
-        # tail already fully contained in the previous chunk -- a duplicate
-        # sliver that costs an embedding call and pollutes the results.
-        if start + size >= len(text):
-            break
-        start += stride
-    return chunks
 
 
 def _load_class(path: str, what: str) -> Any:
@@ -115,49 +87,89 @@ class RagSettings(PluginSettings):
 
     # "pgvector" | "qdrant" | "package.module:ClassName"
     store: str = "pgvector"
-    # "ollama" | "package.module:ClassName"
+    # "llm" | "ollama" | "package.module:ClassName"
     embedder: str = "ollama"
 
     # Table name for pgvector, collection name for Qdrant.
     collection: str = "rag_chunks"
     dimensions: int = 768
-    chunk_size: int = 1000
-    chunk_overlap: int = 150
-    top_k: int = 5
+    # Every read and write needs a tenant. Set false only for a service that
+    # has exactly one tenant; it is what makes "forgot the tenant" an error
+    # instead of a search across every customer.
+    tenant_scoped: bool = True
+
+    chunk_size: int = Field(default=1000, ge=100)
+    chunk_overlap: int = Field(default=150, ge=0)
+    # "recursive" follows headings, paragraphs and sentences; "fixed" is the
+    # 0.1.0a9 character window.
+    chunk_strategy: str = "recursive"
+    top_k: int = Field(default=5, ge=1, le=100)
+    min_score: float | None = None
+    # Full-text + vector with reciprocal rank fusion, where the store supports it.
+    hybrid: bool = True
+    # PostgreSQL text search configuration for hybrid search: "simple" works
+    # for any language; "spanish", "english"... add stemming.
+    text_search_config: str = "simple"
+    embed_batch_size: int = Field(default=64, ge=1)
+
+    # HNSW (pgvector). Defaults are pgvector's; ef_search trades speed for recall.
+    hnsw_m: int = 16
+    hnsw_ef_construction: int = 64
+    hnsw_ef_search: int = 100
 
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "nomic-embed-text"
 
-    mount_router: bool = True
+    # Off by default: modules should call the `rag` service with the tenant
+    # they already resolved. When on, the router needs the auth plugin.
+    mount_router: bool = False
     prefix: str = "/rag"
-    # Creates the table/collection on startup. Convenient in development; turn
-    # it off in production and manage schema through migrations.
+    # Scopes the router demands, empty = any signed-in caller.
+    read_scopes: list[str] = Field(default_factory=list)
+    write_scopes: list[str] = Field(default_factory=list)
+    # Creates or upgrades the table/collection on startup. Convenient in
+    # development; in production run jfastframework.vectors.pgvector.schema_sql
+    # from a migration and turn this off.
     auto_migrate: bool = True
 
 
 class IngestRequest(BaseModel):
-    document_id: str
+    document_id: str = Field(min_length=1, max_length=300)
     content: str
     metadata: dict[str, Any] = Field(default_factory=dict)
-    tenant_id: str | None = None
 
 
 class SearchRequest(BaseModel):
-    query: str
-    limit: int | None = None
-    tenant_id: str | None = None
+    query: str = Field(min_length=1, max_length=4000)
+    limit: int | None = Field(default=None, ge=1, le=100)
+    document_ids: list[str] | None = None
+    where: dict[str, Any] | None = None
+    min_score: float | None = Field(default=None, ge=0, le=1)
+    hybrid: bool | None = None
+
+
+def request_tenant(request: Request) -> str | None:
+    """The tenant this request is for: the tenancy plugin's answer, else the token's.
+
+    Never a header or a body field -- those are whatever the caller typed.
+    """
+    tenant = getattr(request.state, "tenant_id", None)
+    if tenant:
+        return str(tenant)
+    principal = getattr(request.state, "principal", None)
+    return getattr(principal, "tenant_id", None) or None
 
 
 class RagPlugin(Plugin):
     meta = PluginMeta(
         name="rag",
-        version="0.2.0",
-        description="Retrieval over a pluggable vector store (pgvector or Qdrant).",
+        version="0.3.0",
+        description="Tenant-scoped semantic and hybrid search over pgvector or Qdrant.",
         # Not `requires`: which backend this needs depends on configuration, so
         # the check lives in register() where the config is known. `after`
-        # still guarantees the backend plugin starts first when enabled.
-        after=("observability", "database", "qdrant"),
-        provides=("rag.store", "rag.embedder"),
+        # still guarantees those plugins start first when enabled.
+        after=("observability", "database", "qdrant", "cache", "llm", "auth", "tenancy"),
+        provides=("rag", "rag.store", "rag.embedder"),
         default_enabled=False,
         extra="jfastframework[rag]",
     )
@@ -167,11 +179,12 @@ class RagPlugin(Plugin):
         super().__init__(config)
         self._store: VectorStore | None = None
         self._embedder: Embedder | None = None
+        self._service: RagService | None = None
         self._setup_error: str | None = None
 
     # -- construction --------------------------------------------------
 
-    def _build_embedder(self) -> Embedder:
+    def _build_embedder(self, ctx: AppContext) -> Embedder:
         settings: RagSettings = self.settings
         if settings.embedder == "ollama":
             return OllamaEmbedder(
@@ -179,6 +192,21 @@ class RagPlugin(Plugin):
                 model=settings.ollama_model,
                 dimensions=settings.dimensions,
             )
+        if settings.embedder == "llm":
+            if not ctx.has("llm"):
+                raise PluginError(
+                    'rag embedder "llm" needs the llm plugin. Add "llm" to [plugins].enabled '
+                    'before "rag", or choose another embedder.'
+                )
+            from jfastframework.llm import LLMClient, LLMEmbedder
+
+            client = ctx.require("llm", LLMClient)
+            if client.embedding_dimensions and client.embedding_dimensions != settings.dimensions:
+                raise PluginError(
+                    f"[plugin.llm] embedding_dimensions = {client.embedding_dimensions} but "
+                    f"[plugin.rag] dimensions = {settings.dimensions}; they must match."
+                )
+            return LLMEmbedder(client, dimensions=settings.dimensions)
         embedder: Embedder = _load_class(settings.embedder, "embedder")()
         return embedder
 
@@ -194,11 +222,19 @@ class RagPlugin(Plugin):
                 )
             from jfastframework.vectors.pgvector import PgVectorStore
 
-            return PgVectorStore(
-                ctx.require("db.engine"),
-                table=settings.collection,
-                dimensions=settings.dimensions,
-            )
+            try:
+                return PgVectorStore(
+                    ctx.require("db.engine"),
+                    table=settings.collection,
+                    dimensions=settings.dimensions,
+                    tenant_scoped=settings.tenant_scoped,
+                    text_search_config=settings.text_search_config,
+                    hnsw_m=settings.hnsw_m,
+                    hnsw_ef_construction=settings.hnsw_ef_construction,
+                    hnsw_ef_search=settings.hnsw_ef_search,
+                )
+            except ValueError as exc:
+                raise PluginError(f"[plugin.rag] {exc}") from exc
 
         if settings.store == "qdrant":
             if not ctx.has("qdrant.client"):
@@ -212,6 +248,7 @@ class RagPlugin(Plugin):
                 ctx.require("qdrant.client"),
                 collection=settings.collection,
                 dimensions=settings.dimensions,
+                tenant_scoped=settings.tenant_scoped,
             )
 
         store: VectorStore = _load_class(settings.store, "vector store")(ctx)
@@ -221,13 +258,44 @@ class RagPlugin(Plugin):
 
     def register(self, ctx: AppContext) -> None:
         settings: RagSettings = self.settings
-        self._embedder = self._build_embedder()
-        self._store = self._build_store(ctx)
+        if settings.chunk_overlap >= settings.chunk_size:
+            raise PluginError("[plugin.rag] chunk_overlap must be smaller than chunk_size.")
+        if settings.chunk_strategy not in ("recursive", "fixed"):
+            raise PluginError('[plugin.rag] chunk_strategy must be "recursive" or "fixed".')
 
+        self._embedder = self._build_embedder(ctx)
+        self._store = self._build_store(ctx)
+        if getattr(self._embedder, "dimensions", settings.dimensions) != settings.dimensions:
+            raise PluginError(
+                f"the embedder produces {self._embedder.dimensions} dimensions but "
+                f"[plugin.rag] dimensions = {settings.dimensions}."
+            )
+        self._service = RagService(
+            self._store,
+            self._embedder,
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+            chunk_strategy=settings.chunk_strategy,
+            top_k=settings.top_k,
+            hybrid=settings.hybrid,
+            min_score=settings.min_score,
+            embed_batch_size=settings.embed_batch_size,
+        )
+
+        ctx.provide("rag", self._service)
         ctx.provide("rag.store", self._store)
         ctx.provide("rag.embedder", self._embedder)
 
+        if not settings.tenant_scoped:
+            ctx.logger.info("rag is not tenant-scoped: every search covers every document")
+
         if settings.mount_router:
+            if not ctx.has("auth"):
+                raise PluginError(
+                    "[plugin.rag] mount_router = true needs the auth plugin: the router must know "
+                    'who is calling. Enable "auth", or leave the router off and call the `rag` '
+                    "service from your own routes."
+                )
             ctx.app.include_router(self._build_router(), prefix=settings.prefix, tags=["rag"])
 
     async def startup(self, ctx: AppContext) -> None:
@@ -251,58 +319,70 @@ class RagPlugin(Plugin):
         if self._setup_error is not None:
             return HealthReport.fail(f"rag schema setup failed: {self._setup_error}")
         healthy, detail = await self._store.health()
-        meta = {"store": self.settings.store, "embedder": self.settings.embedder}
+        meta = {
+            "store": self.settings.store,
+            "embedder": self.settings.embedder,
+            "tenant_scoped": self.settings.tenant_scoped,
+        }
         return HealthReport.ok(detail, **meta) if healthy else HealthReport.fail(detail, **meta)
 
     # -- http ----------------------------------------------------------
 
     def _build_router(self) -> APIRouter:
+        from jfastframework.plugins.builtin.auth import require_scopes
+
         router = APIRouter()
         settings: RagSettings = self.settings
+        reader = Depends(require_scopes(*settings.read_scopes))
+        writer = Depends(require_scopes(*settings.write_scopes))
 
-        @router.post("/documents", summary="Ingest or replace a document")
-        async def ingest(payload: IngestRequest) -> dict[str, Any]:
-            store, embedder = self._require_ready()
-            pieces = chunk_text(
-                payload.content, size=settings.chunk_size, overlap=settings.chunk_overlap
+        def tenant_of(request: Request) -> str | None:
+            tenant = request_tenant(request)
+            if settings.tenant_scoped and not tenant:
+                raise TenantRequiredError("this request is not scoped to a tenant")
+            return tenant
+
+        @router.post("/documents", summary="Ingest or replace a document", dependencies=[writer])
+        async def ingest(payload: IngestRequest, request: Request) -> dict[str, Any]:
+            result = await self._require_service().ingest(
+                payload.document_id,
+                payload.content,
+                tenant_id=tenant_of(request),
+                metadata=payload.metadata,
             )
-            if not pieces:
-                return {"document_id": payload.document_id, "chunks": 0}
+            return {
+                "document_id": result.document_id,
+                "chunks": result.chunks,
+                "embedded": result.embedded,
+                "reused": result.reused,
+            }
 
-            embeddings = await embedder.embed(pieces)
-            chunks = [
-                Chunk(
-                    document_id=payload.document_id,
-                    chunk_index=index,
-                    content=piece,
-                    metadata=payload.metadata,
-                    tenant_id=payload.tenant_id,
-                )
-                for index, piece in enumerate(pieces)
-            ]
-            count = await store.upsert(chunks, embeddings)
-            return {"document_id": payload.document_id, "chunks": count}
-
-        @router.post("/search", summary="Semantic search")
-        async def search(payload: SearchRequest) -> dict[str, Any]:
-            store, embedder = self._require_ready()
-            vector = (await embedder.embed([payload.query]))[0]
-            hits = await store.search(
-                vector,
-                limit=payload.limit or settings.top_k,
-                tenant_id=payload.tenant_id,
+        @router.post("/search", summary="Semantic or hybrid search", dependencies=[reader])
+        async def search(payload: SearchRequest, request: Request) -> dict[str, Any]:
+            hits = await self._require_service().search(
+                payload.query,
+                tenant_id=tenant_of(request),
+                limit=payload.limit,
+                document_ids=payload.document_ids,
+                where=payload.where,
+                min_score=payload.min_score,
+                hybrid=payload.hybrid,
             )
             return {"query": payload.query, "results": [hit.as_dict() for hit in hits]}
 
-        @router.delete("/documents/{document_id}", summary="Delete a document")
-        async def delete(document_id: str) -> dict[str, str]:
-            store, _ = self._require_ready()
-            await store.delete_document(document_id)
+        @router.delete(
+            "/documents/{document_id}", summary="Delete a document", dependencies=[writer]
+        )
+        async def delete(document_id: str, request: Request) -> dict[str, str]:
+            await self._require_service().delete(document_id, tenant_id=tenant_of(request))
             return {"status": "deleted", "document_id": document_id}
 
         return router
 
-    def _require_ready(self) -> tuple[VectorStore, Embedder]:
-        if self._store is None or self._embedder is None:
+    def _require_service(self) -> RagService:
+        if self._service is None:
             raise ServiceUnavailableError("rag plugin is not initialised")
-        return self._store, self._embedder
+        return self._service
+
+
+__all__ = ["OllamaEmbedder", "RagPlugin", "RagSettings", "chunk_text", "request_tenant"]

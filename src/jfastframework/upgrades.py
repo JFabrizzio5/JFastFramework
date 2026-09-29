@@ -799,6 +799,95 @@ def _silent_mail_backend(project: Project) -> list[str]:
     return [f'[plugin.mail] backend = "{backend}"']
 
 
+def _rag_settings(project: Project) -> dict[str, Any] | None:
+    if "rag" not in project.plugins:
+        return None
+    return _table(_config(project), "plugin", "rag")
+
+
+def _rag_without_tenant_scope(project: Project) -> list[str]:
+    """A rag service that will now refuse calls without a tenant.
+
+    Before 0.1.0a10 ``tenant_id=None`` searched every tenant's chunks. It is a
+    ``TenantRequiredError`` now unless the service says it has one tenant.
+    """
+    rag = _rag_settings(project)
+    if rag is None or rag.get("tenant_scoped") is False:
+        return []
+    return ["[plugin.rag] tenant_scoped defaults to true"]
+
+
+def _rag_router_default(project: Project) -> list[str]:
+    """A rag service that relied on the router being mounted by default."""
+    rag = _rag_settings(project)
+    if rag is None or "mount_router" in rag:
+        return []
+    return ["[plugin.rag] mount_router now defaults to false (POST /rag/search is gone)"]
+
+
+def _rag_on_qdrant(project: Project) -> list[str]:
+    """Qdrant point ids now include the tenant; a 0.1.0a9 collection must be re-ingested."""
+    rag = _rag_settings(project)
+    if rag is None or rag.get("store") != "qdrant":
+        return []
+    return [f'[plugin.rag] store = "qdrant", collection = "{rag.get("collection", "rag_chunks")}"']
+
+
+def _rag_chunking_default(project: Project) -> list[str]:
+    rag = _rag_settings(project)
+    if rag is None or "chunk_strategy" in rag:
+        return []
+    return ['[plugin.rag] chunk_strategy defaults to "recursive"']
+
+
+_NEW_BOUNDARY_RULES = frozenset(
+    {
+        "undeclared-dependency",
+        "module-cycle",
+        "public-leak",
+        "cross-module-sql",
+        "unknown-dependency",
+    }
+)
+
+
+def _module_boundary_violations(project: Project) -> list[str]:
+    """What the new module-boundary rules report in this project today.
+
+    Run for real rather than guessed: the rules read the source, and an
+    upgrade note that lists the actual lines is one that gets acted on.
+    """
+    from jfastframework.contracts.model import Contract
+    from jfastframework.contracts.placement import check_placement
+
+    path = project.root / "contracts.toml"
+    if not path.is_file():
+        return []
+    try:
+        contract = Contract.load(path)
+    except Exception:  # noqa: BLE001 - an unreadable contract is `contracts check`'s to report
+        return []
+    return [
+        f"{v.path}:{v.line} {v.rule}: {v.message}"
+        for v in check_placement(contract, project.root)
+        if v.rule in _NEW_BOUNDARY_RULES
+    ][:20]
+
+
+def _screaming_contract_without_public_layer(project: Project) -> list[str]:
+    """A screaming contract from 0.1.0a9 classifies public.py as domain."""
+    from jfastframework.contracts.model import Contract
+
+    path = project.root / "contracts.toml"
+    if not path.is_file() or not any(m.layout == "screaming" for m in project.modules):
+        return []
+    try:
+        contract = Contract.load(path)
+    except Exception:  # noqa: BLE001
+        return []
+    return [] if "public" in contract.layers else ["contracts.toml has no [layers.public]"]
+
+
 def _job_timeout_past_the_claim(project: Project) -> list[str]:
     """A worker allowed to run a handler past the claim that protects it.
 
@@ -909,6 +998,115 @@ def _client_env_vars(project: Project) -> set[str]:
 # `jfast upgrade` answered "nothing between those versions affects this
 # project" to every one of them.
 CHANGES: tuple[Change, ...] = (
+    Change(
+        version="0.1.0a10",
+        kind="breaking",
+        code="rag-tenant-required",
+        summary="The rag store refuses to read or write without a tenant.",
+        detail=(
+            "A chunk's identity was (document_id, chunk_index), so two tenants with a "
+            "document of the same id overwrote each other, and a search with tenant_id=None "
+            "searched every tenant's documents. Identity is (tenant_id, document_id, "
+            "chunk_index) now, every statement filters by tenant, and a tenant-scoped store "
+            "-- the default -- raises TenantRequiredError (a 403) when a call has none. "
+            "ensure_schema upgrades a pgvector table in place and keeps its rows."
+        ),
+        detect=_rag_without_tenant_scope,
+        remedy=(
+            "Pass tenant_id to every rag call -- the `rag` service's ingest, search and delete "
+            "take it as a keyword. A service with exactly one tenant sets [plugin.rag] "
+            "tenant_scoped = false and keeps passing None."
+        ),
+    ),
+    Change(
+        version="0.1.0a10",
+        kind="breaking",
+        code="rag-router-off",
+        summary="The rag HTTP router is off by default, and needs auth when on.",
+        detail=(
+            "It was mounted by default, checked no token, and took the tenant from the "
+            "request body -- anyone who could reach the service could search any tenant. "
+            "Modules should call the `rag` service with the tenant they resolved. When "
+            "mounted, the router now requires the auth plugin and a signed-in caller, and "
+            "takes the tenant from the tenancy plugin or the token."
+        ),
+        detect=_rag_router_default,
+        remedy=(
+            "If a client calls /rag/documents or /rag/search, set [plugin.rag] mount_router "
+            "= true, enable the auth plugin, and stop sending tenant_id in the body (it is "
+            "ignored). Otherwise nothing to do."
+        ),
+    ),
+    Change(
+        version="0.1.0a10",
+        kind="breaking",
+        code="rag-qdrant-point-ids",
+        summary="Qdrant point ids now include the tenant: re-ingest existing collections.",
+        detail=(
+            "Point ids were derived from (document_id, chunk_index), so the same document "
+            "id in two tenants was the same point. They are derived from (tenant_id, "
+            "document_id, chunk_index) now. Points written by 0.1.0a9 keep their old ids: "
+            "a re-ingest writes new points beside them instead of replacing them."
+        ),
+        detect=_rag_on_qdrant,
+        remedy=(
+            "Delete the collection (or its points) and ingest every document again. The "
+            "collection is recreated with a tenant-aware payload index on startup."
+        ),
+    ),
+    Change(
+        version="0.1.0a10",
+        kind="breaking",
+        code="module-boundaries",
+        summary="Modules talk through modules/<name>/public.py, declared in depends_on.",
+        detail=(
+            "A module could not import another, and the advice was to move the thing to "
+            "shared/ -- right for an enum, wrong for behaviour, so modules read each other's "
+            "tables with raw SQL that no check could see. Now each module may expose "
+            "public.py, the only file others may import, returning DTOs and taking the "
+            "caller's session and tenant_id; the importer declares it in [modules.<name>] "
+            "depends_on. `contracts check` adds undeclared-dependency, module-cycle, "
+            "public-leak, cross-module-sql and unknown-dependency, and cross-module now also "
+            "catches relative imports across modules and every name in `import a, b`."
+        ),
+        detect=_module_boundary_violations,
+        remedy=(
+            "For each cross-module-sql line: add a function to the owning module's public.py "
+            "that runs the query there and returns a dataclass or Pydantic model, call it, and "
+            "add the owner to depends_on. `jfast contracts explain <rule>` gives the fix for "
+            "each rule. Waive a line with `# contracts: allow <reason>` only for a report that "
+            "must join across modules."
+        ),
+    ),
+    Change(
+        version="0.1.0a10",
+        kind="behaviour",
+        code="screaming-public-layer",
+        summary="A screaming contract from 0.1.0a9 reads public.py as domain code.",
+        detail=(
+            "Its catch-all layer glob matches modules/<name>/public.py, so a facade that "
+            "builds a repository reports layer and layer-package violations. New contracts "
+            "carry a [layers.public] that claims the file first."
+        ),
+        detect=_screaming_contract_without_public_layer,
+        remedy=(
+            "Copy the [layers.public] block from a freshly generated contracts.toml "
+            "(`jfast new service tmp --layout screaming`) into this one."
+        ),
+    ),
+    Change(
+        version="0.1.0a10",
+        kind="behaviour",
+        code="rag-recursive-chunking",
+        summary="Documents are chunked at headings, paragraphs and sentences by default.",
+        detail=(
+            "chunk_text cut fixed character windows, which split clauses and tables in "
+            "half. The default is now `recursive`. A document ingested again after upgrading "
+            "is re-chunked, and its chunks re-embedded, once."
+        ),
+        detect=_rag_chunking_default,
+        remedy='Set [plugin.rag] chunk_strategy = "fixed" to keep 0.1.0a9 chunks.',
+    ),
     Change(
         version="0.1.0a5",
         kind="breaking",

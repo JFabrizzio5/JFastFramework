@@ -18,8 +18,9 @@ guess.
 
 ## Steps
 
-1. **Read `contracts.toml`.** The `[layers.*]` tables say which module may
-   import what; `[rules.*]` say what is forbidden everywhere.
+1. **Read `contracts.toml`.** The `[layers.*]` tables say which file inside a
+   module may import what; `[modules.*]` say whose `public.py` each module may
+   call; `[rules.*]` say what is forbidden everywhere.
 2. **Find the layer you are about to write in.** Not the filename — the layer.
    Each `[layers.*]` table carries a `paths` glob, and that glob is what
    decides which layer a file is in:
@@ -53,19 +54,42 @@ layer:
 | Request/response models | the wire-contract layer, which may import only `shared` |
 | An enum one module uses | that module's own enums file, named in its `README.md` |
 | An enum two modules use | `shared/enums.py` |
+| A query other modules may call | this module's `public.py`: a function taking the session and `tenant_id`, returning a DTO |
 
-The last row is the only path here that is the same in every layout, and that
-is not an accident: `shared/` belongs to the service, not to a module.
+The last two rows are the only paths here that are the same in every layout,
+and that is not an accident: `shared/` belongs to the service, and `public.py`
+is the one door each module has.
+
+## When you need another module
+
+Queries through a facade, effects through events, nothing through `shared/`.
+
+| You need to… | Do this |
+| --- | --- |
+| Read data another module owns | Call a function in `modules/<other>/public.py`. If the one you need is missing, add it there: it takes the caller's `session` and an explicit `tenant_id`, and returns a DTO (dataclass or Pydantic model), never the ORM entity. Then add `<other>` to `depends_on` under `[modules.<yours>]` in `contracts.toml`. |
+| React to something another module did | Subscribe to the event it publishes through the outbox (`outbox.publish` in its code, `@on(topic)` in yours). If it publishes none, add the publish there. Do not call back into it. |
+| Share an enum or a type | Move it to `shared/`. Vocabulary only: nothing that queries, nothing that calls HTTP. |
+
+Never write raw SQL against another module's table (`text("SELECT … FROM
+<their table>")`). It is the same coupling as an import with nothing to see it,
+and `jfast contracts check` reports it as `cross-module-sql`.
+
+Why the facade takes the session: the read joins your transaction instead of
+opening a second one. Why `tenant_id` is explicit: a worker or another module
+has no request to infer it from.
 
 ## Reading a violation
 
 ```
-modules/payment/<file>:41: cross-module: module 'payment' imports module 'invoice'
-  (two modules that need the same thing should share it: move it to shared/enums.py)
+modules/payment/<file>:41: cross-module: module 'payment' imports modules.invoice.service; import modules.invoice.public instead
+  (only public.py is another module's API -- call a function in modules/invoice/public.py that returns DTOs (add one if it is missing), and add "invoice" to depends_on under [modules.payment] in contracts.toml)
 ```
 
 `file:line`, the rule, what happened, and what to do. The second line names the
-destination, so the fix does not need a design discussion.
+destination, so the fix does not need a design discussion. The module rules are
+`cross-module`, `undeclared-dependency`, `module-cycle`, `public-leak` and
+`cross-module-sql`; `jfast contracts explain --rule <rule>` says what each one
+protects.
 
 ## Verification
 
@@ -82,8 +106,18 @@ A change is done when all three pass. Not when the code looks right.
 - **Querying the database from the HTTP layer.** It works, and it is the first
   step to a codebase with no service layer. Move the query down to the layer
   that owns storage.
-- **Importing another module.** Two modules that import each other are one
-  module with a folder between them. Move the shared thing to `shared/`.
+- **Importing another module's internals.** Only `modules/<other>/public.py`
+  may be imported, and only when `depends_on` lists it. Anything else makes the
+  two one module with a folder between them.
+- **Moving behaviour to `shared/` to dodge the check.** A service or a
+  repository in `shared/` is two modules sharing a table. Add a function to the
+  owner's `public.py` instead.
+- **Raw SQL against another module's table.** The check finds it by table name;
+  read through the owner's facade.
+- **Returning the ORM entity from `public.py`.** Return a DTO. The entity drags
+  its session and every column across the boundary.
+- **Two modules calling each other.** That is a cycle and it fails the check.
+  Keep the query in one direction and turn the other into an event.
 - **Importing a module from `shared/`.** The direction is one-way, or the graph
   becomes a circle and nothing can be extracted later.
 - **Touching the database from `shared/`.** Two modules sharing a repository is

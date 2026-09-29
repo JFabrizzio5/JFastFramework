@@ -26,6 +26,9 @@ by the person who owns the service, not generated and forgotten:
     except_in = ["settings.py"]
     why = "Configuration is typed. Add a field to a settings model."
 
+    [modules.asesor]
+    depends_on = ["comprobante"]   # may call modules/comprobante/public.py
+
 Three consumers, one file:
 
 * ``jfast contracts check`` — fails the build on a violation;
@@ -223,10 +226,15 @@ class Contract:
     consumes: list[Interface] = field(default_factory=list)
     invariants: list[str] = field(default_factory=list)
     async_safety: AsyncSafety = field(default_factory=AsyncSafety)
-    # Modules must not import each other, and shared/ must not import a
-    # module. On by default: both are the kind of coupling that is easy to
-    # add and expensive to remove once a second team has done it too.
+    # Modules talk through each other's public.py and nothing else, and
+    # shared/ must not import a module. On by default: both are the kind of
+    # coupling that is easy to add and expensive to remove once a second team
+    # has done it too. One switch for every rule in `placement.py`.
     enforce_placement: bool = True
+    # `[modules.<name>] depends_on`: whose public.py each module may call. A
+    # module with no block depends on nothing, so a new edge in the graph is
+    # always a line someone added to this file and a reviewer saw.
+    module_deps: dict[str, list[str]] = field(default_factory=dict)
     source: Path | None = None
 
     # -- loading -------------------------------------------------------
@@ -293,6 +301,7 @@ class Contract:
             invariants=list(raw.get("invariants", {}).get("rules", [])),
             async_safety=_async_safety(rules.get("async_safety", {})),
             enforce_placement=bool(rules.get("placement", {}).get("enabled", True)),
+            module_deps=_module_deps(raw.get("modules", {})),
             source=path,
         )
 
@@ -359,7 +368,12 @@ class Contract:
                     {"path": r.path, "applies_to": r.applies_to, "why": r.why}
                     for r in self.requirements
                 ],
-                "placement": {"enabled": self.enforce_placement},
+                "placement": {
+                    "enabled": self.enforce_placement,
+                    # Where another module's API lives. Stated here so an agent
+                    # reading only this payload knows the one legal import.
+                    "facade": "modules/<name>/public.py",
+                },
                 "async_safety": {
                     "enabled": self.async_safety.enabled,
                     "naive_datetime": self.async_safety.naive_datetime,
@@ -367,6 +381,9 @@ class Contract:
                     "allow_in": self.async_safety.allow_in,
                     "follow_local_helpers": self.async_safety.follow_local_helpers,
                 },
+            },
+            "modules": {
+                name: {"depends_on": list(deps)} for name, deps in sorted(self.module_deps.items())
             },
             "provides": [_interface_dict(i) for i in self.provides],
             "consumes": [_interface_dict(i) for i in self.consumes],
@@ -394,6 +411,44 @@ def _interface_dict(interface: Interface) -> dict[str, Any]:
         "description": interface.description,
         "via_env": interface.via_env,
     }
+
+
+def _module_deps(table: Any) -> dict[str, list[str]]:
+    """``[modules.<name>] depends_on``, tolerating a table that is not one.
+
+    A block with no ``depends_on`` declares none, the same as no block at all.
+    """
+    if not isinstance(table, dict):
+        return {}
+    deps: dict[str, list[str]] = {}
+    for name, block in table.items():
+        if not isinstance(block, dict):
+            continue
+        listed = block.get("depends_on", [])
+        deps[str(name)] = [str(item) for item in listed] if isinstance(listed, list) else []
+    return deps
+
+
+def append_module_block(path: Path, module: str) -> bool:
+    """Add ``[modules.<module>] depends_on = []`` to *path* unless it is there.
+
+    Returns whether the file changed. Appended as text rather than rewritten
+    through a TOML serialiser: the standard library cannot write TOML, and a
+    contract is a document whose comments are half its value -- round-tripping
+    it would drop every one of them.
+    """
+    if not path.is_file():
+        return False
+    content = path.read_text(encoding="utf-8")
+    try:
+        existing = tomllib.loads(content).get("modules", {})
+    except tomllib.TOMLDecodeError:
+        return False
+    if isinstance(existing, dict) and module in existing:
+        return False
+    block = f"[modules.{module}]\ndepends_on = []\n"
+    path.write_text(content.rstrip("\n") + "\n\n" + block, encoding="utf-8")
+    return True
 
 
 def _async_safety(block: dict[str, Any]) -> AsyncSafety:

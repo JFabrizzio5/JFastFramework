@@ -212,9 +212,12 @@ def test_cross_module_is_traced_to_the_placement_rule(tmp_path: Path, layout: st
 
     expected = _table_line(root, "[rules.placement]")
     assert ("rules.placement", expected) in [(d.table, d.line) for d in answer.declarations]
-    assert "Two modules that import each other" in " ".join(answer.why)
+    assert "Queries through a facade" in " ".join(answer.why)
     # The remedy has to name a destination. "Do not do that" is what makes an
-    # agent delete the import instead of moving the code.
+    # agent delete the import instead of moving the code: the facade for data,
+    # an event for reactions, shared/ for vocabulary.
+    assert any("modules/customer/public.py" in step for step in answer.instead)
+    assert any("outbox" in step for step in answer.instead)
     assert any("shared/" in step for step in answer.instead)
 
 

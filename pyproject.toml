@@ -80,6 +80,8 @@ qdrant = ["qdrant-client>=1.12"]
 # The vector store is a separate choice: rag[+db] for pgvector, rag[+qdrant]
 # for Qdrant. The plugin says which one is missing if you pick wrong.
 rag = ["httpx>=0.28"]
+# Chat and embeddings over any OpenAI-compatible API, with a spending cap.
+llm = ["httpx>=0.28"]
 # jinja2 is already a kernel dependency; python-multipart is what makes
 # HTML form posts work.
 web = ["python-multipart>=0.0.20"]
@@ -156,7 +158,7 @@ dev = [
     "jfastframework[all]",
 ]
 all = [
-    "jfastframework[server,db,cache,metrics,sentry,mongo,qdrant,rag,web,gateway,http,auth,accounts,encryption,queue,rabbitmq,kafka,worker,storage,images,s3,fcm,oidc,aws,mail,exports,xml,validation,locale,retry]",
+    "jfastframework[server,db,cache,metrics,sentry,mongo,qdrant,rag,llm,web,gateway,http,auth,accounts,encryption,queue,rabbitmq,kafka,worker,storage,images,s3,fcm,oidc,aws,mail,exports,xml,validation,locale,retry]",
 ]
 
 [project.scripts]
@@ -173,6 +175,7 @@ cache = "jfastframework.plugins.builtin.cache:CachePlugin"
 mongo = "jfastframework.plugins.builtin.mongo:MongoPlugin"
 qdrant = "jfastframework.plugins.builtin.qdrant:QdrantPlugin"
 rag = "jfastframework.plugins.builtin.rag:RagPlugin"
+llm = "jfastframework.plugins.builtin.llm:LLMPlugin"
 web = "jfastframework.plugins.builtin.web:WebPlugin"
 gateway = "jfastframework.plugins.builtin.gateway:GatewayPlugin"
 auth = "jfastframework.plugins.builtin.auth:AuthPlugin"

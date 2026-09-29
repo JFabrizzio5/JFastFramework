@@ -266,3 +266,119 @@ async def test_require_tenant_accepts_a_token_without_a_subdomain() -> None:
     async with client_for(app) as client:  # type: ignore[arg-type]
         response = await client.get("/whoami", headers={"host": BASE, **bearer("acme")})
         assert response.status_code == 200
+
+
+# -- the signed-in user as the tenant ----------------------------------
+
+
+def bearer_for(subject: str, tenant: str | None = None) -> dict[str, str]:
+    from datetime import timedelta
+
+    from jfastframework.auth.tokens import issue
+
+    token, _jti, _expires = issue(
+        subject,
+        key=AUTH_SECRET,
+        algorithm="HS256",
+        lifetime=timedelta(minutes=5),
+        audience="billing",
+        issuer="https://id.example.com/",
+        tenant_id=tenant,
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def test_user_source_makes_each_account_its_own_tenant() -> None:
+    app = tenancy_and_auth_app(sources=["token", "user"], base_domain="")
+    async with client_for(app) as client:  # type: ignore[arg-type]
+        response = await client.get("/whoami", headers=bearer_for("e94e8ce9530947d7"))
+        assert response.json() == {"tenant": "e94e8ce9530947d7", "source": "user"}
+
+
+async def test_an_organisation_claim_outranks_the_user() -> None:
+    """A user who joins an organisation moves to it with no code change."""
+    app = tenancy_and_auth_app(sources=["token", "user"], base_domain="")
+    async with client_for(app) as client:  # type: ignore[arg-type]
+        response = await client.get("/whoami", headers=bearer_for("u-1", tenant="acme"))
+        assert response.json() == {"tenant": "acme", "source": "token"}
+
+
+async def test_user_source_resolves_nothing_without_a_token() -> None:
+    app = tenancy_and_auth_app(sources=["user"], base_domain="")
+    async with client_for(app) as client:  # type: ignore[arg-type]
+        response = await client.get("/whoami")
+        assert response.json() == {"tenant": None, "source": None}
+
+
+async def test_current_tenant_is_a_401_without_a_session() -> None:
+    from fastapi import Depends
+
+    from jfastframework.plugins.builtin.auth import AuthPlugin
+    from jfastframework.plugins.builtin.tenancy import current_tenant
+
+    router = APIRouter()
+
+    @router.get("/mine")
+    async def mine(tenant: str = Depends(current_tenant)) -> dict[str, str]:
+        return {"tenant": tenant}
+
+    app = build_test_app(
+        plugins=["observability", "auth", "tenancy"],
+        extra_plugins=[AuthPlugin, TenancyPlugin],
+        routers=[router],
+        raw={
+            "plugin": {
+                "auth": {
+                    "mode": "secret",
+                    "secret": AUTH_SECRET,
+                    "algorithms": ["HS256"],
+                    "issuer": "https://id.example.com/",
+                    "audience": "billing",
+                    "mount_router": False,
+                },
+                "tenancy": {"sources": ["user"]},
+            }
+        },
+    )
+    async with client_for(app) as client:  # type: ignore[arg-type]
+        # No session at all is a 401, so a client with an expired token
+        # refreshes instead of giving up.
+        assert (await client.get("/mine")).status_code == 401
+        ok = await client.get("/mine", headers=bearer_for("u-7"))
+        assert ok.json() == {"tenant": "u-7"}
+
+
+async def test_current_tenant_is_a_403_for_a_user_without_a_tenant() -> None:
+    """Signed in, but the sources resolve nothing: the request is not scoped."""
+    from fastapi import Depends
+
+    from jfastframework.plugins.builtin.tenancy import current_tenant
+
+    router = APIRouter()
+
+    @router.get("/mine")
+    async def mine(tenant: str = Depends(current_tenant)) -> dict[str, str]:
+        return {"tenant": tenant}
+
+    from jfastframework.plugins.builtin.auth import AuthPlugin
+
+    app = build_test_app(
+        plugins=["observability", "auth", "tenancy"],
+        extra_plugins=[AuthPlugin, TenancyPlugin],
+        routers=[router],
+        raw={
+            "plugin": {
+                "auth": {
+                    "mode": "secret",
+                    "secret": AUTH_SECRET,
+                    "algorithms": ["HS256"],
+                    "issuer": "https://id.example.com/",
+                    "audience": "billing",
+                    "mount_router": False,
+                },
+                "tenancy": {"sources": ["token"]},
+            }
+        },
+    )
+    async with client_for(app) as client:  # type: ignore[arg-type]
+        assert (await client.get("/mine", headers=bearer_for("u-7"))).status_code == 403

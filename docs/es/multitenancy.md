@@ -24,6 +24,7 @@ diseño:
 | Fuente | Controlado por | Confianza |
 | --- | --- | --- |
 | `token` | tu identity provider, criptográficamente | alta |
+| `user` | el mismo token firmado: el usuario *es* el tenant | alta |
 | `subdomain` | tu DNS y TLS | media |
 | `path` | la URL | baja |
 | `header` | quien haya mandado el request | **ninguna** |
@@ -35,6 +36,59 @@ en la lista por defecto, y activarlo en producción escribe un warning, porque
 Un claim firmado siempre le gana al hostname. Alguien que apunta `acme.` a tu
 IP no se convirtió en Acme; alguien con un token que tu identity provider firmó
 para Acme, sí.
+
+## Cada cuenta es su propio tenant: la fuente `user`
+
+La mayoría de los SaaS arrancan sin organizaciones: una persona se registra y
+lo que sube es suyo. No hay un claim `tenant_id` que leer, e inventar una tabla
+de tenants con una fila por usuario es ceremonia. La fuente `user` convierte el
+id del usuario con sesión -- el `sub` del token -- en el tenant:
+
+```toml
+[plugins]
+enabled = ["observability", "database", "auth", "accounts", "tenancy"]
+
+[plugin.tenancy]
+sources = ["token", "user"]
+```
+
+Todo lo que sigue funciona sin cambios: `BaseRepository` filtra por él, está en
+cada línea de log, el [row-level security](#aislamiento-que-impone-la-base-row-level-security)
+lo lee, el [store de `rag`](rag.md) se limita a él y el [presupuesto de `llm`](llm.md)
+se lo cobra.
+
+Pon `user` **después** de `token`. El día que un usuario entra a una
+organización y su token empieza a traer un claim `tenant_id`, el claim gana y
+pasa a los datos de la organización sin cambiar código. En el orden inverso se
+quedaría en su espacio personal para siempre.
+
+El id de usuario lo elige el identity provider, no tú -- un UUID, un id
+hexadecimal, `auth0|abc123` --, así que se valida con menos rigidez que el slug
+de un subdominio, pero igual rechaza cualquier cosa que se pueda leer como ruta
+o como SQL. Antes de iniciar sesión no hay usuario, así que el login, el
+registro y los health checks no resuelven tenant, que es lo correcto.
+
+## Leer el tenant en una ruta
+
+```python
+from fastapi import Depends
+from jfastframework.plugins.builtin.tenancy import current_tenant
+
+@router.get("/invoices")
+async def invoices(tenant: str = Depends(current_tenant), session: DbSession = ...):
+    return await InvoiceService(InvoiceRepository(session, tenant_id=tenant)).list()
+```
+
+`current_tenant` regresa lo que el plugin resolvió. Sin nadie con sesión
+responde **401** -- un token vencido tiene que hacer que el cliente refresque, y
+los clientes refrescan ante un 401, no ante un 403 --, y con una sesión que las
+fuentes no pudieron limitar a un tenant, **403**. No lee nada más -- ni un header, ni un campo del body.
+En un servicio sin el plugin tenancy cae al claim `tenant_id` del token, así que
+un servicio que solo usa `auth` sigue funcionando.
+
+Prefiérelo a `getattr(request.state, "tenant_id", None)`: un `None` que llega a
+un repositorio significa "sin filtro de tenant", y la dependencia lo convierte
+en 403 antes de que llegue.
 
 ## Subdominios
 
@@ -337,7 +391,35 @@ Esto es lo que puede usar un servicio que abría su propia sesión solo para pon
 un segundo valor -- ve [`@transactional`](transactions.md) para los que todavía
 necesitan la suya.
 
+## Las capas, y qué atrapa cada una
+
+El aislamiento no es una función. Es una pila, y cada capa está ahí por el bug
+que se le escapó a la de arriba:
+
+| Capa | Quién lo hace | Qué atrapa |
+| --- | --- | --- |
+| Resolución | este plugin, primero de fuentes firmadas | un tenant elegido por quien mandó el request |
+| La ruta | `Depends(current_tenant)` | un handler que corre sin tenant |
+| El repositorio | `BaseRepository(tenant_id=...)` | una consulta que olvidó `WHERE tenant_id` |
+| La base de datos | row-level security, `rls = true` | SQL crudo, un join mal hecho, un bug en un repositorio |
+| Entre módulos | el `public.py` de cada módulo recibe `tenant_id` explícito ([módulos](modules.md)) | un módulo leyendo tablas de otro con su propia idea del tenant |
+| Trabajo en segundo plano | los jobs llevan el tenant; el worker lo restaura | un job que corre como "nadie" y lo ve todo |
+| Recuperación | el store de `rag` rechaza llamadas sin tenant ([RAG](rag.md)) | una búsqueda en los documentos de todos los clientes |
+| Gasto | `tenant_budget_usd` en el [plugin `llm`](llm.md) | un tenant gastándose el presupuesto de IA de todos |
+
+Actívalas de arriba hacia abajo. Las tres primeras no cuestan nada y vienen con
+el framework; row-level security es un setting, una migración y un rol de base
+de datos; el resto se activa en cuanto el plugin lo está.
+
+Lo que ninguna atrapa: **un id de tenant equivocado pero bien formado.** Si tu
+propio código asigna un usuario a la organización equivocada, cada capa va a
+hacer cumplir fielmente la respuesta equivocada. Ese mapeo -- dónde vive, quién
+lo puede cambiar -- merece la revisión más cuidadosa del servicio.
+
 ## Ver también
 
 - [Autenticación](auth.md) — el claim `tenant_id`
+- [Cuentas](accounts.md) — usuarios y registro, con la fuente `user`
+- [RAG y búsqueda vectorial](rag.md) — recuperación limitada al tenant
+- [Modelos de lenguaje](llm.md) — presupuestos por tenant
 - [Deploy](deploy.md) — Caddy como edge

@@ -72,6 +72,26 @@ def render(contract: Contract) -> str:
             out.append(f"| `{layer.name}` | {paths} | {allowed} | {forbidden} |")
         out.append("")
 
+    if contract.enforce_placement or contract.module_deps:
+        out.append("## Modules\n")
+        out.append(
+            "Queries through a facade, effects through events, nothing through `shared/`. "
+            "A module may import another only through `modules/<other>/public.py`, and only "
+            "if `<other>` is listed below. The facade takes the caller's session and an "
+            "explicit `tenant_id`, and returns DTOs -- never an ORM entity. No raw SQL "
+            "against another module's tables; to react to what another module did, "
+            "subscribe to its event.\n"
+        )
+        if contract.module_deps:
+            out.append("| Module | May call |")
+            out.append("| --- | --- |")
+            for name, deps in sorted(contract.module_deps.items()):
+                called = ", ".join(f"`modules/{d}/public.py`" for d in deps) or "nothing"
+                out.append(f"| `{name}` | {called} |")
+            out.append("")
+        else:
+            out.append("No module declares a dependency: none may call another.\n")
+
     if contract.forbid_calls or contract.forbid_imports:
         out.append("## Forbidden\n")
         for rule in contract.forbid_imports:

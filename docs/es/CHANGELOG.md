@@ -84,6 +84,111 @@ respondía.
 
 
 
+## [0.1.0a10] - 2026-09-29
+
+Tres cosas que un proyecto deja atrás en su primer mes de uso real: una
+recuperación que mezclaba tenants, módulos que se hablaban por SQL crudo porque
+los contratos prohibían cualquier otra forma, y un modelo de tenants sin lugar
+para "cada cuenta es la suya".
+
+### Cambios incompatibles
+
+- **El store de rag se niega a trabajar sin tenant.** La identidad de un
+  fragmento era `(document_id, chunk_index)`: dos tenants con un `contrato-1`
+  se pisaban, y `search(tenant_id=None)` buscaba en todos. La identidad ahora
+  es `(tenant_id, document_id, chunk_index)`, cada sentencia filtra por tenant,
+  y un store limitado por tenant -- el default -- lanza `TenantRequiredError`
+  (403). `tenant_scoped = false` para un servicio de un solo tenant.
+  `ensure_schema` actualiza en su lugar una tabla pgvector de 0.1.0a9 sin
+  perder filas.
+- **El router de rag viene apagado y exige autenticación al encenderlo.** No
+  revisaba token y tomaba el tenant del body. Ahora `mount_router = true` exige
+  el plugin `auth`, una sesión iniciada, `read_scopes`/`write_scopes` opcionales,
+  y toma el tenant del plugin tenancy o del token.
+- **Los ids de puntos de Qdrant incluyen el tenant.** Las colecciones escritas
+  por 0.1.0a9 hay que volver a ingerirlas.
+- **Los módulos se hablan por `modules/<nombre>/public.py`, declarado en
+  `[modules.<nombre>] depends_on`.** Un módulo no podía importar a otro, y el
+  consejo era mover la cosa a `shared/` -- correcto para un enum, incorrecto
+  para comportamiento --, así que en la práctica los módulos leían las tablas
+  de otros con SQL crudo que ningún chequeo veía. La fachada regresa DTOs y
+  recibe la sesión de quien llama y un `tenant_id` explícito. `contracts check`
+  suma `undeclared-dependency`, `module-cycle`, `public-leak` (una entidad ORM
+  o FastAPI cruzando la fachada), `cross-module-sql` (un string con SQL contra
+  la tabla de otro módulo) y `unknown-dependency`; `cross-module` ahora también
+  atrapa imports relativos entre módulos y cada nombre de `import a, b`, y solo
+  sugiere `shared/` para enums y tipos. `jfast upgrade --check` lista las
+  líneas que cada regla reporta en un proyecto. Un contrato screaming de
+  0.1.0a9 necesita el nuevo bloque `[layers.public]`.
+- **Protocolo `VectorStore`:** `delete_document` y `search` reciben
+  `tenant_id`; nuevos `existing_hashes`, `sync_document` y `supports_hybrid`.
+  Un store propio necesita esos métodos.
+
+### Agregado
+
+- **`public.py` en cada módulo generado**, en los cuatro layouts, con un DTO
+  y un `get_<nombre>(session, *, tenant_id, <nombre>_id)` cableado al
+  repositorio de ese layout; `jfast new module` además agrega
+  `[modules.<nombre>] depends_on = []` a `contracts.toml`. `contracts show
+  --json`, `CONTRACTS.md`, `contracts explain` y `contracts diff` conocen los
+  módulos y sus dependencias. `AGENTS.md` y la skill `respect-contracts` le
+  dicen a un agente: los datos de otro módulo por su fachada, las reacciones
+  por el outbox, nunca SQL crudo sobre sus tablas, `shared/` solo para
+  vocabulario.
+- **Servicio `rag`** (`ctx.require("rag")`, `jfastframework.rag.RagService`):
+  `ingest`, `search`, `delete`, todos limitados por tenant, y `format_context`
+  para extractos numerados y citables. Sin dependencia de FastAPI, así que un
+  worker de la cola ingiere igual que una ruta.
+- **Re-ingerir solo embebe lo que cambió.** Cada fragmento lleva un hash de su
+  texto y de su embedder; los que no cambiaron conservan su vector, un
+  documento más corto pierde su cola, todo en una transacción. Un cambio de
+  modelo vuelve a embeber en vez de mezclar espacios vectoriales.
+- **HNSW en vez de IVFFlat** en pgvector. IVFFlat construido sobre una tabla
+  vacía no aprendía nada y, con `probes = 1`, regresaba uno o dos hits donde
+  había ocho relevantes. `hnsw.iterative_scan` en pgvector 0.8+, para que un
+  filtro selectivo no deje el resultado vacío.
+- **Búsqueda híbrida** en pgvector: una columna `tsvector` generada con índice
+  GIN y reciprocal rank fusion con el ranking vectorial. `text_search_config`
+  elige el diccionario (`spanish` hace que "entrega" encuentre "entregará").
+- **Filtros:** `document_ids`, `where` (coincidencia exacta en metadata, con
+  índice GIN), `min_score`.
+- **Fragmentación por estructura** (`chunk_strategy = "recursive"`, el
+  default): encabezados, párrafos, líneas, oraciones, palabras; un encabezado
+  siempre abre fragmento. `fixed` conserva las ventanas de 0.1.0a9.
+- **Row-level security en la tabla de fragmentos**: cada transacción del store
+  fija `jfast.tenant_id`, así que `enable_tenant_rls(op, "rag_chunks")`
+  funciona. Verificado con un rol que no es superusuario.
+- **`schema_sql()`** en `jfastframework.vectors.pgvector`: las sentencias que
+  corre `ensure_schema`, para una migración de Alembic con `auto_migrate =
+  false`.
+- **Plugin `llm` y `jfastframework.llm.LLMClient`**: chat, schemas JSON
+  estrictos, imágenes y embeddings sobre cualquier API compatible con OpenAI
+  (OpenAI, Azure, Ollama, vLLM, LiteLLM). Un tope de gasto por servicio y por
+  tenant, por mes, día o total, **reservado de forma atómica antes de cada
+  llamada y ajustado al costo real** -- las llamadas concurrentes no pueden ver
+  todas "bajo el presupuesto" y pasarse juntas. La bitácora en Redis registra
+  propósito, modelo, tokens, costo y latencia, nunca el prompt. Reintentos en
+  408/409/429/5xx respetando `Retry-After`. Precios en una tabla, reemplazables
+  en `[plugin.llm.prices]`; los modelos desconocidos se cobran caro.
+  `[plugin.rag] embedder = "llm"` hace que indexar gaste del mismo presupuesto.
+- **Fuente de tenancy `user`**: el id del usuario con sesión es el tenant, para
+  el SaaS donde cada cuenta es dueña de sus datos. Después de `token`, así que
+  unirse a una organización mueve al usuario a ella sin cambiar código.
+- **Dependencia `current_tenant`** para rutas: el tenant resuelto; 401 sin
+  sesión (para que un token vencido se refresque), 403 con sesión pero sin
+  tenant. Nunca un header ni un campo del body.
+- **Docs:** `modules.md`, `contracts.md` y `shared-and-events.md` explican la
+  comunicación entre módulos con un ejemplo completo. `docs/rag.md` y
+  `docs/llm.md`, nuevas, en inglés y español;
+  `multitenancy.md` suma la fuente `user`, `current_tenant` y una tabla de cada
+  capa de aislamiento y qué atrapa.
+- El PostgreSQL de la CI es `pgvector/pgvector:pg16`, así que la suite de rag
+  corre ahí.
+
+### Cambiado
+
+- `rag` pasa a `alpha` en STATUS.md; `llm` entra en `alpha`.
+
 ## [0.1.0a9] - 2026-09-28
 
 Un 201 tiene que significar que la fila existe.

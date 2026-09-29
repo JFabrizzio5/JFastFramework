@@ -9,8 +9,15 @@ The list is an **order of trust**, and it is the whole design:
 | Source | Who controls it | Trust |
 | --- | --- | --- |
 | `token` | your identity provider, cryptographically | high |
+| `user` | the same signed token: the user *is* the tenant | high |
 | `subdomain` | your DNS and TLS | medium |
 | `header` | whoever sent the request | **none** |
+
+`user` is for the SaaS where every account owns its own data and there is no
+organisation above it: the tenant is the signed-in user's id (the token's
+`sub`). Put it after `token` -- `sources = ["token", "user"]` -- and a user who
+later joins an organisation carrying a `tenant_id` claim moves to it without a
+code change.
 
 `header` is in the code because it is genuinely useful in development and in
 tests. It is not in the default list, and enabling it in production logs a
@@ -63,11 +70,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("jfast.tenancy")
 
-SOURCES = ("token", "subdomain", "path", "header")
+SOURCES = ("token", "user", "subdomain", "path", "header")
 
 # A tenant slug ends up in hostnames, log fields and SQL parameters. Keep it
 # to what is safe in all three.
 TENANT_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+# A user id is chosen by the identity provider, not by us: UUIDs, hex ids,
+# "auth0|abc". Looser than a slug, still nothing that could be read as SQL or
+# a path, and bound as a parameter everywhere it goes.
+SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@|-]{0,127}$")
 
 # Subdomains that are never a tenant, whatever the DNS says.
 RESERVED_SUBDOMAINS = frozenset(
@@ -125,6 +137,34 @@ def tenant_from_path(path: str, prefix: str) -> str | None:
     return candidate if TENANT_SLUG.match(candidate) else None
 
 
+def current_tenant(request: Request) -> str:
+    """The tenant of this request; 401 without a session, 403 without a tenant::
+
+        @router.get("/invoices")
+        async def invoices(tenant: str = Depends(current_tenant)): ...
+
+    It reads what the tenancy plugin resolved and nothing else -- not a header,
+    not a body field. Without the plugin it falls back to the token's
+    ``tenant_id`` claim, so a service that only uses `auth` still works.
+    """
+    from jfastframework.errors import ForbiddenError, UnauthorizedError
+
+    tenant = getattr(request.state, "tenant_id", None)
+    principal = getattr(request.state, "principal", None)
+    if not tenant:
+        tenant = getattr(principal, "tenant_id", None)
+    if not tenant and principal is None:
+        # 401, not 403: nobody is signed in -- or their token just expired.
+        # A client refreshes its session on a 401 and gives up on a 403, so
+        # answering 403 here strands every session at its first expiry.
+        raise UnauthorizedError("authentication required")
+    if not tenant:
+        raise ForbiddenError(
+            "this request is not scoped to a tenant. Sign in, or check [plugin.tenancy] sources."
+        )
+    return str(tenant)
+
+
 def tenant_zone(request: Request) -> tzinfo:
     """The zone this request's days are measured in.
 
@@ -154,6 +194,11 @@ class TenancyMiddleware(BaseHTTPMiddleware):
                 principal = getattr(request.state, "principal", None)
                 if principal is not None and principal.tenant_id:
                     return principal.tenant_id, "token"
+            elif source == "user":
+                principal = getattr(request.state, "principal", None)
+                subject = getattr(principal, "subject", None)
+                if subject and SUBJECT.match(str(subject)):
+                    return str(subject), "user"
             elif source == "subdomain":
                 tenant = tenant_from_host(
                     request.headers.get("host", ""),
@@ -205,7 +250,7 @@ class TenancyPlugin(Plugin):
     meta = PluginMeta(
         name="tenancy",
         version="0.1.0",
-        description="Resolve the tenant from the token, the subdomain or the path.",
+        description="Resolve the tenant from the token, the user, the subdomain or the path.",
         # After auth, so a signed claim is available to prefer over the host.
         after=("observability", "auth"),
         provides=("tenancy",),
@@ -250,7 +295,7 @@ class TenancyPlugin(Plugin):
                     f"usable time zone. {exc}"
                 ) from exc
 
-        if "token" not in settings.sources:
+        if not {"token", "user"} & set(settings.sources):
             ctx.logger.info(
                 "tenancy is not using the token claim; the tenant will come from "
                 "the request rather than from something signed"

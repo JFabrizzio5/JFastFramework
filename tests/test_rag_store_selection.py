@@ -54,18 +54,20 @@ def test_an_unknown_store_path_is_rejected() -> None:
 
 def test_qdrant_point_ids_are_deterministic() -> None:
     # Re-ingesting a document must overwrite its points, not duplicate them.
-    assert point_id("doc-1", 0) == point_id("doc-1", 0)
+    assert point_id("doc-1", 0, "acme") == point_id("doc-1", 0, "acme")
+    # ...and two tenants' documents with the same id are different points.
+    assert point_id("doc-1", 0, "acme") != point_id("doc-1", 0, "globex")
     assert point_id("doc-1", 0) != point_id("doc-1", 1)
     assert point_id("doc-1", 0) != point_id("doc-2", 0)
 
 
 def test_chunking_overlaps_without_emitting_a_redundant_tail() -> None:
     # Striding past the end would append "j", already inside "ghij".
-    assert chunk_text("abcdefghij", size=4, overlap=1) == ["abcd", "defg", "ghij"]
+    assert chunk_text("abcdefghij", size=4, overlap=1, strategy="fixed") == ["abcd", "defg", "ghij"]
 
 
 def test_chunking_covers_text_that_does_not_divide_evenly() -> None:
-    chunks = chunk_text("abcdefgh", size=5, overlap=2)
+    chunks = chunk_text("abcdefgh", size=5, overlap=2, strategy="fixed")
     assert chunks == ["abcde", "defgh"]
     assert "".join(dict.fromkeys("".join(chunks))) == "abcdefgh"
 

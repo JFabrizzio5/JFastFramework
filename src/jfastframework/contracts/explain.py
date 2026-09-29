@@ -40,20 +40,29 @@ from typing import Any
 
 from jfastframework import project as project_scan
 from jfastframework.contracts._scan import WAIVER, python_files
+from jfastframework.contracts._scan import resolve_relative as _resolve_relative
 from jfastframework.contracts.blocking import NAIVE_RULE
 from jfastframework.contracts.checker import (
     _layer_of_module,
-    _resolve_relative,
     check,
     layer_matches,
 )
 from jfastframework.contracts.model import Contract, match_path
 from jfastframework.contracts.placement import (
-    RULE as CROSS_MODULE,
+    CYCLE_RULE,
+    LEAK_RULE,
+    SHARED_RULE,
+    SQL_RULE,
+    UNDECLARED_RULE,
+    UNKNOWN_RULE,
+    _suggest_shared_target,
+    crosses_to_facade,
+    facade_path,
+    is_facade,
+    is_vocabulary,
 )
 from jfastframework.contracts.placement import (
-    SHARED_RULE,
-    _suggest_shared_target,
+    RULE as CROSS_MODULE,
 )
 
 __all__ = [
@@ -279,9 +288,64 @@ RULES: dict[str, RuleDoc] = {
     ),
     CROSS_MODULE: RuleDoc(
         CROSS_MODULE,
-        "one module imported another module",
+        "one module imported something of another module other than its public.py",
         "[rules.placement]",
-        ("move what both modules need into shared/, then import it from both",),
+        (
+            "import modules.<other>.public instead; if the function you need is not there, "
+            "add it -- it takes the session and tenant_id and returns DTOs",
+            "if what you imported is an enum or a type both modules speak, move it to "
+            "shared/ and import it from both",
+        ),
+    ),
+    UNDECLARED_RULE: RuleDoc(
+        UNDECLARED_RULE,
+        "a module called another module's public.py without listing it in depends_on",
+        "[modules.<name>] depends_on",
+        (
+            "add the module to depends_on under [modules.<name>] in contracts.toml -- a "
+            "reviewed, visible edge in the module graph",
+            "or, if you only need to react to something the other module did, subscribe to "
+            "its event through the outbox and depend on nothing",
+        ),
+    ),
+    CYCLE_RULE: RuleDoc(
+        CYCLE_RULE,
+        "the module graph (declared depends_on plus actual public.py imports) has a cycle",
+        "[modules.<name>] depends_on",
+        (
+            "keep the query in one direction and turn the other into an event: the "
+            "downstream module subscribes instead of being called back",
+            "or move the vocabulary both sides need (an enum, a type) into shared/",
+        ),
+    ),
+    LEAK_RULE: RuleDoc(
+        LEAK_RULE,
+        "public.py hands across an ORM entity or imports fastapi/starlette",
+        "[rules.placement]",
+        (
+            "return a DTO -- a dataclass or Pydantic model -- built from the entity",
+            "take plain arguments (session, tenant_id, ids), never a Request, so a worker "
+            "or another module can call it",
+        ),
+    ),
+    UNKNOWN_RULE: RuleDoc(
+        UNKNOWN_RULE,
+        "a [modules.x] block or depends_on entry names no module under modules/",
+        "[modules.<module>] depends_on",
+        (
+            "fix the spelling to the module's directory name",
+            "or delete the entry if the module is gone",
+        ),
+    ),
+    SQL_RULE: RuleDoc(
+        SQL_RULE,
+        "a string in one module holds SQL against a table another module owns",
+        "[rules.placement]",
+        (
+            "read the data through the owning module's public.py, which returns DTOs",
+            "if the query is a report that must join across modules, give it its own "
+            "module that depends on both facades, or waive the line with the reason",
+        ),
     ),
     SHARED_RULE: RuleDoc(
         SHARED_RULE,
@@ -371,6 +435,7 @@ def _facts(contract: Contract, root: Path) -> dict[str, Any]:
             for name, layer in contract.layers.items()
         },
         "modules": _module_names(root),
+        "module_deps": {name: list(deps) for name, deps in sorted(contract.module_deps.items())},
         "placement_enforced": contract.enforce_placement,
     }
 
@@ -437,7 +502,7 @@ def _rule_declarations(
     elif rule == "missing":
         found = source.entries("rules.require")
         why = [entry.why for entry in contract.requirements if entry.why]
-    elif rule in (CROSS_MODULE, SHARED_RULE):
+    elif rule in (CROSS_MODULE, SHARED_RULE, LEAK_RULE, SQL_RULE):
         declaration = source.table("rules.placement")
         if declaration is None:
             unknown.append(
@@ -445,6 +510,19 @@ def _rule_declarations(
             )
         else:
             found = [declaration]
+    elif rule in (UNDECLARED_RULE, CYCLE_RULE, UNKNOWN_RULE):
+        found = [
+            d
+            for name in sorted(contract.module_deps)
+            if (d := source.key(f"modules.{name}", "depends_on")) is not None
+        ]
+        if not found:
+            # Not "cannot fire": a module with no block depends on nothing, so
+            # the first undeclared call is exactly what this rule reports.
+            unknown.append(
+                "no [modules.<name>] block declares depends_on yet, so every module depends "
+                "on nothing and any call to another module's public.py is undeclared"
+            )
     elif rule in ("async-blocking", NAIVE_RULE):
         # One switch, two rules. `naive-datetime` is not about async at
         # all; it rides [rules.async_safety] because both are 'calls whose
@@ -621,23 +699,65 @@ def _module_pair(
         )
 
     crossing = _crossing(root, left, right)
-    target = _suggest_shared_target(crossing.dotted)
+    facade = facade_path(right)
+    facade_exists = (root / facade).is_file()
     facts["imported_names"] = list(crossing.names)
     facts["evidence"] = list(crossing.evidence)
+    facts["facade"] = facade
+    facts["facade_exists"] = facade_exists
 
+    declared = right in contract.module_deps.get(left, [])
+    deps_line = source.key(f"modules.{left}", "depends_on") if source else None
+    declarations = (*found, deps_line) if deps_line is not None else found
+    create = (
+        ""
+        if facade_exists
+        else f" ({facade} does not exist yet: create it with a function that takes the "
+        f"session and tenant_id and returns DTOs)"
+    )
+
+    if declared:
+        return Explanation(
+            question=question,
+            verdict="allowed",
+            rule=CROSS_MODULE,
+            summary=f"{left!r} declares {right!r} in depends_on, so it may import "
+            f"modules.{right}.public -- and nothing else of {right!r}",
+            declarations=declarations,
+            why=why,
+            instead=(
+                f"import modules.{right}.public{create}",
+                f"everything else in modules/{right}/ is private to it: add a function to "
+                f"{facade} rather than importing a service, repository or entity",
+            ),
+            unknown=unknown,
+            context=facts,
+        )
+
+    vocabulary = next(
+        (d for d in crossing.dotted_all if is_vocabulary(d)),
+        crossing.dotted if is_vocabulary(crossing.dotted) else None,
+    )
+    instead = [
+        f"to read data {right!r} owns: call a function in {facade} that returns DTOs{create}, "
+        f"and add {right!r} to depends_on under [modules.{left}] in contracts.toml",
+        f"to react to something {right!r} did: subscribe to the event it publishes through "
+        f"the outbox, and depend on nothing",
+        f"if it is an enum or a type both modules speak: move it to "
+        f"{_suggest_shared_target(vocabulary or f'modules.{right}.enums')} and import it "
+        f"from both",
+        f"if only {left!r} needs it, it belongs in {left!r}",
+        f"waive this one line with {WAIVER_COST['inline']} while the move is in flight",
+    ]
     return Explanation(
         question=question,
         verdict="forbidden",
         rule=CROSS_MODULE,
-        summary=f"modules may not import each other: {left!r} and {right!r} would become one "
-        f"module with a folder between them",
-        declarations=found,
+        summary=f"{left!r} does not declare {right!r} in depends_on, so it may not import it "
+        f"-- and even when it does, only through {facade}",
+        declarations=declarations,
         why=why,
-        instead=(
-            f"move what both modules need into {target}, then import it from both",
-            f"if only {left!r} needs it, it belongs in {left!r}",
-            f"waive this one line with {WAIVER_COST['inline']} while the move is in flight",
-        ),
+        instead=tuple(instead),
         unknown=unknown,
         context=facts,
     )
@@ -961,15 +1081,21 @@ def _observed_layer_edges(contract: Contract, root: Path) -> dict[tuple[str, str
             continue
 
         for node in ast.walk(tree):
+            names: tuple[str, ...] = ()
             if isinstance(node, ast.Import):
                 targets = [(alias.name, node.lineno) for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
                 resolved = _resolve_relative(node.module, node.level, path, root)
                 targets = [(resolved, node.lineno)] if resolved else []
+                names = tuple(alias.name for alias in node.names)
             else:
                 continue
             for dotted, line in targets:
                 if dotted is None:
+                    continue
+                # Another module's facade is a module edge, reported below with
+                # its own rule -- the same exemption `check` makes.
+                if crosses_to_facade(relative, dotted, names):
                     continue
                 target = _layer_of_module(contract, dotted)
                 if target is None or target.name == layer.name:
@@ -988,6 +1114,11 @@ class _Crossing:
     # one `check` already printed. Two commands naming different files for the
     # same move is the confusion this command exists to remove.
     dotted: str
+    # Imports that reach past the facade. Empty means every import of the
+    # target went through its public.py, which is a permitted edge once
+    # declared rather than a violation.
+    private: tuple[str, ...] = ()
+    dotted_all: tuple[str, ...] = ()
 
 
 def _crossing(root: Path, source: str, target: str) -> _Crossing:
@@ -1005,6 +1136,7 @@ def _crossing(root: Path, source: str, target: str) -> _Crossing:
     names: list[str] = []
     evidence: list[str] = []
     dotted_seen: list[str] = []
+    private: list[str] = []
     for path in sorted(directory.rglob("*.py")):
         relative = path.relative_to(root).as_posix()
         try:
@@ -1019,11 +1151,17 @@ def _crossing(root: Path, source: str, target: str) -> _Crossing:
                 continue
             evidence.append(f"{relative}:{node.lineno}")
             dotted_seen.append(dotted)
-            names.extend(alias.name for alias in node.names)
+            imported = [alias.name for alias in node.names]
+            names.extend(imported)
+            if not is_facade(dotted, imported):
+                private.append(f"{relative}:{node.lineno}")
+    reached = [d for d in dotted_seen if not is_facade(d, ["public"] if d == fallback else ())]
     return _Crossing(
         tuple(dict.fromkeys(names)),
         tuple(evidence),
-        dotted_seen[0] if dotted_seen else fallback,
+        (reached or dotted_seen or [fallback])[0],
+        tuple(private),
+        tuple(dict.fromkeys(dotted_seen)),
     )
 
 
@@ -1109,29 +1247,76 @@ def diff(contract: Contract, root: Path) -> ArchitectureDiff:
         )
 
     snapshot = project_scan.load(root)
-    for left, right in sorted(project_scan.module_edges(snapshot)):
+    observed_modules = set(project_scan.module_edges(snapshot))
+    for left, right in sorted(observed_modules):
         if not contract.enforce_placement:
             continue
         crossing = _crossing(root, left, right)
-        target_file = _suggest_shared_target(crossing.dotted)
+        declared = right in contract.module_deps.get(left, [])
+        facade = facade_path(right)
+        if crossing.private:
+            added.append(
+                EdgeDelta(
+                    kind="module",
+                    source=left,
+                    target=right,
+                    state="added",
+                    rule=CROSS_MODULE,
+                    reason=f"reaches past {facade}, the only file another module may import",
+                    evidence=crossing.private,
+                    names=crossing.names,
+                    declaration=placement,
+                )
+            )
+            for name in crossing.names:
+                if name == "public":
+                    continue
+                if is_vocabulary(crossing.dotted):
+                    remedy = (
+                        f"move it to {_suggest_shared_target(crossing.dotted)} "
+                        f"and import it from both"
+                    )
+                else:
+                    remedy = f"expose what it needs from {facade} as a function returning DTOs"
+                costs.append(
+                    f"{left} loses direct access to {right}.{name} when that import goes -- "
+                    f"{remedy}"
+                )
+            continue
+        if declared:
+            # Through the facade and declared: the architecture as permitted.
+            continue
         added.append(
             EdgeDelta(
                 kind="module",
                 source=left,
                 target=right,
                 state="added",
-                rule=CROSS_MODULE,
-                reason="modules may not import each other",
+                rule=UNDECLARED_RULE,
+                reason=f"calls {facade} without {right!r} in depends_on",
                 evidence=crossing.evidence,
                 names=crossing.names,
-                declaration=placement,
+                declaration=source.table(f"modules.{left}") if source else None,
             )
         )
-        for name in crossing.names:
-            costs.append(
-                f"{left} loses access to {right}.{name} when that import goes -- "
-                f"move it to {target_file} and import it from both"
-            )
+
+    if contract.enforce_placement:
+        known = set(snapshot.module_names)
+        for left, deps in sorted(contract.module_deps.items()):
+            for right in deps:
+                if (left, right) in observed_modules or right not in known:
+                    continue
+                removed.append(
+                    EdgeDelta(
+                        kind="module",
+                        source=left,
+                        target=right,
+                        state="removed",
+                        rule=UNDECLARED_RULE,
+                        reason="declared in depends_on, and no import uses it",
+                        declaration=source.key(f"modules.{left}", "depends_on") if source else None,
+                    )
+                )
 
     for file, module in sorted(snapshot.shared_module_imports):
         if not contract.enforce_placement:

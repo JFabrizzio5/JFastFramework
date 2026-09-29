@@ -86,7 +86,8 @@ PLUGIN_CATALOG: dict[str, PluginSpec] = {
     "cache": PluginSpec("cache", "Redis cache, pub/sub and queue", True),
     "mongo": PluginSpec("mongo", "MongoDB for document-shaped data", True),
     "qdrant": PluginSpec("qdrant", "Qdrant vector database", True),
-    "rag": PluginSpec("rag", "Semantic search over pgvector or Qdrant"),
+    "rag": PluginSpec("rag", "Tenant-scoped semantic and hybrid search over pgvector or Qdrant"),
+    "llm": PluginSpec("llm", "Chat, vision and embeddings with a spending cap (OpenAI-compatible)"),
     "queue": PluginSpec("queue", "Background jobs on PostgreSQL, Redis or RabbitMQ"),
     "outbox": PluginSpec("db", "Jobs and events that commit with the request's rows"),
     "idempotency": PluginSpec("db", "Idempotency-Key: a retried POST gets the first answer"),
@@ -101,7 +102,7 @@ PLUGIN_CATALOG: dict[str, PluginSpec] = {
     "gateway": PluginSpec("gateway", "Prefix-based reverse proxy"),
     "http": PluginSpec("http", "Calls to sibling services: deadlines, retries, breakers"),
     "storage": PluginSpec("storage", "File storage on local disks, S3 or MinIO"),
-    "tenancy": PluginSpec("", "Multi-tenancy by subdomain, token claim or path"),
+    "tenancy": PluginSpec("", "Multi-tenancy by token claim, signed-in user, subdomain or path"),
     "notifications": PluginSpec("fcm", "Push notifications via Firebase (FCM)"),
     "mail": PluginSpec("mail", "Email with templates, queued by default"),
 }

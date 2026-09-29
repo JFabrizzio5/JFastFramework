@@ -60,6 +60,24 @@ def waived(source_lines: list[str], line: int) -> str | None:
     return None
 
 
+def resolve_relative(module: str | None, level: int, current: Path, root: Path) -> str | None:
+    """Turn a relative import into a repo-relative module path.
+
+    ``from .storage import X`` inside ``modules/order/http.py`` resolves to
+    ``modules/order/storage``.
+    """
+    if level == 0:
+        return module
+    base = current.parent
+    for _ in range(level - 1):
+        base = base.parent
+    try:
+        prefix = base.relative_to(root).as_posix().replace("/", ".")
+    except ValueError:
+        return None
+    return f"{prefix}.{module}" if module else prefix
+
+
 def call_name(node: ast.Call) -> str | None:
     """Dotted name of a call target, for the forms worth checking."""
     target: ast.expr = node.func

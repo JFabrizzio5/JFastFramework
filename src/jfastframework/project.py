@@ -33,6 +33,7 @@ from typing import Any
 
 from jfastframework.contracts.checker import check_coverage
 from jfastframework.contracts.model import CONTRACTS_FILE, Contract
+from jfastframework.contracts.placement import is_facade
 
 __all__ = [
     "SEVERITY_ORDER",
@@ -216,6 +217,12 @@ class Module:
     has_readme: bool
     tables: tuple[str, ...]
     """Table names declared by its models."""
+    private_imports: tuple[str, ...] = ()
+    """The subset of `imports` reached past their `public.py` facade.
+
+    An import of another module's `public.py` is how modules are meant to talk;
+    anything else of theirs is private, and only these are findings.
+    """
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -231,6 +238,7 @@ class Module:
             "has_tests": self.has_tests,
             "has_readme": self.has_readme,
             "tables": list(self.tables),
+            "private_imports": list(self.private_imports),
         }
 
 
@@ -369,10 +377,18 @@ def _scan_module(
     *,
     local: frozenset[str],
     module_names: frozenset[str],
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    """`(files, module imports, external packages, route prefixes, table names)`."""
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
+    """`(files, module imports, external packages, route prefixes, tables, private imports)`."""
     files: list[str] = []
     imported: set[str] = set()
+    private: set[str] = set()
     external: set[str] = set()
     prefixes: list[str] = []
     tables: set[str] = set()
@@ -389,8 +405,10 @@ def _scan_module(
             prefixes.append(prefix)
         for node in ast.walk(tree):
             dotted: str | None = None
+            names: list[str] = []
             if isinstance(node, ast.ImportFrom):
                 dotted = _dotted(node, path, root)
+                names = [alias.name for alias in node.names]
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     top = _top_level(alias.name)
@@ -403,6 +421,8 @@ def _scan_module(
                 other = dotted.split(".")[1]
                 if other != own and other in module_names:
                     imported.add(other)
+                    if not is_facade(dotted, names):
+                        private.add(other)
                 continue
             top = _top_level(dotted)
             if top not in local and top not in sys.stdlib_module_names:
@@ -414,6 +434,7 @@ def _scan_module(
         tuple(sorted(external)),
         tuple(prefixes),
         tuple(sorted(tables)),
+        tuple(sorted(private)),
     )
 
 
@@ -441,7 +462,7 @@ def load(root: Path) -> Project:
 
     modules: list[Module] = []
     for directory in directories:
-        files, imports, external, prefixes, tables = _scan_module(
+        files, imports, external, prefixes, tables, private = _scan_module(
             directory, root, local=local, module_names=module_names
         )
         recorded = module_config.get(directory.name, {})
@@ -461,6 +482,7 @@ def load(root: Path) -> Project:
                 or any("test" in Path(name).name for name in files),
                 has_readme=(directory / "README.md").is_file(),
                 tables=tables,
+                private_imports=private,
             )
         )
 
@@ -653,7 +675,8 @@ def analyze(project: Project, *, known_plugins: frozenset[str] | None = None) ->
                 why=(
                     "Modules in a cycle are one module with folders between them: neither can "
                     "be extracted into a service, and a change to one breaks the other in a "
-                    "way no test covers. Move what they share into shared/."
+                    "way no test covers. Keep the query in one direction, through the other "
+                    "module's public.py, and turn the other direction into an event."
                 ),
             )
         )
@@ -735,14 +758,15 @@ def analyze(project: Project, *, known_plugins: frozenset[str] | None = None) ->
                 )
 
     for module in project.modules:
-        for other in module.imports:
+        for other in module.private_imports:
             findings.append(
                 Finding(
                     severity="medium",
                     code="cross-module-import",
-                    message=f"module '{module.name}' imports module '{other}'",
+                    message=f"module '{module.name}' imports module '{other}' past its public.py",
                     why=(
-                        "Two modules that need the same thing should share it: move it to "
+                        f"Only modules/{other}/public.py is another module's API: read through a "
+                        "function there that returns DTOs, or move an enum both speak to "
                         "shared/. `jfast contracts check` reports the exact line."
                     ),
                     path=f"{module.path}/",

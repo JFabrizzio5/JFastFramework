@@ -24,18 +24,36 @@ necesita, y el check te avisa el día en que un segundo lo quiere.
 
 ### La regla
 
-**Los módulos no se importan entre sí.** Dos módulos que se meten uno en el
-otro son un solo módulo con una carpeta en medio — ninguno se puede extraer a
-un servicio después, y un cambio en uno rompe al otro de una forma que ningún
-test cubre.
+**`shared/` es vocabulario, no comportamiento.** Un enum, un tipo o una función
+pura que hablan dos módulos se muda acá, y el check nombra el archivo cuando un
+módulo importa uno de otro:
 
 ```
-modules/payment/service.py:41: cross-module: module 'payment' imports module 'invoice'
-  (two modules that need the same thing should share it: move it to shared/enums.py)
+modules/payment/service.py:41: cross-module: module 'payment' imports modules.invoice.enums, private to module 'invoice'
+  (an enum or type two modules both speak is vocabulary: move it to shared/enums.py and import it from both)
 ```
 
 Moverlo a `shared/` limpia el finding. El mensaje nombra el archivo, así que el
 arreglo no necesita una discusión de diseño.
+
+**Los datos y el comportamiento no vienen acá.** Cuando `payment` necesita
+filas que son de `invoice`, la respuesta no es mover `InvoiceRepository` a
+`shared/` — eso son dos módulos compartiendo una tabla, y el checker no lo
+puede distinguir del acoplamiento que se quería quitar. Es una función en
+`modules/invoice/public.py` que recibe la sesión de quien llama y un
+`tenant_id` y devuelve DTOs, más `depends_on = ["invoice"]` bajo
+`[modules.payment]` en `contracts.toml`. Para cualquier otra cosa de otro
+módulo el mensaje dice exactamente eso:
+
+```
+modules/payment/service.py:12: cross-module: module 'payment' imports modules.invoice.service; import modules.invoice.public instead
+  (only public.py is another module's API -- call a function in modules/invoice/public.py that returns DTOs (add one if it is missing), and add "invoice" to depends_on under [modules.payment] in contracts.toml)
+```
+
+Y el SQL crudo contra `invoices` desde dentro de `payment` se reporta como
+`cross-module-sql`: es el mismo acoplamiento sin nada que lo vea.
+[Servicios, módulos y layouts](modules.md#comunicacion-entre-modulos) tiene el
+ejemplo completo y las razones.
 
 **La dirección es de una sola vía**, y eso también se verifica:
 
@@ -47,6 +65,26 @@ shared/enums.py:43: shared-direction: shared/ imports modules.invoice
 
 Sin esa segunda regla `shared/` se vuelve el lugar donde termina todo, que es
 el modo de falla de todo paquete `utils` jamás escrito.
+
+### Consultas por una fachada, efectos por eventos
+
+Las tres formas de cruzar la frontera de un módulo, y cuál usar:
+
+| Necesitas… | Usa | No |
+| --- | --- | --- |
+| leer datos que son de otro módulo | una función en su `public.py`, que devuelve DTOs | su repositorio, su entidad, SQL contra sus tablas |
+| reaccionar a algo que hizo otro módulo | un evento que publica por el outbox | una llamada de vuelta hacia él |
+| hablar el mismo enum o tipo | `shared/` | una copia en cada módulo |
+
+La segunda fila es donde entran los eventos y los channels. Un módulo que tiene
+que enterarse de que un comprobante se categorizó no le pide al módulo de
+comprobantes que lo llame; el de comprobantes publica `receipt.categorized` en
+la misma transacción que categorizó — `outbox.publish(session, topic,
+Event(...))`, ver [Colas y eventos](queues-and-events.md) — y quien le importe
+se suscribe. El que publica nunca nombra a sus suscriptores, así que la
+dependencia apunta en un solo sentido y el grafo de módulos queda sin ciclos. Un
+[channel](#channels), más abajo, hace el mismo trabajo dentro de un proceso
+cuando el evento no tiene que sobrevivir a una caída.
 
 ### Qué pertenece a shared/
 
@@ -73,7 +111,8 @@ Y **el valor es el formato de cable**. Se guarda en una columna, se serializa
 en una respuesta de API y lo lee un frontend. Renombrar un miembro es gratis;
 cambiar su valor es una migración de datos.
 
-Apaga todo esto si no estás de acuerdo:
+Apaga todo esto si no estás de acuerdo — un solo switch para todas las reglas
+de módulos, fachada y SQL incluidos:
 
 ```toml
 [rules.placement]

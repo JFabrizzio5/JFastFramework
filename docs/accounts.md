@@ -118,6 +118,12 @@ subdomain or path source; the token source cannot, because there is no token
 yet. The same email in two tenants is two people, and an administrator sees
 and changes only the users and roles of their own tenant.
 
+**A SaaS where each account is its own tenant** needs no tenant table at all:
+add the tenancy plugin with `sources = ["token", "user"]` and the signed-in
+user's id becomes the tenant for everything they create. The users themselves
+stay in no tenant, which is right: the account is the boundary. See
+[the `user` source](multitenancy.md#every-account-is-its-own-tenant-the-user-source).
+
 ---
 
 ## Settings
