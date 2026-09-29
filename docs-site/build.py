@@ -584,6 +584,12 @@ def render_markdown(text: str) -> tuple[str, str]:
         extension_configs={"codehilite": {"guess_lang": False, "css_class": "highlight"}},
     )
     body = converter.convert(text)
+    # A table scrolls inside its own frame. Scrolling the <table> itself needs
+    # display: block, and a block table stops filling its box: the border and
+    # the header ground ran past the last column into empty space.
+    body = body.replace("<table>", '<div class="table-wrap"><table>').replace(
+        "</table>", "</table></div>"
+    )
 
     # First real paragraph, for the card summary on the index.
     match = re.search(r"<p>(.*?)</p>", body, re.DOTALL)
@@ -1242,13 +1248,16 @@ def landing_body(release: str, lang: str) -> str:
         </div>
 
         <div class="hero-mark" aria-hidden="true">
-          <div class="mark-tile">
-            <img src="{assets}assets/mark.svg" width="264" height="192" alt="">
+          <div class="mark-lockup">
+            <img src="{assets}assets/mark.svg" width="132" height="96" alt="">
+            <span class="wordmark"><b>jfast</b>framework</span>
           </div>
         </div>
       </div>
 
-      <pre class="terminal start"><code>{start}</code></pre>
+      <div class="start-terminal">
+        <pre class="terminal"><code>{start}</code></pre>
+      </div>
 
       <div class="metrics">
 {metrics}

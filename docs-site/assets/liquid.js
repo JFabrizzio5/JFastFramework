@@ -373,5 +373,8 @@
 
     renderer.render(scene, camera);
   }
+  // One frame now, whatever the tab's state: a preview or a thumbnail of a
+  // hidden tab should show the glass, not an empty page.
+  renderer.render(scene, camera);
   requestAnimationFrame(tick);
 })();

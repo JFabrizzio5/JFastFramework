@@ -190,7 +190,7 @@ a:hover { text-decoration-thickness: 2px; }
 .toc,
 .notice,
 .cta-panel,
-.mark-tile {
+.mark-lockup {
   background: var(--surface);
   -webkit-backdrop-filter: blur(28px) saturate(170%);
   backdrop-filter: blur(28px) saturate(170%);
@@ -467,17 +467,17 @@ pre code { background: none; border: 0; padding: 0; font-size: 0.85rem; }
 
 /* ---------- tables ---------- */
 
-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
+.table-wrap {
   margin: 1.5em 0;
-  font-size: 0.93rem;
-  display: block;
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.93rem;
 }
 th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
 tr:last-child td { border-bottom: 0; }
@@ -787,47 +787,57 @@ th {
 .cta-link { color: var(--text-muted); font-size: 0.92rem; font-weight: 600; text-decoration: none; }
 .cta-link:hover { color: var(--link); }
 
-/* ---- the mark, on the right of the hero ----
+/* ---- the logo, on the right of the hero ----
  *
- * One object, not a dashboard: the logo on a pane of glass, with the ribbon
- * moving behind it. The pane is thin enough that the ruby shows through,
- * which is what ties the mark to the liquid rather than pasting it on top. */
+ * The whole lockup -- mark and wordmark, as in the navbar -- on one pane of
+ * glass. The mark alone, blown up in a square, read as an app icon rather
+ * than as the name of the thing. The pane is thin enough that the ribbon
+ * shows through it. */
 
-.hero-mark { display: flex; justify-content: center; align-items: center; padding-top: 40px; }
+.hero-mark { display: flex; justify-content: center; align-items: center; padding-top: 96px; }
 
-.mark-tile {
+.mark-lockup {
   position: relative;
-  display: grid;
-  place-items: center;
-  width: min(100%, 400px);
-  aspect-ratio: 1;
-  border-radius: 56px;
+  display: inline-flex;
+  align-items: center;
+  gap: 20px;
+  padding: 34px 44px;
+  border-radius: 32px;
   background: rgba(14, 15, 20, 0.34);
   -webkit-backdrop-filter: blur(22px) saturate(170%);
   backdrop-filter: blur(22px) saturate(170%);
   border-color: rgba(255, 255, 255, 0.12);
 }
-.mark-tile::before {
+.mark-lockup::before {
   content: "";
   position: absolute;
-  inset: 18%;
+  inset: 10% 30% 10% 0;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(225, 29, 46, 0.35), transparent 70%);
-  filter: blur(30px);
+  background: radial-gradient(circle, rgba(225, 29, 46, 0.3), transparent 70%);
+  filter: blur(28px);
+  pointer-events: none;
 }
-.mark-tile img {
+.mark-lockup img {
   position: relative;
-  width: 62%;
-  height: auto;
-  filter: drop-shadow(0 18px 40px rgba(225, 29, 46, 0.45));
+  width: auto;
+  height: 58px;
+  filter: drop-shadow(0 12px 28px rgba(225, 29, 46, 0.4));
 }
-:root[data-theme="light"] .mark-tile { background: rgba(255, 255, 255, 0.5); border-color: rgba(0, 0, 0, 0.06); }
+.mark-lockup .wordmark {
+  position: relative;
+  font-size: clamp(1.9rem, 3vw, 2.5rem);
+  line-height: 1;
+  color: var(--text);
+}
+:root[data-theme="light"] .mark-lockup { background: rgba(255, 255, 255, 0.55); border-color: rgba(0, 0, 0, 0.06); }
 
-/* The one terminal on the page's first screen: what the command does. */
-.terminal.start { max-width: 760px; margin: 56px 0 0; }
+/* The one terminal on the page's first screen: what the command does. The
+ * width is on the wrapper, which the copy button is positioned against. */
+.start-terminal { max-width: 760px; margin: 56px 0 0; }
+.start-terminal pre { margin: 0; }
 
 @media (prefers-reduced-motion: no-preference) {
-  .mark-tile { animation: float-a 7s ease-in-out infinite; }
+  .mark-lockup { animation: float-a 7s ease-in-out infinite; }
   .display span,
   .hero .lede,
   .hero .cta { animation: rise 0.7s var(--ease) both; }
