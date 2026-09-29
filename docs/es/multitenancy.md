@@ -277,6 +277,66 @@ El filtro del repositorio se queda: es lo que hace que las queries usen el
 índice, y es la primera línea. Row-level security es la que aguanta cuando la
 primera falla.
 
+### Más que el tenant: `transaction_setting`
+
+A veces el tenant no es toda la regla. Dentro de un tenant, un usuario puede ver
+solo algunas de sus empresas, sucursales o almacenes -- y ese valor tiene que
+llegar a PostgreSQL igual que el tenant, por transacción, o una conexión del pool
+lleva las empresas de un usuario al request de otro.
+
+Registra una función que regrese el valor para el request o job actual, y cada
+sesión con tenant lo pone junto al tenant:
+
+```python
+from jfastframework.auth import current_principal
+from jfastframework.db.rls import transaction_setting
+
+@transaction_setting("app.companies")
+def companies() -> str | None:
+    principal = current_principal()
+    if principal is None:
+        return None
+    return "{" + ",".join(principal.claims.get("companies", [])) + "}"
+```
+
+Después escribe tú la policy, con los valores que necesita, en una migración:
+
+```python
+from jfastframework.db.rls import disable_rls_policy, enable_rls_policy
+
+def upgrade() -> None:
+    enable_rls_policy(
+        op,
+        "invoices",
+        predicate="tenant_id = current_setting('jfast.tenant_id', true) "
+        "AND company = ANY(current_setting('app.companies', true)::text[])",
+    )
+
+def downgrade() -> None:
+    disable_rls_policy(op, "invoices")
+```
+
+Las reglas que respeta:
+
+- **El nombre se valida.** `prefijo.nombre`, en minúsculas, porque va dentro de
+  `set_config`. `jfast.tenant_id` y `jfast.rls_bypass` son del framework y se
+  rechazan.
+- **`None` significa cero filas.** El valor queda sin poner en esa transacción,
+  la policy lee NULL y nada coincide -- igual que una transacción sin tenant no
+  ve nada.
+- **Regístralo al importar**, junto a las policies que lo leen. El registro es
+  de todo el proceso.
+- **El predicado es SQL que escribe el autor de la migración**, sin escapar:
+  nunca lo armes con datos del request. Los valores le llegan por
+  `current_setting`, que sí va escapado.
+
+`tests/test_rls.py` corre esta forma contra PostgreSQL: un tenant con dos
+empresas, un usuario que ve una, luego las dos, luego ninguna.
+
+Esto es lo que puede usar un servicio que abría su propia sesión solo para poner
+un segundo valor -- ve [`@transactional`](transactions.md) para los que todavía
+necesitan la suya.
+
 ## Ver también
 
 - [Autenticación](auth.md) — el claim `tenant_id`

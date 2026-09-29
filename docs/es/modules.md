@@ -343,6 +343,20 @@ reservadas de SQL mucho más seguido que los plurales (`order`, `user`,
 jfast new module order --table sales_orders
 ```
 
+Un proyecto que nombra sus módulos en español recibe plurales en español.
+Dilo una vez, en `jfast.toml`:
+
+```toml
+[scaffold]
+language = "es"
+```
+
+y `camion` queda `camiones`, `sucursal` queda `sucursales`, `lapiz` queda
+`lapices` y `lunes` se queda `lunes`. En un nombre compuesto se pluraliza el
+sustantivo principal, como en español: `orden_compra` → `ordenes_compra`.
+`--language en` o `--language es` sobrescribe al proyecto para un módulo; otro
+valor se rechaza. Sin el ajuste se usan las reglas del inglés, como antes.
+
 ---
 
 ## Combinaciones

@@ -337,6 +337,20 @@ than plurals (`order`, `user`, `group`). Override when it guesses wrong:
 jfast new module order --table sales_orders
 ```
 
+A project that names its modules in Spanish gets Spanish plurals. Say so once,
+in `jfast.toml`:
+
+```toml
+[scaffold]
+language = "es"
+```
+
+and `camion` becomes `camiones`, `sucursal` becomes `sucursales`, `lapiz`
+becomes `lapices`, `lunes` stays `lunes`. In a compound name the head noun
+takes the plural, as it does in Spanish: `orden_compra` → `ordenes_compra`.
+`--language en` or `--language es` overrides the project for one module;
+anything else is refused. Without the setting, English rules apply, as before.
+
 ---
 
 ## Combinations

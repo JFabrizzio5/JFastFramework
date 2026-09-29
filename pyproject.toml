@@ -114,6 +114,8 @@ auth = ["pyjwt[crypto]>=2.10", "httpx>=0.28"]
 # Login, users and roles on top of `auth`. argon2id is the password hash
 # OWASP recommends; the cffi binding is the reference implementation.
 accounts = ["argon2-cffi>=23.1", "pyjwt[crypto]>=2.10", "httpx>=0.28"]
+# Reversible encryption for business secrets (jfastframework.encryption).
+encryption = ["cryptography>=43"]
 queue = []
 rabbitmq = ["aio-pika>=9.5"]
 # Local disks need nothing: the standard library can write a file.
@@ -152,7 +154,7 @@ dev = [
     "jfastframework[all]",
 ]
 all = [
-    "jfastframework[server,db,cache,metrics,sentry,mongo,qdrant,rag,web,gateway,auth,accounts,queue,rabbitmq,kafka,worker,storage,images,s3,fcm,oidc,aws,mail,exports,xml,validation,locale,retry]",
+    "jfastframework[server,db,cache,metrics,sentry,mongo,qdrant,rag,web,gateway,auth,accounts,encryption,queue,rabbitmq,kafka,worker,storage,images,s3,fcm,oidc,aws,mail,exports,xml,validation,locale,retry]",
 ]
 
 [project.scripts]

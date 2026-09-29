@@ -318,6 +318,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "auth",
             "accounts",
+            "encryption",
             "ratelimit",
             "storage",
             "multitenancy",
@@ -382,6 +383,12 @@ PAGES: tuple[Page, ...] = (
         "Accounts",
         DOCS / "accounts.md",
         "Users, password login, roles and permissions.",
+    ),
+    Page(
+        "encryption",
+        "Encryption",
+        DOCS / "encryption.md",
+        "Secrets the service must read back, with key rotation.",
     ),
     Page(
         "ratelimit",
@@ -517,6 +524,7 @@ NAV_ES: dict[str, str] = {
     "timezones": "Zonas horarias",
     "auth": "Autenticación",
     "accounts": "Cuentas",
+    "encryption": "Cifrado",
     "ratelimit": "Límite de peticiones",
     "websockets": "Websockets",
     "storage": "Almacenamiento",
@@ -572,6 +580,7 @@ PAGE_ICON: dict[str, str] = {
     "timezones": "history",
     "auth": "lock",
     "accounts": "users",
+    "encryption": "shield",
     "ratelimit": "gauge",
     "websockets": "arrows",
     "storage": "database",

@@ -51,6 +51,41 @@ A generator dependency of your own that wraps a session has to be
 function-scoped too: FastAPI refuses a request-scoped dependency that depends on
 a function-scoped one.
 
+### A session dependency of your own: `@transactional`
+
+A service sometimes opens its own session -- to set extra row-level security
+values, to pick a database the framework does not know about -- and commits in
+its own `yield` dependency. That commit runs after the response exactly like
+the framework's would, and the check above cannot see it: it only knows the
+dependencies it ships. Mark yours, and it is held to the same rule:
+
+```python
+from jfastframework.plugins.builtin.database import transactional
+
+@transactional
+async def session_with_companies(request: Request) -> AsyncIterator[AsyncSession]:
+    async with maker() as session:
+        yield session
+        await session.commit()
+
+@router.post("/invoices")
+async def create(session = Depends(session_with_companies, scope="function")): ...
+```
+
+A route that depends on it without `scope="function"` stops the service from
+starting, with the route and the dependency named: `POST /invoices ->
+session_with_companies`.
+
+**Unmarked dependencies are not ignored.** At startup the plugin also reads the
+source of every request-scoped generator dependency, and names the routes whose
+dependency calls `.commit(` after its `yield`. That is a warning, not a
+refusal -- a heuristic can be wrong, the marker cannot -- and it goes away when
+you either mark the dependency or scope it.
+
+If the only reason for your own dependency was a second value for row-level
+security, you may not need it at all: see
+[extra values on every transaction](multitenancy.md#more-than-the-tenant-transaction_setting).
+
 ---
 
 ## What a failed write turns into

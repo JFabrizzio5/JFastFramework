@@ -269,6 +269,66 @@ so: create that table's policy with `allow_bypass=True` and run the work inside
 The repository filter stays: it is what makes queries use the index, and it is
 the first line. Row-level security is the one that holds when the first fails.
 
+### More than the tenant: `transaction_setting`
+
+The tenant is sometimes not the whole rule. Inside one tenant, a user may see
+only some of its companies, or branches, or warehouses -- and that value has to
+reach PostgreSQL the same way the tenant does, per transaction, or a pooled
+connection carries one user's companies into another's request.
+
+Register a function that returns the value for the current request or job, and
+every tenant-scoped session sets it next to the tenant:
+
+```python
+from jfastframework.auth import current_principal
+from jfastframework.db.rls import transaction_setting
+
+@transaction_setting("app.companies")
+def companies() -> str | None:
+    principal = current_principal()
+    if principal is None:
+        return None
+    return "{" + ",".join(principal.claims.get("companies", [])) + "}"
+```
+
+Then write the policy yourself, with the values it needs, in a migration:
+
+```python
+from jfastframework.db.rls import disable_rls_policy, enable_rls_policy
+
+def upgrade() -> None:
+    enable_rls_policy(
+        op,
+        "invoices",
+        predicate="tenant_id = current_setting('jfast.tenant_id', true) "
+        "AND company = ANY(current_setting('app.companies', true)::text[])",
+    )
+
+def downgrade() -> None:
+    disable_rls_policy(op, "invoices")
+```
+
+The rules it keeps:
+
+- **The name is checked.** `prefix.name`, lowercase, because it goes into
+  `set_config`. `jfast.tenant_id` and `jfast.rls_bypass` are the framework's and
+  are refused.
+- **`None` means no rows.** The setting stays unset for that transaction, the
+  policy reads NULL, and nothing matches -- the same way a transaction with no
+  tenant sees nothing.
+- **Register at import time**, next to the policies that read it. Registration
+  is process-wide.
+- **The predicate is SQL written by the migration's author**, not escaped:
+  never build it from request data. The values reach it through
+  `current_setting`, which is.
+
+`tests/test_rls.py` runs this shape against PostgreSQL: a tenant with two
+companies, a user who sees one, then both, then none.
+
+This is what a service that opened its own session only to set a second value
+can use instead -- see [`@transactional`](transactions.md) for the ones that
+still need their own.
+
 ## See also
 
 - [Authentication](auth.md) — the `tenant_id` claim

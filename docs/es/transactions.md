@@ -54,6 +54,42 @@ Una dependencia generadora propia que envuelva una sesión también tiene que
 tener scope de función: FastAPI rechaza una dependencia con scope de request que
 dependa de una con scope de función.
 
+### Una dependencia de sesión propia: `@transactional`
+
+A veces un servicio abre su propia sesión -- para poner valores extra de
+row-level security, o para elegir una base que el framework no conoce -- y hace
+commit en su propia dependencia con `yield`. Ese commit corre después de la
+respuesta igual que correría el del framework, y la revisión de arriba no lo ve:
+solo conoce las dependencias que trae. Marca la tuya y queda sujeta a la misma
+regla:
+
+```python
+from jfastframework.plugins.builtin.database import transactional
+
+@transactional
+async def session_with_companies(request: Request) -> AsyncIterator[AsyncSession]:
+    async with maker() as session:
+        yield session
+        await session.commit()
+
+@router.post("/invoices")
+async def create(session = Depends(session_with_companies, scope="function")): ...
+```
+
+Una ruta que dependa de ella sin `scope="function"` impide que el servicio
+arranque, y el error nombra la ruta y la dependencia: `POST /invoices ->
+session_with_companies`.
+
+**Las dependencias sin marcar no se ignoran.** Al arrancar, el plugin también
+lee el código de cada dependencia generadora con scope de request y nombra las
+rutas cuya dependencia llama `.commit(` después de su `yield`. Es una
+advertencia, no un rechazo -- una heurística puede equivocarse, el marcador no --
+y desaparece cuando marcas la dependencia o le pones el scope.
+
+Si la única razón de tu dependencia propia era un segundo valor para row-level
+security, puede que ya no la necesites: ve
+[valores extra en cada transacción](multitenancy.md#mas-que-el-tenant-transaction_setting).
+
 ---
 
 ## En qué se convierte una escritura que falla
