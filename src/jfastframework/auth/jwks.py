@@ -44,6 +44,12 @@ class JWKSClient:
     _fetched_at: float = 0.0
     _last_attempt: float = 0.0
     _last_error: str | None = None
+    #: Bumped by every successful fetch. What a waiter compares to decide
+    #: whether somebody else already fetched -- not the clock: on Windows
+    #: `time.monotonic()` moves in ~15.6 ms steps, so a fetch that finishes in
+    #: the same tick it started in looked like no fetch at all, and the second
+    #: waiter fetched again.
+    _generation: int = field(default=0, repr=False)
     #: One refresh at a time. Without it, the cache expiring under load sends
     #: every in-flight request to the issuer at once -- a stampede aimed at
     #: the one dependency whose being down makes every token unverifiable.
@@ -73,19 +79,20 @@ class JWKSClient:
         self._fetched_at = time.monotonic()
         self._last_error = None
 
-    async def _refresh(self, *, force: bool = False, since: float | None = None) -> None:
+    async def _refresh(self, *, force: bool = False, seen: int | None = None) -> None:
         """Fetch the key set, one caller at a time.
 
-        ``since`` is the reading of the clock that decided a refresh was
-        needed. Whoever was waiting on the lock re-reads the state after it
-        and, if somebody else has already fetched, returns without a second
-        call -- which is what turns a stampede into one request.
+        ``seen`` is the generation the caller read when it decided a refresh
+        was needed. Whoever was waiting on the lock re-reads it after and, if
+        somebody else has fetched since, returns without a second call --
+        which is what turns a stampede into one request.
         """
         async with self._lock:
-            if since is not None and self._fetched_at > since:
+            if seen is not None and self._generation != seen:
                 return
             try:
                 await self._fetch()
+                self._generation += 1
             except Exception as exc:
                 self._last_error = str(exc)
                 if force or not self._keys:
@@ -96,10 +103,12 @@ class JWKSClient:
     async def key_for(self, kid: str | None) -> Any:
         """The signing key for this ``kid``, fetching the set if needed."""
         now = time.monotonic()
+        seen = self._generation
         expired = now - self._fetched_at > self.cache_seconds
 
         if not self._keys or expired:
-            await self._refresh(force=not self._keys, since=now)
+            await self._refresh(force=not self._keys, seen=seen)
+            seen = self._generation
 
         if kid is None:
             if len(self._keys) == 1:
@@ -112,9 +121,9 @@ class JWKSClient:
         if kid not in self._keys and (now - self._last_attempt) > self.min_refresh_seconds:
             # Unknown kid: the issuer may have rotated. Refresh at most once
             # per window, so forged kids cannot be used to hammer the issuer.
-            # `since` again, so a hundred requests carrying the same unknown
+            # `seen` again, so a hundred requests carrying the same unknown
             # kid produce one fetch rather than a hundred inside the window.
-            await self._refresh(since=now)
+            await self._refresh(seen=seen)
 
         try:
             return self._keys[kid]

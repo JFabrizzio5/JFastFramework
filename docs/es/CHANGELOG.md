@@ -136,6 +136,18 @@ para "cada cuenta es la suya".
   `tenant_id`; nuevos `existing_hashes`, `sync_document` y `supports_hybrid`.
   Un store propio necesita esos métodos.
 
+### Corregido
+
+- **JWKS de una sola descarga en Windows.** Cincuenta peticiones que llegan
+  con la caché vacía deben causar una sola descarga de las llaves del
+  proveedor de identidad. Quien esperaba decidía "alguien ya descargó"
+  comparando dos lecturas de `time.monotonic()`, que en Windows avanza en
+  saltos de ~15.6 ms: una descarga que terminaba en el mismo tic en que empezó
+  parecía no haber ocurrido, y el siguiente volvía a descargar (la CI de
+  Windows vio 2 descargas; con el reloj congelado son 50). Un contador de
+  generaciones que sube con cada descarga exitosa reemplaza al reloj, y una
+  prueba con el reloj congelado reproduce la falla en cualquier sistema.
+
 ### Rendimiento
 
 Medido con `ab` contra un worker de uvicorn (tabla en `docs/deploy.md#rendimiento`):

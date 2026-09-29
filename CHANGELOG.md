@@ -78,6 +78,17 @@ account is its own".
   new `existing_hashes`, `sync_document` and `supports_hybrid`. A custom store
   needs those methods.
 
+### Fixed
+
+- **JWKS single-flight on Windows.** Fifty requests arriving on a cold cache
+  are meant to cause one fetch of the identity provider's keys. A waiter
+  decided "somebody already fetched" by comparing two readings of
+  `time.monotonic()`, which on Windows moves in ~15.6 ms steps: a fetch that
+  finished in the tick it started looked like no fetch, and the next waiter
+  fetched again (the Windows CI caught 2 fetches; a frozen clock gives 50). A
+  generation counter bumped by each successful fetch replaces the clock, and
+  a test with a frozen clock reproduces the failure on every OS.
+
 ### Performance
 
 Measured with `ab` on one uvicorn worker (table in `docs/deploy.md#performance`):

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -852,11 +851,15 @@ class _CountingJWKS(JWKSClient):
     calls: int = 0
 
     async def _fetch(self) -> None:  # type: ignore[override]
+        # The same clock the client reads, so a test that freezes it freezes
+        # both sides of the comparison -- which is what Windows does.
+        from jfastframework.auth import jwks as jwks_module
+
         type(self).calls += 1
-        self._last_attempt = time.monotonic()
+        self._last_attempt = jwks_module.time.monotonic()
         await asyncio.sleep(0.01)
         self._keys = {"k1": {"kid": "k1"}}
-        self._fetched_at = time.monotonic()
+        self._fetched_at = jwks_module.time.monotonic()
         self._last_error = None
 
 
@@ -871,6 +874,32 @@ async def test_a_cold_cache_under_load_fetches_once() -> None:
     keys = await asyncio.gather(*(client.key_for("k1") for _ in range(50)))
 
     assert all(key == {"kid": "k1"} for key in keys)
+    assert _CountingJWKS.calls == 1
+
+
+async def test_a_coarse_clock_does_not_break_the_single_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Windows failure, reproduced on any OS: a clock that does not move.
+
+    `time.monotonic()` advances in ~15.6 ms steps on Windows, and the fetch
+    above takes 10 ms, so start and finish read the same value. The waiters
+    compared those readings to decide whether somebody had already fetched,
+    and fetched again. A frozen clock is the limit of that, and must still
+    produce exactly one fetch.
+    """
+    from types import SimpleNamespace
+
+    from jfastframework.auth import jwks as jwks_module
+
+    # Frozen for the JWKS client only. Patching time.monotonic itself would
+    # freeze the event loop too, and asyncio.sleep would never return.
+    monkeypatch.setattr(jwks_module, "time", SimpleNamespace(monotonic=lambda: 1000.0))
+    _CountingJWKS.calls = 0
+    client = _CountingJWKS(url="https://id.example.com/jwks.json")
+
+    await asyncio.gather(*(client.key_for("k1") for _ in range(50)))
+
     assert _CountingJWKS.calls == 1
 
 
