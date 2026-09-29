@@ -319,10 +319,10 @@ def _governed_prefixes(contract: Contract) -> set[str]:
 def check_coverage(contract: Contract, root: Path) -> list[Violation]:
     """Layers that govern no file, while files they should govern go unclaimed.
 
-    The reproduction: a service scaffolded with the layered contract holding
-    only hexagonal modules. Every layer glob missed, so `forbid_packages` on
-    the HTTP layer enforced nothing -- and the check reported a pass, which is
-    worse than no check at all.
+    The case it exists for: a service scaffolded with the layered contract
+    holding only hexagonal modules. Every layer glob misses, so
+    `forbid_packages` on the HTTP layer enforces nothing -- and a check that
+    reports a pass there is worse than no check at all.
 
     Both halves decide whether this fails a build, and both are needed. A layer
     that matched nothing in a tree where every governed file *is* claimed is a

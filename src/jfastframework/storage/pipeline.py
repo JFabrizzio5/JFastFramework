@@ -1,8 +1,8 @@
 """The upload pipeline: what happens to bytes before they land on a disk.
 
-`put()` was a hole. Any caller could write any number of bytes of any content
-to any disk, and the only thing between an upload form and the bucket was the
-key validator. Size and type rules are not a per-handler concern — every
+Without it, `put()` is a hole: any caller can write any number of bytes of any
+content to any disk, and the only thing between an upload form and the bucket
+is the key validator. Size and type rules are not a per-handler concern — every
 handler that forgets one is the hole — so they belong to the *disk*, declared
 in configuration next to the driver and the visibility:
 

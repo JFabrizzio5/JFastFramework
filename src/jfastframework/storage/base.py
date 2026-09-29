@@ -255,9 +255,9 @@ class DiskConfig:
 
 
 # Which keys mean anything to which driver. A key that is accepted and ignored
-# is worse than one that does not exist: `public_base_url` on a local disk was
-# silently dropped for a release, and the symptom was an image that rendered
-# as nothing with no failed request to find.
+# is worse than one that does not exist: a `public_base_url` silently dropped
+# on a local disk shows up as an image that renders as nothing, with no failed
+# request to find.
 COMMON_KEYS = frozenset({"driver", "visibility", "pipeline", "public_base_url"})
 DRIVER_KEYS: dict[str, frozenset[str]] = {
     "local": COMMON_KEYS | {"root", "url_prefix"},

@@ -77,13 +77,13 @@ class TaskRegistry:
 #: twice, an email sent twice, a row written twice. Nothing fails, and nothing
 #: in the log says "this ran concurrently".
 #:
-#: The two numbers used to default to the same 300 seconds and live in
-#: different places -- `[plugin.queue] visibility_timeout` and the worker's
-#: `job_timeout` -- so they raced at the boundary, and raising one without the
-#: other made duplicate execution certain rather than likely. The worker
-#: derives its own ceiling from the backend now: a job is cancelled with a
-#: fifth of the window still to spare, which is the margin `nack` needs to land
-#: before anybody else may claim.
+#: The two numbers live in different places -- `[plugin.queue]
+#: visibility_timeout` and the worker's `job_timeout` -- and two equal defaults
+#: race at the boundary, while raising one without the other makes duplicate
+#: execution certain rather than likely. So the worker derives its own ceiling
+#: from the backend: a job is cancelled with a fifth of the window still to
+#: spare, which is the margin `nack` needs to land before anybody else may
+#: claim.
 JOB_TIMEOUT_SHARE = 0.8
 
 

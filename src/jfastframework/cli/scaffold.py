@@ -1,8 +1,8 @@
 """File generation from Jinja2 templates.
 
-Templates live as real files under ``jfastframework/templates/``. Not as string
-literals inside Python functions -- that was the v0 mistake: templates you
-cannot lint, diff or test.
+Templates live as real files under ``jfastframework/templates/``, not as string
+literals inside Python functions: a template in a string cannot be linted,
+diffed or tested.
 
 Two Jinja environments, because HTML templates are themselves Jinja::
 
@@ -176,11 +176,11 @@ def extras_for(plugins: Sequence[str]) -> str:
 def framework_pin() -> str:
     """The version specifier a generated service should pin, derived not typed.
 
-    Two things this gets right that a hardcoded string did not:
+    Two things this gets right that a hardcoded string cannot:
 
-    * It follows the framework. A literal ``~=0.7`` in the template survived a
-      renumbering to ``0.1.0a1`` and every generated project shipped a
-      requirements file pip could not satisfy.
+    * It follows the framework. A literal pin in the template survives a
+      renumbering of the framework, and every generated project then ships a
+      requirements file pip cannot satisfy.
     * A pre-release is pinned **exactly**. ``~=0.1`` does not match
       ``0.1.0a1``: a compatible-release clause normalises to ``>= 0.1, == 0.*``
       and ``0.1.0a1`` sorts below ``0.1.0``, so it is out of range even with
@@ -206,7 +206,7 @@ class Tree(NamedTuple):
 
     ``extra`` exists because the trees of one command do not always share a
     vocabulary. `jfast new module` renders under a module context, which has no
-    project name, while the contract template it now carries needs one.
+    project name, while the contract template it carries needs one.
     """
 
     template: str
@@ -498,9 +498,9 @@ def service_trees(
 
     ``layout`` is the contract's, and ``None`` means nobody has said yet. A
     service is generated before any module exists, so at this point the only
-    thing a layout could be is a guess -- and the guess shipped a layered
-    contract into hexagonal, modular and screaming services, where it matched
-    no file and enforced nothing. The contract is deferred to the first
+    thing a layout could be is a guess -- and a guessed layered contract in a
+    hexagonal, modular or screaming service matches no file and enforces
+    nothing. The contract is deferred to the first
     `jfast new module`, which knows. Pass ``layout`` when the caller does.
 
     ``agent_docs`` adds the surface an AI agent reads before it writes: an
@@ -509,9 +509,9 @@ def service_trees(
     not need two extra files it has to keep true.
 
     It is worth turning on for more than tidiness. The generated stylesheets
-    already tell a reader to consult ``.jfast/skills/design-system/SKILL.md``,
-    and until this existed that path was written into every frontend and
-    pointed at nothing.
+    tell a reader to consult ``.jfast/skills/design-system/SKILL.md``, and
+    without this that path is written into every frontend and points at
+    nothing.
     """
     if kind not in SERVICE_KINDS:
         raise ValueError(f"Unknown kind {kind!r}. Choose from: {', '.join(SERVICE_KINDS)}")

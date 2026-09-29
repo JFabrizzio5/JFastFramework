@@ -54,8 +54,8 @@ def _marker_pattern(marker: str, path: Path | None = None) -> re.Pattern[str]:
         # [jfast:routers]     .py
 
     A Python file cannot carry the first form -- it is a syntax error, not a
-    comment -- which is why the backend went unpatched while the frontend
-    registered itself.
+    comment -- so with the frontend's marker alone the backend could never be
+    patched.
 
     Hand-edited files drift: somebody reformats and ``/*nuevaRuta*/`` becomes
     ``/* nuevaRuta */``. Matching strictly would turn that into a silent no-op,

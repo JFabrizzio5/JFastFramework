@@ -19,9 +19,9 @@ two while another is never returned at all. The primary key is the default;
 override ``order_by`` when the natural order is something else.
 
 **Tenant scoping cannot silently do nothing.** A repository handed a tenant id
-for a model with no ``tenant_id`` column used to return every row of every
-tenant. That is a data leak in the shape of a no-op, so it now raises. A model
-that genuinely is global says so with ``tenant_scoped = False``.
+for a model with no ``tenant_id`` column would otherwise return every row of
+every tenant. That is a data leak in the shape of a no-op, so it raises. A
+model that genuinely is global says so with ``tenant_scoped = False``.
 
 **Ordering is total over NULLs too.** A nullable ordering column -- and
 ``last_message_at`` or ``edited_at`` is exactly the column a feed sorts by --
@@ -186,7 +186,7 @@ class BaseRepository(Generic[TModel]):
         before it, so the ordering has to be a *total* order. Two rows that
         compare equal straddle the boundary in whatever sequence the planner
         picked, and one of them is dropped from both pages -- the same silent
-        row loss ``ORDER BY`` was added to prevent, one level down.
+        row loss ``ORDER BY`` is there to prevent, one level down.
 
         The tiebreaker inherits the direction of the column it follows, so a
         newest-first feed stays uniformly descending and keeps the row-value

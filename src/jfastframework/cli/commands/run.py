@@ -74,8 +74,8 @@ def serve(
         )
         raise typer.Exit(1) from exc
 
-    # chdir alone is not enough. Python fixed sys.path[0] to wherever the CLI
-    # lives when the interpreter started, so `main` would not be importable;
+    # chdir alone is not enough. Python fixes sys.path[0] to wherever the CLI
+    # lives when the interpreter starts, so `main` would not be importable;
     # and with --reload uvicorn spawns a child that builds its own sys.path, so
     # the directory has to travel in PYTHONPATH to survive the reload.
     os.chdir(service_dir)
@@ -355,8 +355,8 @@ def doctor(
     # and registration is where every plugin checks its own settings. A fresh
     # `jfast new service --with auth` resolves cleanly and then raises
     # `auth mode "jwks" needs jwks_url` on the first import of main.py -- so
-    # the command whose job is to say "this is configured" was answering from
-    # the half of the boot that cannot fail on configuration. Building the app
+    # the command whose job is to say "this is configured" would be answering
+    # from the half of the boot that cannot fail on configuration. Building the app
     # runs the same code path `create_app` does, minus the lifespan: no
     # connection is opened and nothing is started.
     if not problems:

@@ -369,7 +369,7 @@ def workspace_env(
         typer.echo(f"  secrets           .env  ({written} generated, existing values kept)")
 
     # Backends first: their connection strings are derived from the resource
-    # bindings, and used to be the one generated thing left to a human.
+    # bindings, so no generated file is left to a human.
     for backend in workspace.services:
         # A service that binds nothing still gets a file: the compose generator
         # names ./<service>/.env for every one of them, and compose fails on a

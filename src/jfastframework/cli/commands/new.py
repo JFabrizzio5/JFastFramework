@@ -152,9 +152,9 @@ def _split_csv(value: str | None) -> list[str]:
     return [part.strip() for part in (value or "").split(",") if part.strip()]
 
 
-#: Every plugin `--with` accepts, read off the catalog the installer uses. The
-#: literal it replaced named 7 of the 20 that ship, so `--with storage` worked
-#: while the help said no such thing existed.
+#: Every plugin `--with` accepts, read off the catalog the installer uses. A
+#: hand-written list falls behind the plugins that ship, and then the help
+#: denies options `--with` accepts.
 _WITH_CHOICES = ",".join(n for n in PLUGIN_CATALOG if n not in BASE_PLUGINS)
 
 
@@ -348,8 +348,8 @@ def new_enum(
         # three layouts do keep enums.py at the module root.
         parent = Path("modules") / str(module)
         recorded = module_registry.layout_of(Path("."), str(module))
-        # Falling back to the tree on disk covers modules generated before the
-        # layout was recorded; there is no other signal left for those.
+        # Falling back to the tree on disk covers modules with no recorded
+        # layout; there is no other signal left for those.
         if recorded == "hexagonal" or (recorded is None and (parent / "domain").is_dir()):
             parent = parent / "domain"
         target = parent / "enums.py"

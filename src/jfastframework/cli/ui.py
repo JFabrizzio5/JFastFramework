@@ -94,8 +94,9 @@ def _ask(prompt: str) -> str:
     """Read one answer, and keep the transcript readable when piped.
 
     An interactive answer ends with the user's Enter. Piped input carries no
-    such newline, so the next question landed on the same line as the previous
-    answer -- which is exactly the transcript somebody pastes into an issue.
+    such newline, so the next question would land on the same line as the
+    previous answer -- which is exactly the transcript somebody pastes into an
+    issue.
     """
     answer = console.input(prompt)
     if not console.is_terminal:
@@ -287,9 +288,9 @@ def ask(question: str, *, default: str = "") -> str:
 def ask_int(question: str, *, default: int) -> int:
     """A number, re-asked rather than crashed on.
 
-    The first version called int() on whatever came back, so one stray answer
-    ended the installer with a traceback after every other question had already
-    been answered.
+    Calling int() on whatever comes back would let one stray answer end the
+    installer with a traceback after every other question had already been
+    answered.
     """
     while True:
         raw = ask(question, default=str(default))

@@ -73,8 +73,8 @@ project_cli.register(app)
 # The lifecycle commands.
 #
 # Each lives in its own module and attaches itself rather than being spelled out
-# here: five were written in parallel, and a shared block in this file is the
-# one thing more than one author cannot edit at once.
+# here: a shared block in this file is the one thing more than one author cannot
+# edit at once.
 #
 # `explain` goes last on purpose -- it attaches to the `contracts` group above
 # when it finds one, and would otherwise become a top-level `jfast explain`.

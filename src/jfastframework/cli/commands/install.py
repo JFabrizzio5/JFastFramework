@@ -88,11 +88,11 @@ def start(
     )
     ui.created(f"{api_dir}/modules/item/", "a real module, so the first test has a subject")
 
-    # `jfast new module` mounts what it generates; this path rendered the files
-    # and stopped there, so the flagship command produced a service whose only
-    # module was inert. Nothing failed: the tests passed, the server started and
-    # /items 404ed. `jfast check` said so -- HIGH, exit 1 -- on a tree the
-    # framework had just written itself. Same two calls, so both paths agree.
+    # `jfast new module` mounts what it generates, and so does this path. A
+    # module that is rendered but not mounted is inert and nothing fails: the
+    # tests pass, the server starts and /items 404s, while `jfast check` reports
+    # HIGH, exit 1, on a tree the framework just wrote itself. Same two calls,
+    # so both paths agree.
     _register_module(api_dir, "modules", "item", htmx=False)
     if module_registry.record(api_dir, "item", layout="layered", ui="api"):
         ui.created(f"{api_dir}/{module_registry.CONFIG_FILE}", "item is layered")
@@ -118,7 +118,7 @@ def start(
     # Without this the compose file this command just wrote cannot start: it
     # interpolates ${SHOP_DATABASE_PASSWORD} and friends, and compose refuses
     # rather than defaulting. So `docker compose up --build`, which is the very
-    # next thing this command tells you to run, failed on a fresh project.
+    # next thing this command tells you to run, would fail on a fresh project.
     secrets_written = _write_workspace_secrets(workspace)
     if secrets_written:
         ui.created(".env", f"{secrets_written} generated, gitignored")
@@ -138,11 +138,10 @@ def start(
     # Docker first: it is the one path that needs nothing installed, and the
     # one that matches what runs in production.
     #
-    # The local path used to say `cp .env.example .env`, "the defaults already
-    # match compose". Both halves were wrong: the .env this command just wrote
-    # from the resource graph is the correct one, so the copy overwrote it with
-    # a DSN pointing at localhost:8001 and a password nobody had set. `jfast
-    # dev` is the path that works -- it rewrites the container hostnames to the
+    # The local path is `jfast dev`, not `cp .env.example .env`: the .env this
+    # command just wrote from the resource graph is the correct one, and the
+    # copy would overwrite it with a DSN pointing at localhost:8001 and a
+    # password nobody has set. `jfast dev` rewrites the container hostnames to the
     # published ports and resolves the workspace secret, which is exactly what a
     # process on the host needs and what no static file can hold for both.
     ui.next_steps(

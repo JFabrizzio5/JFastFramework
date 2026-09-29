@@ -34,9 +34,8 @@ def deploy_compose(
 
     # The api service is `build: .`, so a compose file without a Dockerfile
     # beside it cannot come up -- `docker compose up` stops at "failed to read
-    # dockerfile" before a single container starts. Services generated from
-    # 0.1.0a7 ship one; a project scaffolded before that does not, and this is
-    # where it finds out rather than at the first build.
+    # dockerfile" before a single container starts. A project whose scaffold
+    # did not write one finds out here rather than at the first build.
     dockerfile = output.parent / "Dockerfile"
     if not dockerfile.exists():
         typer.echo(f"no {dockerfile}; `docker compose up` cannot build the api service")

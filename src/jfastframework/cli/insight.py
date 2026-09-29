@@ -218,7 +218,7 @@ def render_graph(project: Project, *, output_format: str = "ascii", root: str | 
     """The module dependency graph.
 
     `jfast workspace graph` draws services; this draws the modules inside one.
-    They are different questions and the second one had no answer at all.
+    They are different questions, and nothing else answers the second.
     """
     if output_format == "ascii":
         return _ascii_graph(project, root)

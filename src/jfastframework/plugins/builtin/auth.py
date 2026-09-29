@@ -311,7 +311,7 @@ class TokenIssuer:
 
         family = principal.claims.get(FAMILY_CLAIM)
         if not family:
-            # No fallback to the subject: that fallback is what made a session
+            # No fallback to the subject: that fallback would let a session
             # revocation outlive the session.
             raise UnauthorizedError("refresh token carries no session family")
         family = str(family)
@@ -319,9 +319,9 @@ class TokenIssuer:
         raw_grant = principal.claims.get(GRANT_CLAIM)
         carried: dict[str, Any] | None = raw_grant if isinstance(raw_grant, dict) else None
         if self._resolve_grant is None and carried is None:
-            # Minted before the grant claim existed. Rotating it would hand back
-            # an access token with no scopes at all, and the 403 that follows
-            # would land nowhere near the cause.
+            # No grant claim and no hook to resolve one. Rotating it would hand
+            # back an access token with no scopes at all, and the 403 that
+            # follows would land nowhere near the cause.
             raise UnauthorizedError("this refresh token predates scope-preserving rotation")
 
         if await self._store.is_family_revoked(family):
@@ -347,7 +347,7 @@ class TokenIssuer:
         if outcome == "raced":
             # The same client, seconds behind its own winning request. Refused
             # -- there is one live refresh token and the winner has it -- but
-            # not treated as a theft, because treating it as one is what let a
+            # not treated as a theft, because treating it as one would let a
             # browser with two tabs end the session it was sharing.
             logger.info(
                 "refresh token already rotated within the grace window",
@@ -628,10 +628,10 @@ class AuthPlugin(Plugin):
             #     a revocation that never happened, and on four cores it is
             #     three refreshes in four.
             #
-            # A warning was the old answer, and a warning in a JSON log at boot
-            # is not read. This is not a degraded mode, it is a broken one, and
-            # the symptom -- users logged out at random weeks later -- costs
-            # more to diagnose than a refused boot costs to fix.
+            # A warning in a JSON log at boot is not read, so this refuses
+            # instead. This is not a degraded mode, it is a broken one, and the
+            # symptom -- users logged out at random weeks later -- costs more
+            # to diagnose than a refused boot costs to fix.
             raise PluginError(
                 "auth issues tokens in production with no shared token store. "
                 "Revocation and refresh-reuse detection would be per worker, and "

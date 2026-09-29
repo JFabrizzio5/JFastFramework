@@ -9,7 +9,7 @@ after it has already created half a project.
 So every glyph is declared with an ASCII twin, and the set is resolved once
 against the encoding the console actually reports. The output is plainer on a
 legacy codepage and identical everywhere else, which is the right trade: a
-box-drawing character is decoration, and the alternative was a crash.
+box-drawing character is decoration, and the alternative is a crash.
 
 The check is a real ``str.encode`` rather than a list of known-good codepages.
 Encodings are added, terminals lie about themselves, and ``PYTHONIOENCODING``

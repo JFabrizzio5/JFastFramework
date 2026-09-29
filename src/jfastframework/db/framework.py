@@ -2,13 +2,13 @@
 
 They live on their own ``MetaData`` and are created by the plugin that uses
 them, at startup, with ``CREATE TABLE IF NOT EXISTS`` -- the same contract the
-PostgreSQL queue has always had for ``jfast_jobs``. A service's Alembic history
+PostgreSQL queue has for ``jfast_jobs``. A service's Alembic history
 is the service's; a framework upgrade should not need a migration written in
 somebody else's repository.
 
 Every one of them is named ``jfast_*``. The generated ``env.py`` passes
 :func:`is_framework_table` to Alembic, so ``--autogenerate`` neither creates
-them nor -- the part that mattered -- proposes to drop them because they are
+them nor -- the part that matters -- proposes to drop them because they are
 absent from the service's own models.
 """
 

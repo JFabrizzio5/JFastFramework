@@ -9,8 +9,8 @@ import.
 It also answers a question nobody asked. `describe` knows the plugin graph and
 the settings schema and says **nothing about modules**: generate `invoice` and
 `order`, run `jfast describe --json`, and neither name appears anywhere in the
-output. The CLI could not tell you what was in your own project, which is why
-every agent that touched one reached for `grep`.
+output. Without this module the CLI cannot tell you what is in your own
+project, and every agent that touches one reaches for `grep`.
 
 This module answers that from the filesystem alone: what modules exist, what
 they import, whether they are wired into the app, and what is inconsistent
@@ -138,9 +138,9 @@ def _tablenames(tree: ast.Module) -> set[str]:
     """Every `__tablename__` in the file, in both spellings.
 
     SQLAlchemy 2.0 style annotates it -- `__tablename__: str = "users"` -- which
-    is an `AnnAssign` and not an `Assign`. Reading only the plain form made a
-    modern model invisible here, so `module-no-migration` stayed quiet about a
-    table no revision creates.
+    is an `AnnAssign` and not an `Assign`. Reading only the plain form would
+    make a modern model invisible here, and `module-no-migration` would stay
+    quiet about a table no revision creates.
 
     `cli/migrations.py` and `upgrades.py` each carry their own copy of this
     walk. Three parsers of one construct is the real defect; consolidating them
@@ -585,9 +585,9 @@ def _ungoverned_contract(project: Project) -> list[Finding]:
 
     `check_coverage` is called rather than reimplemented, and that is the whole
     point of the function. Two commands answering one question from two copies
-    of the reasoning is how they came to disagree in the first place: a project
-    could not be simultaneously `no findings` and `3 violations` if both
-    numbers came from here.
+    of the reasoning is how they end up disagreeing: a project cannot be
+    simultaneously `no findings` and `3 violations` when both numbers come from
+    here.
 
     A contract that does not parse is deliberately not reported. It is already
     `contracts check`'s error and `jfast next`'s step, and a third voice on it
@@ -638,8 +638,8 @@ def analyze(project: Project, *, known_plugins: frozenset[str] | None = None) ->
     It is asked by calling `check_coverage`, so the answer is `contracts
     check`'s rather than a second opinion on it. The alternative -- staying
     quiet, on the grounds that anything touching the contract belongs to
-    `contracts check` -- is what let `analyze` print `no findings` on a project
-    whose contract governed nothing, while `jfast next` said the check failed.
+    `contracts check` -- would let `analyze` print `no findings` on a project
+    whose contract governs nothing, while `jfast next` says the check failed.
     """
     findings: list[Finding] = []
 

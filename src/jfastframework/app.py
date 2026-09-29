@@ -92,8 +92,8 @@ def create_app(
             # A plugin imports its client library inside `register`, so an
             # uninstalled extra surfaces here as `No module named 'motor'` --
             # the distribution's name, which is not what anyone has to type.
-            # `PluginMeta.extra` has held the exact command all along; it was
-            # simply never reached from the failure that needs it.
+            # `PluginMeta.extra` holds the exact command, so the failure that
+            # needs it names it.
             if plugin.meta.extra:
                 raise PluginError(
                     f"plugin {plugin.meta.name!r} needs a dependency that is not "

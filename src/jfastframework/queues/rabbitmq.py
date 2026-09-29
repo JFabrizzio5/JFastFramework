@@ -24,8 +24,8 @@ from jfastframework.queues.base import Job
 
 # No visibility timeout here, and none is needed: RabbitMQ redelivers
 # unacknowledged messages when the channel closes, which is what a dead
-# worker does. The parameter this class used to take was never read, and a
-# parameter that does nothing is a promise the caller believes.
+# worker does. So the class takes no such parameter: one that does nothing is
+# a promise the caller believes.
 
 
 class RabbitMQQueue:

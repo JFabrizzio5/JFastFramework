@@ -33,10 +33,10 @@ from jfastframework.workspace import ServiceEntry, Workspace
 def _register_module(root: Path, modules_dir: str, module: str, *, htmx: bool) -> None:
     """Splice a new module's router into main.py.
 
-    The frontend has registered its own routes and menu entries since the
-    beginning; the backend printed the two lines and left them to be pasted.
-    Which meant the generated module was inert until somebody did, and a module
-    that is not mounted looks exactly like a module that does not work.
+    The frontend registers its own routes and menu entries, and the backend
+    does the same here rather than printing two lines to be pasted: a generated
+    module is inert until it is mounted, and a module that is not mounted looks
+    exactly like a module that does not work.
 
     Non-fatal by design. A hand-edited main.py that lost its markers, or a
     module generated outside a service, should still leave the files on disk --
@@ -190,14 +190,13 @@ def _write_dockerfile(
     """The image, written with the service for the same reason as the excludes.
 
     Every generated compose file gives the application service ``build: .`` --
-    both generators, both commands. Nothing wrote the Dockerfile that entry
-    needs, so `docker compose up`, printed as the next step by `jfast start` and
-    by `jfast new service`, failed on a fresh project with
+    both generators, both commands. Without the Dockerfile that entry needs,
+    `docker compose up`, printed as the next step by `jfast start` and by
+    `jfast new service`, fails on a fresh project with
 
         failed to solve: failed to read dockerfile: open Dockerfile: no such
         file or directory
 
-    `jfast deploy dockerfile` had the file all along and nothing said to run it.
     A generated compose file that cannot build is not a deployment artefact.
 
     Go ships its own Dockerfile in its template, and an SPA is static files
@@ -268,14 +267,14 @@ def _print_next_steps(destination: Path, context: dict[str, Any], kind: str) -> 
         # The dev list, not the deploy one: the next step this command and
         # `jfast new module` both print is `pytest`, and requirements.txt has no
         # test runner in it -- deliberately, it is what the image installs. So
-        # the printed step answered `No module named pytest`.
+        # the deploy list would answer that step with `No module named pytest`.
         ("pip install -r requirements-dev.txt", "requirements.txt to deploy"),
         ("cp .env.example .env", "then fill in the secrets"),
     ]
     if context["has_database"]:
         # `jfast deploy compose` first, because there is no docker-compose.yml
-        # in the tree yet: the previous wording sent a new service straight to
-        # `docker compose up -d` against a file that does not exist.
+        # in the tree yet, and `docker compose up -d` against a file that does
+        # not exist fails.
         steps.append(("jfast deploy compose -o docker-compose.yml", "writes it from the plugins"))
         steps.append(("docker compose up -d", "the datastores it needs"))
         steps.append(("alembic upgrade head", "creates the schema"))
@@ -400,7 +399,7 @@ def _write_service_envs(workspace: Workspace) -> list[Path]:
         # Written even when the service binds nothing -- the gateway is the
         # ordinary case. Compose names every service's env_file unconditionally
         # and treats a missing one as an error rather than an empty set, so
-        # skipping the empty ones is what made `docker compose config` fail.
+        # skipping the empty ones makes `docker compose config` fail.
         variables = workspace.environment_for(backend)
         env_path = Path(backend.path) / ".env"
         body = "# Written by jfast from jfast.workspace.toml.\n"

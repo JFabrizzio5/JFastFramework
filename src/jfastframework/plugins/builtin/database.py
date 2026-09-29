@@ -1,8 +1,8 @@
 """Async PostgreSQL via SQLAlchemy 2.0, as one database or as several named ones.
 
-The plugin used to hold a single DSN. That one field is why there was no read
-replica, no per-tenant database and no shard: not one missing feature each, but
-one missing structure -- a database the service can *name*.
+A read replica, a per-tenant database and a shard are not three features but
+one structure: a database the service can *name*. A single DSN field has no
+room for any of them.
 
     [plugin.database]
     dsn_env = "JFAST_DB_DSN"          # the unnamed case, unchanged
@@ -15,9 +15,9 @@ one missing structure -- a database the service can *name*.
     read_only = true
 
 Leaving ``connections`` out is an alias for one instance called ``default``, so
-``JFAST_DB_DSN`` and ``ctx.require("db.engine")`` keep meaning exactly what they
-meant. Every DSN is a ``SecretStr`` or an environment variable and is never
-echoed by ``jfast describe`` or by ``/info``.
+``JFAST_DB_DSN`` and ``ctx.require("db.engine")`` mean the one database. Every
+DSN is a ``SecretStr`` or an environment variable and is never echoed by
+``jfast describe`` or by ``/info``.
 
 Requires: ``pip install jfastframework[db]``
 """
@@ -85,8 +85,8 @@ class TenantPoolExhausted(ServiceUnavailableError, RuntimeError):
 
     503, not 500. Every engine being busy is backpressure: the service is
     healthy, it is at capacity, and the request can succeed if it arrives
-    again in a moment. As a bare ``RuntimeError`` it reached the unhandled
-    handler and came back as ``500 "An unexpected error occurred"`` -- which
+    again in a moment. As a bare ``RuntimeError`` it would reach the unhandled
+    handler and come back as ``500 "An unexpected error occurred"`` -- which
     tells a client to stop and a reader to look for a bug, and hides the one
     signal that says raise ``tenant_max_engines`` or lower the concurrency.
 
@@ -125,11 +125,11 @@ class DatabaseSettings(PluginSettings):
 
     dsn: SecretStr = SecretStr("postgresql+asyncpg://postgres:postgres@localhost:5432/postgres")
     echo: bool = False
-    # Ten connections per process, not thirty. These are per *worker*, and the
-    # generated image starts one per CPU up to eight -- so the old pair was 240
-    # connections from a single service against a PostgreSQL that accepts 100
-    # by default, and the service that fell over was whichever one connected
-    # next. Ten leaves the default deployment at 80 with room beside it.
+    # Ten connections per process. Pools are per *worker*, and the generated
+    # image starts one per CPU up to eight: 30 connections x 8 workers is 240
+    # from a single service against a PostgreSQL that accepts 100 by default,
+    # and the service that falls over is whichever one connects next. Ten
+    # leaves the default deployment at 80 with room beside it.
     #
     # Ten is not small for an async service either: a connection is held while
     # a query runs, not for the length of a request, so ten in flight per
@@ -195,11 +195,11 @@ class DatabaseSettings(PluginSettings):
     # turns the check off for a server nobody here can know the size of.
     #
     # It exists because every pool number in this file is *per process*, and
-    # the generated image runs one worker per CPU: the defaults are 30
-    # connections, which is 240 on an eight-core host, from one service,
-    # against a server that accepts 100. Nothing multiplied those two numbers
-    # before, so the first sign was `FATAL: sorry, too many clients already` --
-    # in production, from whichever service happened to connect last.
+    # the generated image runs one worker per CPU: 30 connections per worker
+    # is 240 on an eight-core host, from one service, against a server that
+    # accepts 100. Unless something multiplies those two numbers, the first
+    # sign is `FATAL: sorry, too many clients already` -- in production, from
+    # whichever service happens to connect last.
     server_max_connections: int = 100
 
     # Deploy generation

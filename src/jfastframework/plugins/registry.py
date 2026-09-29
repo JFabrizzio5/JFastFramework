@@ -55,8 +55,9 @@ def _make_project_importable(directory: Path) -> None:
     ``[plugins.paths]`` names modules that live in the project, not in an
     installed distribution, so resolving one depends on the project directory
     being importable. ``python -m jfastframework`` puts it there and the
-    ``jfast`` console script does not -- which made the same jfast.toml pass
-    under one spelling and report its own plugin missing under the other.
+    ``jfast`` console script does not, so without this the same jfast.toml
+    passes under one spelling and reports its own plugin missing under the
+    other.
 
     Keep it to this one call. A second insertion elsewhere would make which
     copy of a module wins depend on which command ran first.
