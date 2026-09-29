@@ -21,6 +21,7 @@ from jfastframework.cli.generate import (
 )
 from jfastframework.cli.scaffold import (
     DATASTORE_PLUGINS,
+    DEFAULT_LAYOUT,
     FRONTENDS,
     PLUGIN_CATALOG,
     Scaffolder,
@@ -82,7 +83,7 @@ def start(
     scaffolder = Scaffolder()
     module = module_context("item", modules_dir="modules")
     scaffolder.render_trees(
-        module_trees("layered", "api", api_dir / "modules", api_dir),
+        module_trees(DEFAULT_LAYOUT, "api", api_dir / "modules", api_dir),
         module,
         force=force,
     )
@@ -94,8 +95,8 @@ def start(
     # HIGH, exit 1, on a tree the framework just wrote itself. Same two calls,
     # so both paths agree.
     _register_module(api_dir, "modules", "item", htmx=False)
-    if module_registry.record(api_dir, "item", layout="layered", ui="api"):
-        ui.created(f"{api_dir}/{module_registry.CONFIG_FILE}", "item is layered")
+    if module_registry.record(api_dir, "item", layout=DEFAULT_LAYOUT, ui="api"):
+        ui.created(f"{api_dir}/{module_registry.CONFIG_FILE}", f"item is {DEFAULT_LAYOUT}")
 
     front_dir, _ = generate_service(
         f"{slug}_web",

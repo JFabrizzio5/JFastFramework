@@ -85,7 +85,7 @@ with the user rather than paper over it.
 ## If there is no contract yet
 
 ```bash
-jfast contracts init                      # layered layout
+jfast contracts init                      # modular layout, the default
 jfast contracts init --layout modular
 jfast contracts init --layout screaming
 jfast contracts init --layout hexagonal

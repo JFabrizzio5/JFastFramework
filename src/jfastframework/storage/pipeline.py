@@ -28,8 +28,11 @@ is the checker that says so.
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, runtime_checkable
 
@@ -192,7 +195,79 @@ SIGNATURES: tuple[Signature, ...] = (
 # Longest marker ends at byte 12; reading more would not change an answer.
 _HEAD_BYTES = 16
 
-RECOGNISED_TYPES: tuple[str, ...] = tuple(sorted({s.content_type for s in SIGNATURES}))
+SIGNATURE_TYPES: tuple[str, ...] = tuple(sorted({s.content_type for s in SIGNATURES}))
+
+
+# -- types recognised by parsing --------------------------------------------
+#
+# XML, JSON, CSV and plain text have no fixed marker; the only honest way to
+# recognise them is to parse them. So they are recognised only on a disk that
+# names them in `allow` -- a disk for CFDI files asks for application/xml, and
+# nothing else starts accepting text -- and each check is strict:
+#
+# * XML must be well formed, carry no DOCTYPE or ENTITY declaration (that is
+#   where XXE and entity-expansion bombs live, and a data file needs neither),
+#   and must not be SVG or HTML, which a browser would render and run.
+# * JSON must parse to an object or an array.
+# * Text must be UTF-8 with no control characters beyond tab and newlines; CSV
+#   is such text that the csv module reads into at least one row.
+
+_XML_FORBIDDEN = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
+_RENDERED_ROOTS = frozenset({"svg", "html", "xhtml"})
+
+
+def _strip_bom(data: bytes) -> bytes:
+    return data[3:] if data.startswith(b"\xef\xbb\xbf") else data
+
+
+def _is_text(data: bytes) -> bool:
+    try:
+        text = _strip_bom(data).decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return not any(ord(ch) < 32 and ch not in "\t\r\n" for ch in text)
+
+
+def _is_xml(data: bytes) -> bool:
+    import xml.etree.ElementTree as ElementTree  # nosec B405 - DOCTYPE and ENTITY refused first
+
+    body = _strip_bom(data).lstrip()
+    if not body.startswith(b"<") or _XML_FORBIDDEN.search(body):
+        return False
+    try:
+        root = ElementTree.fromstring(body)  # nosec B314 - no DTD can reach the parser
+    except ElementTree.ParseError:
+        return False
+    local = root.tag.rsplit("}", 1)[-1].lower()
+    return local not in _RENDERED_ROOTS
+
+
+def _is_json(data: bytes) -> bool:
+    try:
+        value = json.loads(_strip_bom(data).decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return False
+    return isinstance(value, dict | list)
+
+
+def _is_csv(data: bytes) -> bool:
+    if not _is_text(data):
+        return False
+    rows = csv.reader(io.StringIO(_strip_bom(data).decode("utf-8")))
+    try:
+        return next(rows, None) is not None
+    except csv.Error:
+        return False
+
+
+PARSED_TYPES: dict[str, Callable[[bytes], bool]] = {
+    "application/xml": _is_xml,
+    "application/json": _is_json,
+    "text/csv": _is_csv,
+    "text/plain": _is_text,
+}
+
+RECOGNISED_TYPES: tuple[str, ...] = tuple(sorted({*SIGNATURE_TYPES, *PARSED_TYPES}))
 
 
 def sniff_content_type(data: bytes) -> str | None:
@@ -208,6 +283,21 @@ def sniff_content_type(data: bytes) -> str | None:
     for signature in SIGNATURES:
         if signature.matches(head):
             return signature.content_type
+    return None
+
+
+def recognise(data: bytes, allow: Sequence[str]) -> str | None:
+    """The content type of ``data``: by signature, then by parsing what ``allow`` names.
+
+    Parsed types are tried only when the disk allows them, most specific
+    first, so an XML file on a disk that allows both XML and text is XML.
+    """
+    sniffed = sniff_content_type(data)
+    if sniffed is not None:
+        return sniffed
+    for content_type, check in PARSED_TYPES.items():
+        if content_type in allow and check(data):
+            return content_type
     return None
 
 
@@ -250,7 +340,7 @@ class ValidateStep:
                 f"{self.max_bytes_config} ({self.max_bytes} bytes)"
             )
 
-        sniffed = sniff_content_type(upload.data)
+        sniffed = recognise(upload.data, self.allow)
         if sniffed is None:
             raise UploadRejected(
                 f"disk {self.disk!r}: cannot identify {upload.key!r} from its first bytes, "
@@ -268,6 +358,120 @@ class ValidateStep:
         # the client's here would let an uploader choose the Content-Type of a
         # response from our own origin.
         return replace(upload, content_type=sniffed)
+
+
+# -- streaming -----------------------------------------------------------
+
+#: How much of a stream is read before its type is decided. Enough for every
+#: signature and for an XML declaration plus the start of its root element.
+STREAM_HEAD_BYTES = 64 * 1024
+
+
+@dataclass
+class StreamCheck:
+    """What a streamed upload turned out to be, filled in as it passes."""
+
+    content_type: str | None = None
+    size: int = 0
+
+
+def _head_looks_like(content_type: str, head: bytes) -> bool:
+    """A streamed file's type, decided from its head alone.
+
+    The whole file is never in memory, so a parsed type cannot be fully parsed;
+    the head has to be enough. XML must open with a tag and declare no DOCTYPE
+    or ENTITY there (a DTD comes before the root element, so it would be in the
+    head); JSON must open an object or an array; text must be UTF-8, allowing a
+    character cut in half at the edge.
+    """
+    body = _strip_bom(head).lstrip()
+    if content_type == "application/xml":
+        return body.startswith(b"<") and not _XML_FORBIDDEN.search(body)
+    if content_type == "application/json":
+        return body[:1] in (b"{", b"[")
+    if content_type in ("text/plain", "text/csv"):
+        return _is_text(head) or _is_text(head[:-3])
+    return False
+
+
+async def guard_stream(
+    pipeline: UploadPipeline,
+    *,
+    disk: str,
+    key: str,
+    chunks: AsyncIterable[bytes],
+    check: StreamCheck,
+) -> AsyncIterator[bytes]:
+    """Pass a stream through, enforcing the disk's validate rules on the way.
+
+    Only ``validate`` can run on a stream. A step that rewrites the bytes --
+    image optimisation -- needs the whole file, so a disk that has one refuses
+    streamed uploads rather than skipping the step: use ``put`` there. The size
+    limit is enforced as the bytes arrive, so an oversized upload is stopped at
+    the limit instead of after it has filled the disk.
+    """
+    validate = None
+    for step in pipeline.steps:
+        if isinstance(step, ValidateStep):
+            validate = step
+        else:
+            raise UploadRejected(
+                f"disk {disk!r}: step {step.name!r} needs the whole file, so this disk "
+                f"cannot take a streamed upload; use put()"
+            )
+
+    head = bytearray()
+    decided = validate is None
+    async for chunk in chunks:
+        if not chunk:
+            continue
+        check.size += len(chunk)
+        limit = validate.max_bytes if validate is not None else None
+        if limit is not None and check.size > limit:
+            raise UploadRejected(
+                f"disk {disk!r}: {key!r} passed {humanise_size(limit)}, "
+                f"this disk's max_bytes, while streaming"
+            )
+        if not decided:
+            head += chunk
+            if len(head) < STREAM_HEAD_BYTES:
+                continue
+            check.content_type = _decide(validate, disk, key, bytes(head))
+            decided = True
+            yield bytes(head)
+            head.clear()
+            continue
+        yield chunk
+
+    if not decided:
+        if not head:
+            raise UploadRejected(f"disk {disk!r}: {key!r} is empty")
+        check.content_type = _decide(validate, disk, key, bytes(head))
+        yield bytes(head)
+    elif check.size == 0:
+        raise UploadRejected(f"disk {disk!r}: {key!r} is empty")
+
+
+def _decide(validate: ValidateStep | None, disk: str, key: str, head: bytes) -> str | None:
+    if validate is None:
+        return None
+    sniffed = sniff_content_type(head)
+    if sniffed is None:
+        for content_type in PARSED_TYPES:
+            if content_type in validate.allow and _head_looks_like(content_type, head):
+                sniffed = content_type
+                break
+    if sniffed is None:
+        raise UploadRejected(
+            f"disk {disk!r}: cannot identify {key!r} from its first bytes, "
+            f"so it is refused rather than trusted"
+        )
+    if validate.allow and sniffed not in validate.allow:
+        raise UploadRejected(
+            f"disk {disk!r}: {key!r} contains {sniffed}, which this disk "
+            f"does not accept; allowed: {', '.join(validate.allow)}"
+        )
+    return sniffed
 
 
 # -- the registry -------------------------------------------------------

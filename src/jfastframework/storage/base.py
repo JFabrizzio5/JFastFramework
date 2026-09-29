@@ -26,6 +26,7 @@ import hmac
 import posixpath
 import re
 import time
+from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
@@ -124,6 +125,24 @@ class StorageBackend(Protocol):
         migration — use this, because re-validating an object that is already
         stored means tightening a disk's rules breaks the migration of files
         that were legal when they were written.
+        """
+        ...
+
+    async def put_stream(
+        self,
+        key: str,
+        chunks: AsyncIterable[bytes],
+        *,
+        content_type: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> StoredFile:
+        """Write an object from a stream, never holding it whole in memory.
+
+        For files too big for ``put``: a multi-gigabyte ZIP of CFDI, a video.
+        The disk's ``validate`` rules run as the bytes pass -- the size limit
+        stops the upload at the limit, the type is decided from its head -- and
+        a disk whose pipeline rewrites the bytes refuses, because that needs
+        the whole file. The object appears only when the last byte is written.
         """
         ...
 

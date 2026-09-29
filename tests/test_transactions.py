@@ -517,3 +517,66 @@ async def test_the_driver_reports_a_unique_violation_as_23505(pg_maker) -> None:
         with pytest.raises(IntegrityError) as raised:
             await session.flush()
     assert sqlstate(raised.value) == "23505"
+
+
+# -- the service's own session dependencies ----------------------------------
+
+
+async def test_a_marked_dependency_of_the_service_is_held_to_the_same_rule(tmp_path: Path) -> None:
+    from collections.abc import AsyncIterator
+
+    from jfastframework.plugins.builtin.database import transactional
+
+    app, plugin = await _app(tmp_path)
+
+    @transactional
+    async def own_session(request: Request) -> AsyncIterator[str]:
+        yield "session"
+
+    @app.post("/unscoped")
+    async def unscoped(session: Any = Depends(own_session)) -> None:
+        return None
+
+    @app.post("/scoped")
+    async def scoped(session: Any = Depends(own_session, scope="function")) -> None:
+        return None
+
+    assert session_scope_violations(app) == ["POST /unscoped -> own_session"]
+    with pytest.raises(PluginError, match="/unscoped"):
+        await plugin.startup(app.state.jfast)
+
+
+async def test_an_unmarked_dependency_that_commits_after_yield_is_named(tmp_path: Path) -> None:
+    from collections.abc import AsyncIterator
+
+    from jfastframework.plugins.builtin.database import suspected_scope_violations
+
+    app, _ = await _app(tmp_path)
+
+    class _Session:
+        async def commit(self) -> None:
+            return None
+
+    async def rls_session(request: Request) -> AsyncIterator[Any]:
+        session = _Session()
+        yield session
+        await session.commit()
+
+    async def reads_only(request: Request) -> AsyncIterator[str]:
+        yield "nothing to commit"
+
+    @app.post("/a")
+    async def a(session: Any = Depends(rls_session)) -> None:
+        return None
+
+    @app.post("/b")
+    async def b(session: Any = Depends(rls_session, scope="function")) -> None:
+        return None
+
+    @app.get("/c")
+    async def c(value: str = Depends(reads_only)) -> None:
+        return None
+
+    # A warning, not a refusal: the heuristic can be wrong, the marker cannot.
+    assert suspected_scope_violations(app) == ["POST /a -> rls_session"]
+    assert session_scope_violations(app) == []

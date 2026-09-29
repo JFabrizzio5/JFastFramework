@@ -28,10 +28,12 @@ from jfastframework.cli.patcher import (
 )
 from jfastframework.cli.scaffold import (
     BASE_PLUGINS,
+    DEFAULT_LAYOUT,
     FRONTENDS,
     MODULE_LAYOUTS,
     MODULE_UIS,
     PLUGIN_CATALOG,
+    PLURAL_LANGUAGES,
     SERVICE_KINDS,
     Scaffolder,
     detect_frontend,
@@ -51,8 +53,8 @@ new_app = typer.Typer(help="Generate services and modules.", no_args_is_help=Tru
 #: hint is the deciding question, not a description -- a list of four
 #: architectures with no way to choose between them is not a choice.
 LAYOUT_CHOICES: tuple[tuple[str, str, str], ...] = (
-    ("layered", "Layered", "router / service / repository. Start here."),
-    ("modular", "Modular", "the same, in folders. For a module that outgrows four files."),
+    ("modular", "Modular", "a folder per layer. Start here: it grows without being moved."),
+    ("layered", "Layered", "a file per layer. For a table with an API and little else."),
     ("screaming", "Screaming", "one file per use case. When the verbs matter more than the nouns."),
     (
         "hexagonal",
@@ -60,6 +62,21 @@ LAYOUT_CHOICES: tuple[tuple[str, str, str], ...] = (
         "ports and adapters. When the domain must be testable with no database.",
     ),
 )
+
+
+def _scaffold_language(root: Path) -> str:
+    """``[scaffold] language`` from the project's jfast.toml, or English."""
+    import tomllib
+
+    config = root / "jfast.toml"
+    if not config.is_file():
+        return "en"
+    try:
+        data = tomllib.loads(config.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return "en"
+    value = data.get("scaffold", {}).get("language", "en")
+    return str(value)
 
 
 def _ask_layout(module: str) -> str:
@@ -70,11 +87,11 @@ def _ask_layout(module: str) -> str:
     see. A wizard that blocks a pipeline is worse than a flag nobody set.
     """
     if not ui.console.is_terminal:
-        return "layered"
+        return DEFAULT_LAYOUT
     return ui.select(
         f"Architecture for {module!r}",
         [ui.Choice(key, label, hint) for key, label, hint in LAYOUT_CHOICES],
-        default="layered",
+        default=DEFAULT_LAYOUT,
     )
 
 
@@ -86,8 +103,8 @@ def new_module(
         "--layout",
         "-l",
         help=(
-            "layered, modular, screaming or hexagonal. "
-            "Asked interactively when omitted; defaults to layered when piped."
+            "modular, layered, screaming or hexagonal. "
+            "Asked interactively when omitted; defaults to modular when piped."
         ),
     ),
     ui: str = typer.Option(
@@ -98,6 +115,11 @@ def new_module(
     ),
     table: str | None = typer.Option(
         None, "--table", help="Table name. Defaults to the pluralised module name."
+    ),
+    language: str | None = typer.Option(
+        None,
+        "--language",
+        help="en or es: how the table name is pluralised. Defaults to [scaffold] language.",
     ),
     target: Path = typer.Option(Path("modules"), "--target", "-t", help="Modules directory."),
     root: Path = typer.Option(
@@ -122,8 +144,17 @@ def new_module(
     if ui not in MODULE_UIS:
         raise typer.BadParameter(f"choose from: {', '.join(MODULE_UIS)}", param_hint="--ui")
 
+    if language is None:
+        language = _scaffold_language(root)
+    if language not in PLURAL_LANGUAGES:
+        raise typer.BadParameter(
+            f"choose from: {', '.join(PLURAL_LANGUAGES)}", param_hint="--language"
+        )
+
     scaffolder = Scaffolder()
-    context = module_context(name, layout=layout, ui=ui, table=table, modules_dir=target.name)
+    context = module_context(
+        name, layout=layout, ui=ui, table=table, modules_dir=target.name, language=language
+    )
     trees = module_trees(layout, ui, target, root)
     # `ui` here is the --ui option, which shadows the ui module inside this one
     # function. The spinner is reached through the package to say which is meant.

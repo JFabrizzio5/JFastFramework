@@ -36,6 +36,9 @@ STAMP_FILE = ".jfast-template"
 #: A module is free to differ from its neighbours -- that is the point of a
 #: modular monolith, and `jfast.toml` remembers which is which.
 MODULE_LAYOUTS = ("layered", "modular", "screaming", "hexagonal")
+#: A package per layer: the shape a module grows into without being moved.
+#: Five files is where ``layered`` starts to hurt, and most modules get there.
+DEFAULT_LAYOUT = "modular"
 
 #: The contract whose layer globs match the files a layout generates. Every
 #: entry is load-bearing: a contract written for another layout matches none of
@@ -116,18 +119,47 @@ def to_kebab(name: str) -> str:
     return to_snake(name).replace("_", "-")
 
 
-def pluralize(word: str) -> str:
-    """Naive English pluralisation, good enough for table names.
+#: Languages ``pluralize`` knows, set per project with ``[scaffold] language``.
+PLURAL_LANGUAGES = ("en", "es")
 
-    It also sidesteps a real problem: singular nouns collide with SQL reserved
-    words far more often than plurals do (``order``, ``user``, ``group``).
-    Override with ``--table`` when it guesses wrong.
+
+def pluralize(word: str, language: str = "en") -> str:
+    """Pluralise a module name into a table name, in English or Spanish.
+
+    Table names are plural because singular nouns collide with SQL reserved
+    words far more often than plurals do (``order``, ``user``, ``group``). The
+    rules are the regular ones, good enough for identifiers; ``--table``
+    overrides a guess that is wrong.
     """
+    if language == "es":
+        return _pluralize_es(word)
     if word.endswith("y") and not word.endswith(("ay", "ey", "iy", "oy", "uy")):
         return word[:-1] + "ies"
     if word.endswith(("s", "x", "z", "ch", "sh")):
         return word + "es"
     return word + "s"
+
+
+def _pluralize_es(word: str) -> str:
+    """Spanish: the head noun -- the first word -- takes the plural.
+
+    ``orden_compra`` is ``ordenes_compra``, where English pluralises the last
+    word (``line_items``). Identifiers are ASCII, so the stress an accent would
+    show is guessed: a word ending in an unstressed ``-es``/``-is`` of more
+    than one syllable (``lunes``, ``tesis``) stays as it is.
+    """
+    head, sep, rest = word.partition("_")
+    if not head:
+        return word
+    if head.endswith(("a", "e", "i", "o", "u")):
+        plural = head + "s"
+    elif head.endswith("z"):
+        plural = head[:-1] + "ces"
+    elif head.endswith(("es", "is")) and len(head) > 4:
+        plural = head
+    else:
+        plural = head + "es"
+    return plural + sep + rest
 
 
 def resolve_plugins(kind: str, chosen: Sequence[str]) -> list[str]:
@@ -338,13 +370,14 @@ class Scaffolder:
 def module_context(
     name: str,
     *,
-    layout: str = "layered",
+    layout: str = DEFAULT_LAYOUT,
     ui: str = "api",
     table: str | None = None,
     modules_dir: str = "modules",
+    language: str = "en",
 ) -> dict[str, Any]:
     snake = to_snake(name)
-    plural = pluralize(snake)
+    plural = pluralize(snake, language)
     return {
         "module": snake,
         "Module": to_pascal(name),

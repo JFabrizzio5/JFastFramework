@@ -40,7 +40,8 @@ in production when it finds one.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator
+import re
+from collections.abc import Callable, Iterator
 from contextvars import ContextVar
 from typing import Any
 
@@ -54,10 +55,13 @@ __all__ = [
     "TENANT_SETTING",
     "TenantScopedSession",
     "bypass_rls",
+    "disable_rls_policy",
     "disable_tenant_rls",
+    "enable_rls_policy",
     "enable_tenant_rls",
     "role_problem",
     "tenant_policy_sql",
+    "transaction_setting",
 ]
 
 POLICY = "jfast_tenant_isolation"
@@ -65,6 +69,49 @@ TENANT_SETTING = "jfast.tenant_id"
 BYPASS_SETTING = "jfast.rls_bypass"
 
 _bypass: ContextVar[bool] = ContextVar("jfast_rls_bypass", default=False)
+
+# Custom settings follow PostgreSQL's rule for them: two identifiers joined by
+# a dot. Checked at registration, because the name is part of the SQL.
+_SETTING_NAME = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$")
+
+_providers: dict[str, Callable[[], str | None]] = {}
+
+
+def transaction_setting(
+    name: str,
+) -> Callable[[Callable[[], str | None]], Callable[[], str | None]]:
+    """Set another value on every transaction, next to the tenant.
+
+    A policy can filter on more than the tenant -- the companies a user may
+    see, the user themself -- and those values have to reach PostgreSQL the
+    same way, per transaction. Register a function that returns the value for
+    the current request or job, read from context (``current_principal()``,
+    ``current_tenant_id()``), and every ``TenantScopedSession`` sets it::
+
+        from jfastframework.auth import current_principal
+        from jfastframework.db.rls import transaction_setting
+
+        @transaction_setting("app.companies")
+        def companies() -> str | None:
+            principal = current_principal()
+            if principal is None:
+                return None
+            return "{" + ",".join(principal.claims.get("companies", [])) + "}"
+
+    ``None`` leaves the setting unset for that transaction, which a policy
+    reads as NULL -- no rows. Registration is process-wide: do it at import
+    time, next to the policies that read it.
+    """
+    if not _SETTING_NAME.match(name):
+        raise ValueError(f"{name!r} is not a PostgreSQL custom setting name (prefix.name)")
+    if name in (TENANT_SETTING, BYPASS_SETTING):
+        raise ValueError(f"{name!r} is set by the framework itself")
+
+    def register(provider: Callable[[], str | None]) -> Callable[[], str | None]:
+        _providers[name] = provider
+        return provider
+
+    return register
 
 
 def tenant_policy_sql(
@@ -87,6 +134,41 @@ def tenant_policy_sql(
         f"DROP POLICY IF EXISTS {POLICY} ON {table}",
         f"CREATE POLICY {POLICY} ON {table} USING ({matches}) WITH CHECK ({matches})",
     ]
+
+
+def enable_rls_policy(op: Any, table: str, *, predicate: str, policy: str = POLICY) -> None:
+    """Alembic helper: put ``table`` under a policy of your own.
+
+    For rules the tenant column alone cannot express -- a tenant *and* the
+    companies a user may see, say. ``predicate`` is SQL, applied to reads
+    (``USING``) and to writes (``WITH CHECK``); read the values it needs with
+    ``current_setting('app.name', true)``, set by :func:`transaction_setting`::
+
+        enable_rls_policy(
+            op,
+            "invoices",
+            predicate="tenant_id = current_setting('jfast.tenant_id', true) "
+            "AND company_id = ANY(current_setting('app.companies', true)::uuid[])",
+        )
+
+    The predicate is written by the migration's author, not by users, which is
+    why it is not escaped: never build it from request data.
+    """
+    table = safe_identifier(table, kind="table")
+    policy = safe_identifier(policy, kind="policy")
+    op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+    op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+    op.execute(f"DROP POLICY IF EXISTS {policy} ON {table}")
+    op.execute(f"CREATE POLICY {policy} ON {table} USING ({predicate}) WITH CHECK ({predicate})")
+
+
+def disable_rls_policy(op: Any, table: str, *, policy: str = POLICY) -> None:
+    """Alembic helper: the inverse of :func:`enable_rls_policy`."""
+    table = safe_identifier(table, kind="table")
+    policy = safe_identifier(policy, kind="policy")
+    op.execute(f"DROP POLICY IF EXISTS {policy} ON {table}")
+    op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+    op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
 
 
 def enable_tenant_rls(
@@ -146,6 +228,12 @@ def _scope_transaction(session: Session, transaction: Any, connection: Any) -> N
         )
     if _bypass.get():
         connection.execute(text("SELECT set_config(:name, 'on', true)"), {"name": BYPASS_SETTING})
+    for name, provider in _providers.items():
+        value = provider()
+        if value is not None:
+            connection.execute(
+                text("SELECT set_config(:name, :value, true)"), {"name": name, "value": str(value)}
+            )
 
 
 async def role_problem(engine: Any) -> str | None:

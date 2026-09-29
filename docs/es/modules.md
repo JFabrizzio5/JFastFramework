@@ -61,16 +61,16 @@ Corre sin `--layout` en una terminal y pregunta:
 
 ```
 Architecture for 'invoice'
-  › layered      router / service / repository. Start here.
-    modular      the same, in folders. For a module that outgrows four files.
+  › modular      a folder per layer. Start here: it grows without being moved.
+    layered      a file per layer. For a table with an API and little else.
     screaming    one file per use case. When the verbs matter more than the nouns.
     hexagonal    ports and adapters. When the domain must be testable with no database.
 
-  choice [layered] ›
+  choice [modular] ›
 ```
 
 **Sin terminal no pregunta.** Una instalación por pipe, un script o un job de
-CI reciben `layered` en vez de un prompt que nadie puede ver. Un wizard que
+CI reciben `modular` en vez de un prompt que nadie puede ver. Un wizard que
 bloquea un pipeline es peor que un flag que nadie puso.
 
 **El primer módulo también escribe `contracts.toml`**, con los paths de capa
@@ -207,8 +207,8 @@ módulos no lo necesitan.
 
 | | Úsalo cuando |
 | --- | --- |
-| `layered` | Por defecto. CRUD, y lo interesante son los datos. |
-| `modular` | Pasó de cuatro archivos y cada responsabilidad necesita espacio. |
+| `modular` | Por defecto. Una carpeta por capa, así un módulo crece sin reorganizarse. |
+| `layered` | Una tabla con una API y poco más: cinco archivos son todo el módulo. |
 | `screaming` | Los verbos importan más que los sustantivos; las capacidades llegan como archivos. |
 | `hexagonal` | El dominio debe ser testeable sin base de datos, o las reglas son el producto. |
 

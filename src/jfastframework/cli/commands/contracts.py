@@ -12,7 +12,13 @@ import typer
 
 from jfastframework.cli.common import _echo, _report
 from jfastframework.cli.exits import Code
-from jfastframework.cli.scaffold import CONTRACT_TEMPLATE_FOR, MODULE_LAYOUTS, Scaffolder, to_snake
+from jfastframework.cli.scaffold import (
+    CONTRACT_TEMPLATE_FOR,
+    DEFAULT_LAYOUT,
+    MODULE_LAYOUTS,
+    Scaffolder,
+    to_snake,
+)
 from jfastframework.contracts import CONTRACTS_FILE, Contract, check, render, waivers
 
 contracts_app = typer.Typer(
@@ -54,7 +60,7 @@ def _require_contract(path: Path | None) -> tuple[Contract, Path]:
 def contracts_init(
     name: str | None = typer.Argument(None, help="Project name. Defaults to the directory."),
     layout: str = typer.Option(
-        "layered",
+        DEFAULT_LAYOUT,
         "--layout",
         "-l",
         help=f"Defaults matching your modules: {', '.join(MODULE_LAYOUTS)}.",

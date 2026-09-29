@@ -61,16 +61,16 @@ Run without `--layout` in a terminal and it asks:
 
 ```
 Architecture for 'invoice'
-  › layered      router / service / repository. Start here.
-    modular      the same, in folders. For a module that outgrows four files.
+  › modular      a folder per layer. Start here: it grows without being moved.
+    layered      a file per layer. For a table with an API and little else.
     screaming    one file per use case. When the verbs matter more than the nouns.
     hexagonal    ports and adapters. When the domain must be testable with no database.
 
-  choice [layered] ›
+  choice [modular] ›
 ```
 
 **With no terminal it does not ask.** A piped install, a script or a CI job
-gets `layered` rather than a prompt nobody can see. A wizard that blocks a
+gets `modular` rather than a prompt nobody can see. A wizard that blocks a
 pipeline is worse than a flag nobody set.
 
 **The first module also writes `contracts.toml`**, with the layer paths of the
@@ -204,8 +204,8 @@ It is the most expensive layout here. Most modules do not need it.
 
 | | Reach for it when |
 | --- | --- |
-| `layered` | Default. CRUD, and the data is the interesting part. |
-| `modular` | It outgrew four files and each concern needs room. |
+| `modular` | Default. A folder per layer, so a module grows without being reorganised. |
+| `layered` | A table with an API and little else: five files is the whole module. |
 | `screaming` | The verbs matter more than the nouns; capabilities arrive as files. |
 | `hexagonal` | The domain must be testable with no database, or the rules are the product. |
 

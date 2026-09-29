@@ -155,3 +155,8 @@ project_id = ""
 {% for name, extra in available_plugins %}
 #   {{ "%-13s"|format(name) }} {{ 'pip install "jfastframework[%s]"'|format(extra) if extra else 'no extra needed' }}
 {% endfor %}
+
+# How `jfast new module` names tables: "en" (orders) or "es" (camiones,
+# sucursales). --table overrides either for one module.
+# [scaffold]
+# language = "es"

@@ -24,12 +24,13 @@ Requires: ``pip install jfastframework[db]``
 
 from __future__ import annotations
 
+import inspect
 import os
 import time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
 from fastapi import Depends
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -870,6 +871,14 @@ class DatabasePlugin(Plugin):
                 'jfastframework.plugins.builtin.database, or pass scope="function" '
                 "to Depends(...)."
             )
+        suspected = suspected_scope_violations(ctx.app)
+        if suspected:
+            ctx.logger.warning(
+                "these routes reach a dependency of this service that commits after its "
+                'yield without scope="function", so the commit runs after the response '
+                "is sent. Mark it @transactional and scope it, or scope it:\n  "
+                + "\n  ".join(suspected)
+            )
 
     async def shutdown(self, ctx: AppContext) -> None:
         if self._registry is not None:
@@ -1133,17 +1142,38 @@ ReadSession = Annotated[_Session, Depends(read_session_dependency, scope="functi
 TenantSession = Annotated[_Session, Depends(tenant_session_dependency, scope="function")]
 
 _TRANSACTIONAL = (session_dependency, read_session_dependency, tenant_session_dependency)
+_MARK = "__jfast_transactional__"
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
-def session_scope_violations(app: Any) -> list[str]:
-    """Routes that reach a session dependency with any scope but ``"function"``.
+def transactional(dependency: F) -> F:
+    """Mark a session dependency of your own, so the scope check covers it.
 
-    Walks every route's dependency tree, so a session two levels down --
-    inside a ``get_service`` -- is found as well as one on the endpoint.
+    A service that opens its own session -- to set extra row-level security
+    values, say -- commits in its own ``yield`` dependency, and that commit
+    runs after the response exactly like the framework's would. Marked, the
+    database plugin holds it to the same rule: every route must depend on it
+    with ``scope="function"``, or the service does not start::
+
+        @transactional
+        async def session_with_rls(request: Request) -> AsyncIterator[AsyncSession]:
+            ...
+
+        SessionRLS = Annotated[AsyncSession, Depends(session_with_rls, scope="function")]
     """
+    setattr(dependency, _MARK, True)
+    return dependency
+
+
+def _is_transactional(call: Any) -> bool:
+    return call in _TRANSACTIONAL or bool(getattr(call, _MARK, False))
+
+
+def _walk(app: Any) -> Iterator[tuple[Any, Any]]:
+    """Every (route, dependant) pair below every API route, depth first."""
     from fastapi.routing import APIRoute
 
-    found: set[str] = set()
     for route in getattr(app, "routes", ()):
         if not isinstance(route, APIRoute):
             continue
@@ -1151,8 +1181,58 @@ def session_scope_violations(app: Any) -> list[str]:
         while pending:
             dependant = pending.pop()
             for sub in dependant.dependencies:
-                if sub.call in _TRANSACTIONAL and sub.scope != "function":
-                    methods = ",".join(sorted(route.methods or ()))
-                    found.add(f"{methods} {route.path} -> {sub.call.__name__}")
+                yield route, sub
                 pending.append(sub)
-    return sorted(found)
+
+
+def _label(route: Any, call: Any) -> str:
+    methods = ",".join(sorted(route.methods or ()))
+    return f"{methods} {route.path} -> {getattr(call, '__name__', repr(call))}"
+
+
+def session_scope_violations(app: Any) -> list[str]:
+    """Routes that reach a session dependency with any scope but ``"function"``.
+
+    The framework's three session dependencies, and any of the service's own
+    marked with :func:`transactional`. Walks every route's dependency tree, so
+    a session two levels down -- inside a ``get_service`` -- is found as well
+    as one on the endpoint.
+    """
+    return sorted(
+        {
+            _label(route, sub.call)
+            for route, sub in _walk(app)
+            if _is_transactional(sub.call) and sub.scope != "function"
+        }
+    )
+
+
+def _commits_after_yield(call: Any) -> bool:
+    """Whether a generator dependency's source commits after it yields."""
+    if not (inspect.isasyncgenfunction(call) or inspect.isgeneratorfunction(call)):
+        return False
+    try:
+        source = inspect.getsource(call)
+    except (OSError, TypeError):
+        return False
+    _, _, after = source.partition("yield")
+    return ".commit(" in after
+
+
+def suspected_scope_violations(app: Any) -> list[str]:
+    """Unmarked dependencies that look like they commit after the response.
+
+    A heuristic -- a request-scoped generator dependency whose code calls
+    ``.commit(`` after its ``yield`` -- so it warns rather than refusing:
+    the service knows whether that write may happen after the response, and
+    either marks the dependency or scopes it.
+    """
+    return sorted(
+        {
+            _label(route, sub.call)
+            for route, sub in _walk(app)
+            if not _is_transactional(sub.call)
+            and sub.scope != "function"
+            and _commits_after_yield(sub.call)
+        }
+    )

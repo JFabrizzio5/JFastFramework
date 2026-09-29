@@ -219,3 +219,67 @@ async def test_no_tenant_means_no_writes_either(app_engine: AsyncEngine) -> None
             await session.execute(
                 text("INSERT INTO rls_invoices (tenant_id, label) VALUES ('acme', 'x')")
             )
+
+
+def test_a_setting_name_is_checked_before_it_reaches_sql() -> None:
+    from jfastframework.db.rls import transaction_setting
+
+    with pytest.raises(ValueError):
+        transaction_setting("companies")
+    with pytest.raises(ValueError):
+        transaction_setting("app.x'; DROP TABLE t; --")
+    with pytest.raises(ValueError):
+        transaction_setting("jfast.tenant_id")
+
+
+async def test_a_policy_on_tenant_and_company_filters_on_both(tables: None) -> None:
+    """The shape E-Cont needs: a tenant, and within it the companies a user may see."""
+    from contextvars import ContextVar
+
+    from jfastframework.db import rls
+    from jfastframework.db.rls import enable_rls_policy, transaction_setting
+
+    visible: ContextVar[str | None] = ContextVar("visible_companies", default=None)
+    transaction_setting("app.companies")(visible.get)
+
+    op = _Op()
+    enable_rls_policy(
+        op,
+        "rls_company_rows",
+        predicate="tenant_id = current_setting('jfast.tenant_id', true) "
+        "AND company = ANY(string_to_array(current_setting('app.companies', true), ','))",
+    )
+    admin = create_async_engine(ADMIN_DSN)
+    async with admin.begin() as conn:
+        await conn.execute(text("DROP TABLE IF EXISTS rls_company_rows"))
+        await conn.execute(
+            text("CREATE TABLE rls_company_rows (tenant_id text, company text, label text)")
+        )
+        await conn.execute(text("GRANT ALL ON rls_company_rows TO jfast_app"))
+        await conn.execute(
+            text(
+                "INSERT INTO rls_company_rows VALUES "
+                "('acme', 'north', 'n1'), ('acme', 'south', 's1'), ('globex', 'north', 'g1')"
+            )
+        )
+        for statement in op.statements:
+            await conn.execute(text(statement))
+    await admin.dispose()
+
+    engine = create_async_engine(APP_DSN)
+    try:
+        tenant_token = tenant_id_var.set("acme")
+        company_token = visible.set("north")
+        try:
+            assert await _labels(engine, "rls_company_rows") == ["n1"]
+            visible.set("north,south")
+            assert await _labels(engine, "rls_company_rows") == ["n1", "s1"]
+            visible.set(None)
+            # No companies set: the setting is NULL and nothing matches.
+            assert await _labels(engine, "rls_company_rows") == []
+        finally:
+            visible.reset(company_token)
+            tenant_id_var.reset(tenant_token)
+    finally:
+        await engine.dispose()
+        rls._providers.pop("app.companies", None)

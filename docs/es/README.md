@@ -76,11 +76,12 @@ shop/                       one service
 ├── jfast.toml              which plugins are on; which layout each module uses
 ├── contracts.toml          the rules, checked by CI
 ├── modules/
-│   └── invoice/            one business capability
-│       ├── router.py           HTTP in, response out
-│       ├── service.py          the rules — no SQL, no Request
-│       ├── repository.py       queries — no HTTP concepts
-│       ├── schemas.py
+│   └── invoice/            una capacidad de negocio (modular, por defecto)
+│       ├── api/                entra HTTP, sale respuesta
+│       ├── services/           las reglas — sin SQL, sin Request
+│       ├── repositories/       queries — sin conceptos de HTTP
+│       ├── models/             tablas y esquemas
+│       ├── validations/        reglas que necesitan la base
 │       └── tests/
 ├── shared/                 what two modules both need
 └── migrations/

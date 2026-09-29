@@ -23,13 +23,14 @@ plugin must be enabled too.
 
 ## Choose the shape before generating
 
-**Layout.** Four, in increasing order of cost. Pick the cheapest one that buys
-what this module needs.
+**Layout.** Four. **Use `modular` unless the user asks for another** -- it is
+the default, and a project created from scratch starts with it. Reach for the
+others when the module's shape calls for it:
 
 | Pick | Splits by | When |
 | --- | --- | --- |
-| `layered` (default) | a file per layer: `router` / `service` / `repository` / `models` / `schemas` | Mostly CRUD. The data is the interesting part and five files is the whole module. |
-| `modular` | a package per layer, plus `validations/` | Same boundaries as layered, but a layer will outgrow one file — or there are rules needing the table, which cannot be `Field` constraints. |
+| `modular` (default) | a package per layer, plus `validations/` | The starting point. Same boundaries as layered, with room: a layer that outgrows one file does not force a reorganisation, and rules needing the table have `validations/`. |
+| `layered` | a file per layer: `router` / `service` / `repository` / `models` / `schemas` | A table with an API and little else. Five files is the whole module. |
 | `screaming` | a file per use case, in `use_cases/` | Real domain rules, and capabilities that keep being added. The directory listing should read as the feature list. |
 | `hexagonal` | `domain/` (entities + ports), `application/`, `infrastructure/`, `adapters/` | The domain must run with no database, or a port will get a second adapter. Costs four directories and a mapping layer. |
 
@@ -53,8 +54,8 @@ implement the repository, `screaming` when nothing will.
 2. **Generate.**
 
    ```bash
-   jfast new module invoice                            # layered, JSON
-   jfast new module invoice --layout modular           # a package per layer
+   jfast new module invoice                            # modular, JSON (the default)
+   jfast new module invoice --layout layered           # a file per layer
    jfast new module invoice --layout screaming         # use case per file
    jfast new module invoice --layout hexagonal         # ports and adapters
    jfast new module invoice --ui htmx                  # + server-rendered pages
