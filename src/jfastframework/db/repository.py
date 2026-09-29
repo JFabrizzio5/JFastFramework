@@ -326,7 +326,9 @@ class BaseRepository(Generic[TModel]):
             # returned. It costs one row, against a COUNT that visits every
             # row behind the page to produce a number most clients only use
             # to decide whether to draw a "next" button.
-            rows = list(
+            # Annotated because SQLAlchemy 2.1 types `scalars()` more tightly
+            # than 2.0 and mypy no longer infers it on its own.
+            rows: list[TModel] = list(
                 (await self.session.execute(ordered.limit(limit + 1).offset(offset)))
                 .scalars()
                 .all()
@@ -376,7 +378,7 @@ class BaseRepository(Generic[TModel]):
                 )
             query = query.where(self._after_cursor(spec, after))
 
-        rows = list(
+        rows: list[TModel] = list(
             (await self.session.execute(query.order_by(*self._directed(spec)).limit(limit + 1)))
             .scalars()
             .all()
@@ -454,10 +456,12 @@ class BaseRepository(Generic[TModel]):
             .where(self.model.id == pk)
             .with_for_update(nowait=nowait, skip_locked=skip_locked)
         )
-        instance = (await self.session.execute(query)).scalar_one_or_none()
+        # Annotated rather than `type: ignore`d: SQLAlchemy 2.0 returns Any
+        # here and 2.1 does not, and an ignore is an error on one of them.
+        instance: TModel | None = (await self.session.execute(query)).scalar_one_or_none()
         if instance is None:
             raise NotFoundError(f"{self.model.__name__} {pk!r} not found")
-        return instance  # type: ignore[no-any-return]
+        return instance
 
     async def _flush(self) -> None:
         try:

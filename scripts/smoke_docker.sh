@@ -16,8 +16,8 @@
 #
 # At release time the version a generated service pins is not published yet.
 # Rather than fail on exactly the commit that is correct, the pin is then
-# rewritten to the newest published pre-release and the substitution is
-# announced, so the Dockerfile and the entrypoint are still exercised.
+# pointed at this checkout's wheel -- see scripts/lib/checkout_wheel.sh for why
+# not the newest published release -- and the substitution is announced.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,9 +34,12 @@ DB="jfast-smoke-db-$$"
 API="jfast-smoke-api-$$"
 IMAGE="jfast-smoke-image-$$"
 WORK="$(mktemp -d)"
+# shellcheck source=lib/checkout_wheel.sh
+source "${ROOT}/scripts/lib/checkout_wheel.sh"
 
 cleanup() {
   code=$?
+  stop_checkout_wheel
   docker rm -f "${API}" "${DB}" > /dev/null 2>&1 || true
   docker network rm "${NET}" > /dev/null 2>&1 || true
   docker rmi -f "${IMAGE}" > /dev/null 2>&1 || true
@@ -71,26 +74,11 @@ echo "SMOKE_CANARY=this-must-not-ship" >> .env
 
 step "make sure the pin resolves"
 cat requirements.txt
-if ! "${PYTHON}" -m pip install --dry-run --quiet --pre \
-     --target "${WORK}/resolve" -r requirements.txt > /dev/null 2>&1; then
-  LATEST="$("${PYTHON}" - <<'PY'
-import json, urllib.request
-with urllib.request.urlopen("https://pypi.org/pypi/jfastframework/json") as r:
-    print(json.load(r)["info"]["version"])
-PY
-)"
-  echo "  the pinned version is not on PyPI yet; building against ${LATEST}"
-  "${PYTHON}" - "${LATEST}" <<'PY'
-import re, sys
-body = open('requirements.txt', encoding='utf-8').read()
-body = re.sub(r'(jfastframework\[[^\]]*\])[^\s]*', r'\1==' + sys.argv[1], body)
-open('requirements.txt', 'w', encoding='utf-8').write(body)
-print(body.strip().splitlines()[-1])
-PY
-fi
+pin_to_checkout_wheel
 
 step "docker build"
-docker build -q -t "${IMAGE}" . > /dev/null || fail "the generated Dockerfile does not build"
+docker build -q --add-host "${WHEEL_HOST}:host-gateway" -t "${IMAGE}" . > /dev/null \
+  || fail "the generated Dockerfile does not build"
 
 step "what the image did and did not pick up"
 docker run --rm --entrypoint sh "${IMAGE}" -c 'ls -a /app' > "${WORK}/listing.txt"
