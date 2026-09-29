@@ -279,6 +279,18 @@ el mismo lugar.
   del primer pintado. `VITE_ACCENT` fija el color por defecto del proyecto.
 - **La marca es el nombre del proyecto** (`VITE_APP_NAME`), o `jfastframework`
   si está vacío.
+- **Fondo 3D, 2D o ninguno**, en el mismo popover: el listón, su cuadro fijo
+  sin descargar three.js, o el color liso de la página. Se recuerda por app y
+  se aplica antes del primer pintado; `VITE_BACKGROUND` fija el default del
+  proyecto.
+- **El botón de menú pliega el sidebar en pantalla ancha**, y se queda plegado
+  al recargar. Antes se veía ahí y no hacía nada: la regla que lo ocultaba
+  perdía contra `.nx-round-btn`, y su click solo movía el drawer del teléfono.
+- **JFast Suite como referencia.** Con `--agent-docs`, un frontend nexora
+  recibe la skill `nexora-reference`: una copia de las páginas de la suite
+  (cerca de 1 MB, las imágenes en WebP) y cómo traer un patrón de ahí al
+  proyecto. Los templates ahora pueden llevar archivos que no son `.j2`; se
+  copian byte por byte.
 - **El look queda registrado** en `.jfast-template`, y `jfast new view` dibuja
   las páginas nuevas en él (`--template` lo sobrescribe). Un look desconocido,
   o un look para un servicio sin frontend, se rechaza antes de escribir nada.

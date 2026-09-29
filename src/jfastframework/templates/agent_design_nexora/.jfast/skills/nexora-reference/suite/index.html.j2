@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JFast Suite</title>
+    <meta name="description" content="CRM, red social corporativa, pagos, widgets y tablas fiscales en una sola suite de vidrio líquido.">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="assets/css/nexora.css">
+
+    <style>
+        /* ================= Landing ================= */
+        .lp-section { padding: 110px 0 40px; }
+        .lp-head { max-width: 720px; margin-bottom: 48px; }
+        .lp-head.center { margin-inline: auto; text-align: center; }
+        .lp-head h2 {
+            font-size: clamp(2.2rem, 4.6vw, 3.4rem);
+            font-weight: 900;
+            letter-spacing: -0.045em;
+            line-height: 1.02;
+            margin-top: 10px;
+        }
+        .lp-head p { color: var(--text-dim); font-size: 1.02rem; margin-top: 12px; max-width: 560px; }
+        .lp-head.center p { margin-inline: auto; }
+
+        /* ---------- Hero ---------- */
+        .hero { padding: 84px 0 30px; }
+        .hero-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+            gap: 56px;
+            align-items: start;
+            margin-bottom: 64px;
+        }
+        .hero-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 28px; }
+        .hero-copy h1 { font-size: clamp(3rem, 7.2vw, 5.5rem); }
+        .hero-lead { font-size: 1.12rem; line-height: 1.65; color: var(--text-dim); max-width: 560px; }
+        .hero-chips { display: flex; flex-wrap: wrap; gap: 10px; }
+        .hero-chips .nx-pill { font-size: 0.74rem; color: var(--text-dim); }
+        .hero-chips .nx-pill span { color: var(--text-main); }
+        .hero-ctas { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding-top: 6px; }
+
+        .hero-float { display: flex; flex-direction: column; gap: 18px; padding-top: 10px; }
+        .float-card { border-radius: 22px; padding: 24px; cursor: default; }
+        .float-card .quote-mark { color: rgb(var(--c-accent)); opacity: 0.7; margin-bottom: 12px; }
+        .float-card p { font-size: 0.92rem; font-weight: 500; line-height: 1.6; }
+        .float-foot {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-top: 14px;
+            margin-top: 20px;
+            border-top: 1px solid var(--card-border);
+        }
+        .float-foot img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 2px rgb(var(--c-accent) / 0.3); }
+        .float-foot h4 { font-size: 0.8rem; font-weight: 700; letter-spacing: 0; }
+        .float-foot small { font-size: 0.72rem; color: var(--text-dim); }
+        .kpi-line { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+        .kpi-line b { font-family: var(--font-mono); font-size: 1.5rem; font-weight: 800; letter-spacing: -0.03em; }
+        .deal-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            background: var(--pill-bg);
+            border: 1px solid var(--card-border);
+            font-size: 0.8rem;
+        }
+        .deal-row + .deal-row { margin-top: 8px; }
+        .deal-row small { display: block; font-size: 0.68rem; color: var(--text-dim); }
+        .dots-nav { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; color: rgb(var(--c-glow)); }
+        .dots-nav span { display: inline-block; height: 6px; border-radius: 9px; background: currentColor; }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 32px;
+            max-width: 760px;
+            padding-top: 30px;
+            border-top: 1px solid var(--card-border);
+        }
+        .metrics label { display: block; font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-dim); margin-bottom: 4px; }
+        .metrics b { font-family: var(--font-mono); font-size: clamp(1.4rem, 2.6vw, 1.9rem); font-weight: 800; letter-spacing: -0.03em; }
+
+        /* ---------- Consola (ventana tipo estudio) ---------- */
+        .studio-shell { border-radius: 28px; overflow: hidden; }
+        .studio-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px 18px;
+            border-bottom: 1px solid var(--card-border);
+            background: var(--bg-muted);
+        }
+        .studio-dots { display: flex; gap: 7px; }
+        .studio-dots span { width: 11px; height: 11px; border-radius: 50%; }
+        .studio-url {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            padding: 6px 14px;
+            border-radius: 9999px;
+            background: var(--pill-bg);
+            border: 1px solid var(--card-border);
+        }
+        .studio-tabs {
+            display: flex;
+            gap: 6px;
+            padding: 12px 18px;
+            border-bottom: 1px solid var(--card-border);
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+        .studio-tabs::-webkit-scrollbar { display: none; }
+        .studio-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 15px;
+            border-radius: 9999px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            font-weight: 600;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: var(--transition-fast);
+        }
+        .studio-tab:hover { color: var(--text-main); background: var(--pill-bg); }
+        .studio-tab.active {
+            color: var(--text-main);
+            background: var(--pill-bg);
+            border-color: var(--badge-border);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+        }
+        .studio-tab.active svg { color: rgb(var(--c-accent)); }
+        .studio-view { display: none; padding: 40px; animation: viewFade 0.35s var(--ease-out) both; }
+        .studio-view.active { display: block; }
+        @keyframes viewFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        .view-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px; align-items: center; }
+        .view-grid h3 { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.035em; line-height: 1.15; margin: 12px 0 10px; }
+        .view-grid p { font-size: 0.92rem; color: var(--text-dim); line-height: 1.65; margin-bottom: 22px; }
+        .view-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .view-stage {
+            position: relative;
+            padding: 22px;
+            border-radius: 22px;
+            background: var(--pill-bg);
+            border: 1px solid var(--card-border);
+            overflow: hidden;
+        }
+        .view-stage::before {
+            content: "";
+            position: absolute;
+            width: 260px;
+            height: 260px;
+            right: -80px;
+            top: -120px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgb(var(--c-accent) / 0.22), transparent 70%);
+            filter: blur(30px);
+            pointer-events: none;
+        }
+        .stage-head { display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; font-weight: 700; margin-bottom: 12px; }
+        .stage-head b { font-family: var(--font-mono); color: rgb(var(--c-glow)); }
+        html.nx-light .stage-head b { color: rgb(var(--c-accent)); }
+        .mono { font-family: var(--font-mono); }
+
+        .mini-card {
+            position: relative;
+            padding: 22px;
+            border-radius: 20px;
+            color: #fff;
+            background:
+                radial-gradient(120% 90% at 100% 0%, rgb(var(--c-accent) / 0.55), transparent 55%),
+                radial-gradient(90% 80% at 0% 100%, rgb(var(--c-accent-deep) / 0.9), transparent 60%),
+                linear-gradient(135deg, #17181f, #07070a);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            box-shadow: 0 30px 50px -20px rgb(var(--c-accent) / 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.25);
+            font-family: var(--font-mono);
+        }
+        .mini-card .chip { width: 38px; height: 28px; border-radius: 6px; background: linear-gradient(135deg, #e7d6a6, #a8864a); margin: 16px 0 14px; }
+        .mini-card .num { font-size: 1.1rem; letter-spacing: 0.16em; }
+        .mini-card .row { display: flex; justify-content: space-between; font-size: 0.66rem; color: rgba(255, 255, 255, 0.65); margin-top: 12px; letter-spacing: 0.08em; }
+
+        /* ---------- Bento ---------- */
+        .bento { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 22px; }
+        .bento-item {
+            border-radius: 28px;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 24px;
+            min-height: 280px;
+        }
+        .span-7 { grid-column: span 7; }
+        .span-5 { grid-column: span 5; }
+        .span-4 { grid-column: span 4; }
+        .span-12 { grid-column: span 12; }
+        .bento-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+        .bento-idx { font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); }
+        .bento-tag {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 9999px;
+            background: rgb(var(--c-accent) / 0.1);
+            color: rgb(var(--c-accent));
+            border: 1px solid rgb(var(--c-accent) / 0.22);
+            white-space: nowrap;
+        }
+        .bento-item h3 { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.035em; line-height: 1.2; margin-bottom: 8px; }
+        .bento-item.small h3 { font-size: 1.15rem; }
+        .bento-item p { font-size: 0.88rem; color: var(--text-dim); line-height: 1.6; max-width: 520px; }
+        .bento-item.small p { font-size: 0.8rem; }
+        .bento-foot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding-top: 16px;
+            border-top: 1px solid var(--card-border);
+            font-family: var(--font-mono);
+            font-size: 0.74rem;
+            color: var(--text-dim);
+        }
+        .kanban { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+        .kanban-col { padding: 12px; border-radius: 16px; background: var(--pill-bg); border: 1px solid var(--card-border); }
+        .kanban-col > span { display: block; font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+        .kanban-card { padding: 9px 10px; border-radius: 11px; background: var(--card-bg); border: 1px solid var(--card-border); font-size: 0.72rem; font-weight: 600; }
+        .kanban-card + .kanban-card { margin-top: 6px; }
+        .kanban-card small { display: block; font-family: var(--font-mono); font-size: 0.64rem; color: var(--text-dim); font-weight: 500; }
+        .orb-row { display: flex; align-items: center; gap: 14px; }
+        .orb-row .liquid-orb-accent { width: 52px; height: 52px; flex-shrink: 0; transition: transform 0.4s var(--ease-out), filter 0.4s ease; }
+        .live-green { color: var(--success); font-weight: 700; display: inline-flex; align-items: center; gap: 7px; }
+
+        .modals-panel {
+            border-radius: 28px;
+            padding: 30px 34px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            flex-wrap: wrap;
+            margin-top: 22px;
+        }
+        .modals-panel h3 { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.03em; margin: 8px 0 6px; }
+        .modals-panel p { font-size: 0.88rem; color: var(--text-dim); max-width: 560px; }
+        .modals-panel .view-actions .btn-modern { font-size: 0.82rem; }
+
+        /* ---------- Planes ---------- */
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 22px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .plan {
+            position: relative;
+            border-radius: 28px;
+            padding: 34px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            overflow: hidden;
+        }
+        .plan.featured { border-color: rgb(var(--c-accent) / 0.45); }
+        .plan.featured::before {
+            content: "";
+            position: absolute;
+            inset: -40% -30% auto auto;
+            width: 360px;
+            height: 360px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgb(var(--c-accent) / 0.28), transparent 70%);
+            filter: blur(40px);
+            pointer-events: none;
+        }
+        .plan-name { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .plan-name h3 { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.03em; }
+        .plan > p { font-size: 0.86rem; color: var(--text-dim); }
+        .plan-price { display: flex; align-items: baseline; gap: 8px; }
+        .plan-price b { font-family: var(--font-mono); font-size: 3rem; font-weight: 800; letter-spacing: -0.05em; line-height: 1; }
+        .plan-price span { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-dim); }
+        .plan ul { list-style: none; display: flex; flex-direction: column; gap: 11px; font-size: 0.88rem; padding-top: 18px; border-top: 1px solid var(--card-border); }
+        .plan li { display: flex; gap: 10px; align-items: flex-start; }
+        .plan li svg { color: rgb(var(--c-accent)); margin-top: 3px; }
+        .plan .btn-modern { margin-top: auto; padding: 13px 20px; }
+        .billing-seg { width: 280px; margin: 0 auto 36px; }
+
+        /* ---------- CTA + footer ---------- */
+        .cta-panel {
+            position: relative;
+            border-radius: 32px;
+            padding: 72px 32px;
+            text-align: center;
+            overflow: hidden;
+        }
+        .cta-panel h2 { font-size: clamp(2rem, 4.6vw, 3.3rem); font-weight: 900; letter-spacing: -0.045em; line-height: 1.04; max-width: 640px; margin: 0 auto 16px; }
+        .cta-panel p { color: var(--text-dim); max-width: 480px; margin: 0 auto 28px; }
+        .cta-panel .view-actions { justify-content: center; }
+
+        .lp-footer {
+            margin-top: 90px;
+            padding: 40px 0 48px;
+            border-top: 1px solid var(--card-border);
+            color: var(--text-dim);
+            font-size: 0.8rem;
+        }
+        .lp-footer .container { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+        .lp-footer .nx-logo { font-size: 1.7rem !important; }
+        .lp-footer nav { display: flex; gap: 22px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 0.72rem; }
+        .lp-footer nav a:hover { color: var(--text-main); }
+
+        /* ---------- Modales de ejemplo ---------- */
+        .info-list { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 16px; background: var(--pill-bg); border: 1px solid var(--card-border); font-size: 0.84rem; margin-bottom: 16px; }
+        .info-list div { display: flex; justify-content: space-between; gap: 12px; }
+        .info-list span { color: var(--text-dim); }
+        .alert-icon { width: 52px; height: 52px; border-radius: 50%; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; background: var(--danger-light); color: var(--danger); border: 1px solid var(--danger-border); }
+        .alert-actions { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--card-border); }
+        .alert-actions button { padding: 15px; background: none; border: none; font-size: 0.88rem; cursor: pointer; transition: background 0.15s ease; }
+        .alert-actions button:hover { background: var(--pill-bg); }
+        .alert-actions button:first-child { border-right: 1px solid var(--card-border); color: var(--text-dim); font-weight: 600; }
+        .alert-actions button:last-child { color: var(--danger); font-weight: 700; }
+        .sheet-title { padding: 16px 20px; border-bottom: 1px solid var(--card-border); font-family: var(--font-mono); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); }
+        .apple-sheet-option svg { color: rgb(var(--c-accent)); }
+        .apple-sheet-option.destructive svg { color: var(--danger); }
+
+        /* ---------- Responsive ---------- */
+        @media (max-width: 1024px) {
+            .hero-grid { grid-template-columns: 1fr; gap: 40px; }
+            .hero-float { flex-direction: row; }
+            .hero-float > .float-card { flex: 1; }
+            .hero-float .dots-nav { display: none; }
+            .span-7, .span-5 { grid-column: span 12; }
+            .span-4 { grid-column: span 6; }
+            .span-4:last-child { grid-column: span 12; }
+        }
+        @media (max-width: 760px) {
+            .lp-section { padding-top: 80px; }
+            .hero { padding-top: 56px; }
+            .hero-float { flex-direction: column; }
+            .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+            .view-grid { grid-template-columns: 1fr; }
+            .studio-view { padding: 24px; }
+            .studio-url { display: none; }
+            .span-4 { grid-column: span 12; }
+            .bento-item { padding: 24px; min-height: 0; }
+            .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .kanban-col:last-child { display: none; }
+            .pricing-grid { grid-template-columns: 1fr; }
+            .cta-panel { padding: 52px 22px; }
+            .lp-footer .container { flex-direction: column; align-items: flex-start; }
+        }
+    </style>
+</head>
+<body data-liquid-x="0.6">
+
+    <header class="nexora-navbar">
+        <div class="brand-wrapper">
+            <a href="index.html" aria-label="JFast Suite, inicio">
+                <div class="brand-info">
+                    <h1>JFast <span>Suite</span></h1>
+                </div>
+            </a>
+        </div>
+
+        <nav class="nav-links-menu" id="navLinksMenu" aria-label="Módulos">
+            <a href="index.html" class="nav-pill-link active" aria-current="page">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+                <span>Inicio</span>
+            </a>
+            <a href="crm.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M9 3v18M15 9l3 3-3 3"/></svg>
+                <span>CRM</span>
+            </a>
+            <a href="social.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                <span>Red Social</span>
+            </a>
+            <a href="pagos.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="20" height="14" x="2" y="5" rx="3"/><path d="M2 10h20"/></svg>
+                <span>Pagos</span>
+            </a>
+            <a href="widgets.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="7" height="7" x="3" y="3" rx="2"/><rect width="7" height="7" x="14" y="3" rx="2"/><rect width="7" height="7" x="14" y="14" rx="2"/><rect width="7" height="7" x="3" y="14" rx="2"/></svg>
+                <span>Widgets</span>
+            </a>
+            <a href="tablas.html" class="nav-pill-link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:1.8;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+                <span>Tablas ERP</span>
+            </a>
+        </nav>
+
+        <div class="navbar-actions">
+            <a href="crm.html" class="btn-modern btn-primary nx-hide-sm" style="padding: 9px 18px; font-size: 0.8rem;">Abrir CRM<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+            <button type="button" class="nx-round-btn" data-open-palette aria-label="Personalizar paleta" title="Personalizar paleta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;color:rgb(var(--c-accent));"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+            </button>
+            <button type="button" class="nx-round-btn theme-toggle-btn" onclick="toggleTheme()" aria-label="Cambiar tema"></button>
+        </div>
+    </header>
+
+    <main>
+        <!-- =============================== HERO =============================== -->
+        <section class="hero">
+            <div class="container">
+                <span class="nx-pill">
+                    <span class="nx-live-dot"></span>
+                    <span>JFast Suite 2026 &middot; consola en vivo</span>
+                </span>
+
+                <div class="hero-grid" style="margin-top: 30px;">
+                    <div class="hero-copy">
+                        <div>
+                            <h1 class="hero-title-main">Poder esencial</h1>
+                            <h1 class="hero-title-faded" style="font-size: clamp(3rem, 7.2vw, 5.5rem);">diseño sin</h1>
+                            <h1 class="hero-title-main">fricción.</h1>
+                        </div>
+
+                        <p class="hero-lead">
+                            CRM empresarial, red social corporativa, cobros con tarjeta 3D, widgets de selección y
+                            tablas fiscales con auditoría en tiempo real. Seis módulos, un solo lenguaje visual.
+                        </p>
+
+                        <div class="hero-chips">
+                            <span class="nx-pill">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2;color:rgb(var(--c-accent));"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/></svg>
+                                <span>Interacciones a 60 FPS</span>
+                            </span>
+                            <span class="nx-pill">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2;color:rgb(var(--c-glow));"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+                                <span>Vidrio líquido</span>
+                            </span>
+                            <span class="nx-pill">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2;color:var(--success);"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+                                <span>CFDI 4.0 validado</span>
+                            </span>
+                        </div>
+
+                        <div class="hero-ctas">
+                            <a href="crm.html" class="btn-live-demo">
+                                <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor;"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                                <span>Explorar el CRM</span>
+                            </a>
+                            <a href="#consola" class="btn-get-started">
+                                <span>Ver los módulos</span>
+                                <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;stroke-width:2;"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                            </a>
+                            <button type="button" class="btn-gradient-mesh" data-open-palette style="font-size: 0.8rem; padding: 12px 20px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2;"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+                                <span>Personalizar paleta</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="hero-float">
+                        <div class="liquid-panel float-card animate-float-1" data-tilt>
+                            <div class="kpi-line">
+                                <span class="nx-eyebrow" style="color: var(--text-dim);">Pipeline Q3 2026</span>
+                                <span class="badge-status status-completed">+18.4%</span>
+                            </div>
+                            <div class="kpi-line" style="margin-bottom: 16px;">
+                                <b>$142,800</b>
+                                <span class="mono" style="font-size: 0.72rem; color: var(--text-dim);">USD</span>
+                            </div>
+                            <div class="deal-row">
+                                <div><strong>Logística Austral S.A.</strong><small>Contrato anual Tier 1</small></div>
+                                <span class="mono" style="font-weight: 700;">$94,500</span>
+                            </div>
+                            <div class="deal-row">
+                                <div><strong>TechGlobal Soluciones</strong><small>Infraestructura cloud</small></div>
+                                <span class="mono" style="font-weight: 700; color: var(--warning);">$48,200</span>
+                            </div>
+                        </div>
+
+                        <div class="liquid-panel float-card animate-float-2" data-tilt>
+                            <div class="quote-mark">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:18px;height:18px;stroke-width:2;"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                            </div>
+                            <p>&ldquo;Sincronizamos CFDI 4.0 con el SAT en tiempo real. Los paneles se sienten premium y se leen perfecto sobre el movimiento.&rdquo;</p>
+                            <div class="float-foot">
+                                <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&h=120&q=80" alt="Elena Valenzuela">
+                                <div>
+                                    <h4>Elena Valenzuela</h4>
+                                    <small>Directora de Operaciones</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dots-nav" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                            <div style="display: flex; gap: 6px;">
+                                <span style="width: 20px;"></span>
+                                <span style="width: 6px; opacity: 0.3; background: var(--text-main);"></span>
+                                <span style="width: 6px; opacity: 0.3; background: var(--text-main);"></span>
+                                <span style="width: 6px; opacity: 0.3; background: var(--text-main);"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="metrics">
+                    <div><label>Disponibilidad</label><b>99.99%</b></div>
+                    <div><label>Respuesta</label><b id="latencyCounter">~12ms</b></div>
+                    <div><label>Módulos</label><b>6</b></div>
+                    <div><label>FPS</label><b id="fpsCounter" style="color: var(--success);">60</b></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- =============================== CONSOLA =============================== -->
+        <section class="lp-section" id="consola">
+            <div class="container">
+                <div class="lp-head">
+                    <span class="nx-eyebrow">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2;"><path d="m4 17 6-6-6-6M12 19h8"/></svg>
+                        Consola en vivo
+                    </span>
+                    <h2>Seis módulos,<br>una sola consola.</h2>
+                    <p>Cambia de pestaña para ver cada módulo tal como vive dentro de la suite.</p>
+                </div>
+
+                <div class="liquid-panel studio-shell">
+                    <div class="studio-bar">
+                        <div class="studio-dots">
+                            <span style="background: #ff5f57;"></span>
+                            <span style="background: #febc2e;"></span>
+                            <span style="background: #28c840;"></span>
+                        </div>
+                        <span class="studio-url">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:12px;height:12px;stroke-width:2.2;color:var(--success);"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            jfast.internal/live-console
+                        </span>
+                        <span class="badge-status status-processing"><span class="status-dot"></span>En línea</span>
+                    </div>
+
+                    <div class="studio-tabs" role="tablist">
+                        <button type="button" class="studio-tab active" role="tab" onclick="switchStudioTab('crm', this)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            CRM y pipeline
+                        </button>
+                        <button type="button" class="studio-tab" role="tab" onclick="switchStudioTab('social', this)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                            Red social
+                        </button>
+                        <button type="button" class="studio-tab" role="tab" onclick="switchStudioTab('pagos', this)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><rect width="20" height="14" x="2" y="5" rx="3"/><path d="M2 10h20"/></svg>
+                            Checkout 3D
+                        </button>
+                        <button type="button" class="studio-tab" role="tab" onclick="switchStudioTab('widgets', this)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><rect width="7" height="7" x="3" y="3" rx="2"/><rect width="7" height="7" x="14" y="3" rx="2"/><rect width="7" height="7" x="14" y="14" rx="2"/><rect width="7" height="7" x="3" y="14" rx="2"/></svg>
+                            Selects y widgets
+                        </button>
+                        <button type="button" class="studio-tab" role="tab" onclick="switchStudioTab('tablas', this)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+                            Tablas ERP
+                        </button>
+                    </div>
+
+                    <!-- CRM -->
+                    <div id="studio-crm" class="studio-view active">
+                        <div class="view-grid">
+                            <div>
+                                <span class="badge-status status-completed"><span class="status-dot"></span>Pipeline activo</span>
+                                <h3>Control comercial y fichas técnicas</h3>
+                                <p>Monitorea 148 cuentas corporativas, mueve prospectos entre etapas y abre la ficha de cada cliente en un modal fluido.</p>
+                                <div class="view-actions">
+                                    <a href="crm.html" class="btn-modern btn-primary" style="font-size: 0.82rem;">Ir a la consola CRM</a>
+                                    <button type="button" class="btn-modern btn-outline" style="font-size: 0.82rem;" onclick="openAppleModal('landingSheetModal')">Probar ficha</button>
+                                </div>
+                            </div>
+                            <div class="view-stage">
+                                <div class="stage-head"><span>Pipeline Q3 2026</span><b>$142,800 USD</b></div>
+                                <div class="deal-row">
+                                    <div><strong>Logística Austral S.A.</strong><small>Contrato anual Tier 1</small></div>
+                                    <span class="badge-status status-completed mono">$94,500</span>
+                                </div>
+                                <div class="deal-row">
+                                    <div><strong>TechGlobal Soluciones</strong><small>Infraestructura cloud</small></div>
+                                    <span class="badge-status status-pending mono">$48,200</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Social -->
+                    <div id="studio-social" class="studio-view">
+                        <div class="view-grid">
+                            <div>
+                                <span class="badge-status status-completed"><span class="status-dot"></span>Colaboración departamental</span>
+                                <h3>Muro corporativo y stories</h3>
+                                <p>Canales ágiles, historias de logros semanales, reacciones con animación y debates sin ruido.</p>
+                                <a href="social.html" class="btn-modern btn-primary" style="font-size: 0.82rem;">Explorar la red social</a>
+                            </div>
+                            <div class="view-stage">
+                                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                                    <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=80&q=80" alt="" style="width: 38px; height: 38px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 2px rgb(var(--c-accent) / 0.35);">
+                                    <div>
+                                        <strong style="font-size: 0.86rem;">Elena Valenzuela</strong>
+                                        <div class="mono" style="font-size: 0.68rem; color: var(--text-dim);">hace 15 min &middot; Operaciones</div>
+                                    </div>
+                                </div>
+                                <p style="font-size: 0.84rem; line-height: 1.6; color: var(--text-main); margin: 0;">
+                                    Sincronización de CFDI 4.0 con el SAT en tiempo real, en producción. 🚀
+                                    <span style="color: rgb(var(--c-glow)); font-weight: 600;">#FinanzasPro</span>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pagos -->
+                    <div id="studio-pagos" class="studio-view">
+                        <div class="view-grid">
+                            <div>
+                                <span class="badge-status status-processing"><span class="status-dot"></span>Pasarela B2B</span>
+                                <h3>Cobros con tarjeta 3D reactiva</h3>
+                                <p>Tarjeta holográfica que responde a lo que escribes, transferencias SPEI y desglose fiscal automático.</p>
+                                <a href="pagos.html" class="btn-modern btn-primary" style="font-size: 0.82rem;">Ir al checkout</a>
+                            </div>
+                            <div class="mini-card">
+                                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; letter-spacing: 0.14em;">
+                                    <span style="color: rgba(255,255,255,0.7);">JFAST BUSINESS</span>
+                                    <b style="font-family: var(--font-sans); font-style: italic; font-size: 1.05rem; letter-spacing: 0;">VISA</b>
+                                </div>
+                                <div class="chip"></div>
+                                <div class="num">4532 •••• •••• 9814</div>
+                                <div class="row"><span>ELENA VALENZUELA</span><span>09/29</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Widgets -->
+                    <div id="studio-widgets" class="studio-view">
+                        <div class="view-grid">
+                            <div>
+                                <span class="badge-status status-completed"><span class="status-dot"></span>10 widgets empresariales</span>
+                                <h3>Selectores y componentes de UI</h3>
+                                <p>Selects con buscador, tags removibles, selector multi-empresa con RFC y generador de reportes con barra de progreso.</p>
+                                <a href="widgets.html" class="btn-modern btn-primary" style="font-size: 0.82rem;">Ver el catálogo</a>
+                            </div>
+                            <div class="view-stage">
+                                <div class="deal-row">
+                                    <div><strong>Consorcio JFast S.A.</strong><small>Empresa activa</small></div>
+                                    <span class="badge-status status-processing mono">CNE200915AB4</span>
+                                </div>
+                                <div class="deal-row">
+                                    <div><strong>Periodo fiscal</strong><small>Preset rápido</small></div>
+                                    <span class="mono" style="font-weight: 700; color: rgb(var(--c-glow));">Este mes &middot; 28 d</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tablas -->
+                    <div id="studio-tablas" class="studio-view">
+                        <div class="view-grid">
+                            <div>
+                                <span class="badge-status status-completed"><span class="status-dot"></span>Auditoría fiscal</span>
+                                <h3>Tablas de datos avanzadas</h3>
+                                <p>Orden bidireccional, selección múltiple para acciones masivas, filtros por estatus y exportación a CSV.</p>
+                                <a href="tablas.html" class="btn-modern btn-primary" style="font-size: 0.82rem;">Ver las tablas</a>
+                            </div>
+                            <div class="view-stage">
+                                <div class="stage-head"><span class="mono">FAC-2026-904</span><span class="badge-status status-completed">Validado</span></div>
+                                <div class="mono" style="font-size: 0.78rem; color: var(--text-dim);">Total $128,000 USD &middot; retenciones aplicadas</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- =============================== BENTO =============================== -->
+        <section class="lp-section" id="modulos">
+            <div class="container">
+                <div class="lp-head">
+                    <span class="nx-eyebrow">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2;"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+                        Arquitectura modular
+                    </span>
+                    <h2>Pensado para trabajar<br>con precisión.</h2>
+                    <p>Cada módulo es independiente, comparte los mismos tokens y se recolorea con tu paleta en tiempo real.</p>
+                </div>
+
+                <div class="bento">
+                    <div class="liquid-panel bento-item span-7" data-tilt>
+                        <div>
+                            <div class="bento-top">
+                                <span class="bento-idx">01 &bull; CRM con embudo kanban</span>
+                                <span class="bento-tag">148 cuentas</span>
+                            </div>
+                            <h3>Prospectos y acuerdos en un pipeline visual</h3>
+                            <p>Barra lateral colapsable (72&nbsp;/&nbsp;270&nbsp;px), acordeones, buscador dinámico y fichas de cliente en modal.</p>
+                        </div>
+                        <div class="kanban">
+                            <div class="kanban-col"><span>Contacto</span>
+                                <div class="kanban-card">Grupo Delta<small>$18,400</small></div>
+                                <div class="kanban-card">Ágora Retail<small>$9,900</small></div>
+                            </div>
+                            <div class="kanban-col"><span>Negociación</span>
+                                <div class="kanban-card">TechGlobal<small>$48,200</small></div>
+                            </div>
+                            <div class="kanban-col"><span>Cerrado</span>
+                                <div class="kanban-card" style="border-color: var(--success-border);">Log. Austral<small style="color: var(--success);">$94,500</small></div>
+                            </div>
+                        </div>
+                        <div class="view-actions">
+                            <a href="crm.html" class="btn-modern btn-primary" style="font-size: 0.8rem;">Abrir el CRM</a>
+                            <button type="button" class="btn-modern btn-outline" style="font-size: 0.8rem;" onclick="openAppleModal('landingSheetModal')">Ficha de ejemplo</button>
+                        </div>
+                    </div>
+
+                    <div class="liquid-panel bento-item span-5" data-tilt>
+                        <div>
+                            <div class="bento-top">
+                                <span class="bento-idx">02 &bull; Red social</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;stroke-width:2;color:rgb(var(--c-glow));"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                            </div>
+                            <h3>Comunidad sin distracciones</h3>
+                            <p>Feed de novedades con stories efímeras, comentarios en hilo y reacciones instantáneas.</p>
+                        </div>
+                        <div class="orb-row" style="justify-content: space-between;">
+                            <div style="display: flex;">
+                                <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=80&q=80" alt="" style="width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 2px solid var(--bg-primary);">
+                                <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=80&q=80" alt="" style="width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 2px solid var(--bg-primary); margin-left: -10px;">
+                                <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=80&q=80" alt="" style="width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 2px solid var(--bg-primary); margin-left: -10px;">
+                            </div>
+                            <a href="social.html" class="btn-get-started" style="font-size: 0.8rem; padding: 10px 18px;">Explorar <svg class="arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2;"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+                        </div>
+                    </div>
+
+                    <div class="liquid-panel bento-item small span-4" data-tilt>
+                        <div>
+                            <div class="bento-top">
+                                <span class="bento-idx">03 &bull; Pagos 3D</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;stroke-width:2;color:rgb(var(--c-accent));"><rect width="20" height="14" x="2" y="5" rx="3"/><path d="M2 10h20"/></svg>
+                            </div>
+                            <h3>Checkout con tarjeta viva</h3>
+                            <p>Validación de BIN en tiempo real y soporte para SPEI.</p>
+                        </div>
+                        <div class="orb-row">
+                            <div class="liquid-orb-accent" id="bentoOrb"></div>
+                            <button type="button" class="btn-gradient-mesh" id="btnPulse" style="font-size: 0.76rem; padding: 10px 16px;">Estimular el vidrio</button>
+                        </div>
+                    </div>
+
+                    <div class="liquid-panel bento-item small span-4" data-tilt>
+                        <div>
+                            <div class="bento-top">
+                                <span class="bento-idx">04 &bull; Widgets</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;stroke-width:2;color:rgb(var(--c-glow));"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+                            </div>
+                            <h3>Tokens de paleta en vivo</h3>
+                            <p>Un solo juego de tokens recolorea la interfaz y el vidrio 3D.</p>
+                        </div>
+                        <div class="bento-foot">
+                            <span>Paleta:</span>
+                            <div style="display: flex; gap: 10px;">
+                                <button type="button" class="color-swatch-btn" data-landing-preset="cherry" aria-label="Cherry" style="width: 22px; height: 22px; background: radial-gradient(circle at 30% 30%, #FF6F8A, #FF1744 50%, #D0103A);"></button>
+                                <button type="button" class="color-swatch-btn" data-landing-preset="obsidian" aria-label="Obsidian" style="width: 22px; height: 22px; background: radial-gradient(circle at 30% 30%, #FFFFFF, #71717A 45%, #131316);"></button>
+                                <button type="button" class="color-swatch-btn" data-landing-preset="violet" aria-label="Violet" style="width: 22px; height: 22px; background: radial-gradient(circle at 30% 30%, #C4B5FD, #8B5CF6 50%, #2E0B66);"></button>
+                                <button type="button" class="color-swatch-btn" data-landing-preset="glacier" aria-label="Glacier" style="width: 22px; height: 22px; background: radial-gradient(circle at 30% 30%, #BAE6FD, #38BDF8 50%, #08304D);"></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="liquid-panel bento-item small span-4" data-tilt>
+                        <div>
+                            <div class="bento-top">
+                                <span class="bento-idx">05 &bull; Tablas ERP</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;stroke-width:2;color:var(--success);"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>
+                            </div>
+                            <h3>Folios validados ante el SAT</h3>
+                            <p>Ordena, filtra y exporta miles de registros sin perder fluidez.</p>
+                        </div>
+                        <div class="bento-foot">
+                            <span>Estatus SAT</span>
+                            <span class="live-green"><span class="nx-live-dot"></span>Activo &bull; ~12ms</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="liquid-panel modals-panel">
+                    <div>
+                        <span class="bento-idx">06 &bull; Diálogos</span>
+                        <h3>Modales, alertas y hojas de acción</h3>
+                        <p>Diálogos con desenfoque de fondo, confirmaciones destructivas y hojas de acción como en iOS.</p>
+                    </div>
+                    <div class="view-actions">
+                        <button type="button" class="btn-modern btn-primary" onclick="openAppleModal('landingSheetModal')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2;"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M10 13H8M16 17H8"/></svg>
+                            Ficha
+                        </button>
+                        <button type="button" class="btn-modern btn-outline" onclick="openAppleModal('landingAlertModal')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2;color:var(--warning);"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/></svg>
+                            Alerta
+                        </button>
+                        <button type="button" class="btn-modern btn-outline" onclick="openAppleModal('landingActionSheet')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2;"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                            Hoja de acción
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- =============================== SHOWCASE 3D =============================== -->
+        <section class="lp-section" id="showcase">
+            <div class="container">
+                <div class="lp-head center">
+                    <span class="nx-eyebrow">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2;"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg>
+                        Showcase 3D
+                    </span>
+                    <h2>Pasa el cursor.<br>El auto sale del póster.</h2>
+                    <p>El póster se inclina hacia atrás y el auto se adelanta por encima del marco, como un cartel de cine.</p>
+                </div>
+
+                <div class="reveal-grid">
+                    <article class="reveal-card" tabindex="0">
+                        <div class="reveal-card-poster">
+                            <img class="reveal-card-bg" src="assets/img/track_bg.webp" alt="">
+                            <img class="reveal-card-car" src="assets/img/porsche_gt3_cutout.webp" alt="Porsche 911 GT3 RS">
+                            <span class="reveal-card-meta">TRACK EDITION &bull; 01</span>
+                            <div class="reveal-card-info">
+                                <h4 class="reveal-card-title">Porsche 911 GT3 RS</h4>
+                                <p class="reveal-card-sub">518 HP &bull; 4.0L Boxer</p>
+                            </div>
+                        </div>
+                        <img class="reveal-card-popout" src="assets/img/porsche_gt3_cutout.webp" alt="" aria-hidden="true">
+                        <div class="reveal-card-caption"><strong>Porsche 911 GT3 RS</strong><span>Nordschleife</span></div>
+                    </article>
+
+                    <article class="reveal-card" tabindex="0">
+                        <div class="reveal-card-poster">
+                            <img class="reveal-card-bg" src="assets/img/cyber_bg.webp" alt="">
+                            <img class="reveal-card-car" src="assets/img/cyber_hypercar_cutout.webp" alt="Cyber Vision GT">
+                            <span class="reveal-card-meta">CYBERPUNK &bull; 02</span>
+                            <div class="reveal-card-info">
+                                <h4 class="reveal-card-title">Cyber Vision GT</h4>
+                                <p class="reveal-card-sub">1,200 HP &bull; Dual Electric</p>
+                            </div>
+                        </div>
+                        <img class="reveal-card-popout" src="assets/img/cyber_hypercar_cutout.webp" alt="" aria-hidden="true">
+                        <div class="reveal-card-caption"><strong>Cyber Vision GT</strong><span>Neo-Tokyo</span></div>
+                    </article>
+
+                    <article class="reveal-card" tabindex="0">
+                        <div class="reveal-card-poster">
+                            <img class="reveal-card-bg" src="assets/img/studio_bg.webp" alt="">
+                            <img class="reveal-card-car" src="assets/img/stealth_coupe_cutout.webp" alt="Aston Martin DBS">
+                            <span class="reveal-card-meta">STEALTH COUPE &bull; 03</span>
+                            <div class="reveal-card-info">
+                                <h4 class="reveal-card-title">Aston Martin DBS</h4>
+                                <p class="reveal-card-sub">715 HP &bull; 5.2L V12</p>
+                            </div>
+                        </div>
+                        <img class="reveal-card-popout" src="assets/img/stealth_coupe_cutout.webp" alt="" aria-hidden="true">
+                        <div class="reveal-card-caption"><strong>Aston Martin DBS</strong><span>Matte black</span></div>
+                    </article>
+
+                    <article class="reveal-card" tabindex="0">
+                        <div class="reveal-card-poster">
+                            <img class="reveal-card-bg" src="assets/img/mountain_bg.webp" alt="">
+                            <img class="reveal-card-car" src="assets/img/mclaren_speedster_cutout.webp" alt="McLaren 720S Spider">
+                            <span class="reveal-card-meta">APEX SPEEDSTER &bull; 04</span>
+                            <div class="reveal-card-info">
+                                <h4 class="reveal-card-title">McLaren 720S Spider</h4>
+                                <p class="reveal-card-sub">710 HP &bull; 4.0L Twin-Turbo</p>
+                            </div>
+                        </div>
+                        <img class="reveal-card-popout" src="assets/img/mclaren_speedster_cutout.webp" alt="" aria-hidden="true">
+                        <div class="reveal-card-caption"><strong>McLaren 720S</strong><span>Papaya</span></div>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- =============================== PLANES =============================== -->
+        <section class="lp-section" id="planes">
+            <div class="container">
+                <div class="lp-head center">
+                    <span class="nx-eyebrow">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2;"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+                        Planes y facturación
+                    </span>
+                    <h2>Licencias claras.</h2>
+                    <p>Sin costos ocultos. Todas las plantillas y módulos se entregan con código fuente nativo.</p>
+                </div>
+
+                <div class="nx-seg billing-seg" id="billingSeg">
+                    <button type="button" data-value="month" data-active="true">Mensual</button>
+                    <button type="button" data-value="year" data-active="false">Anual &middot; −20%</button>
+                </div>
+
+                <div class="pricing-grid">
+                    <div class="liquid-panel plan" data-tilt>
+                        <div class="plan-name"><h3>Equipo Starter</h3></div>
+                        <p>Para pymes y agencias de desarrollo.</p>
+                        <div class="plan-price"><b id="priceStarter">$49</b><span id="periodStarter">/ mes</span></div>
+                        <ul>
+                            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.4;"><path d="M20 6 9 17l-5-5"/></svg>Hasta 50 clientes en el CRM</li>
+                            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.4;"><path d="M20 6 9 17l-5-5"/></svg>Tablas y facturación SAT</li>
+                            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.4;"><path d="M20 6 9 17l-5-5"/></svg>Pasarela de pago 3D integrada</li>
+                        </ul>
+                        <a href="pagos.html" class="btn-modern btn-outline">Comenzar con Starter</a>
+                    </div>
+
+                    <div class="liquid-panel plan featured" data-tilt>
+                        <div class="plan-name"><h3>Enterprise Pro</h3><span class="bento-tag">Recomendado</span></div>
+                        <p>La solución integral para corporativos.</p>
+                        <div class="plan-price"><b id="priceEnterprise">$149</b><span id="periodEnterprise">/ mes</span></div>
+                        <ul>
+                            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.4;"><path d="M20 6 9 17l-5-5"/></svg>Clientes y usuarios ilimitados</li>
+                            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.4;"><path d="M20 6 9 17l-5-5"/></svg>Los 10 widgets y selects avanzados</li>
+                            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.4;"><path d="M20 6 9 17l-5-5"/></svg>Exportación masiva a CSV / Excel</li>
+                            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.4;"><path d="M20 6 9 17l-5-5"/></svg>Red social interna con mensajería cifrada</li>
+                            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2.4;"><path d="M20 6 9 17l-5-5"/></svg>Soporte prioritario SLA 24/7</li>
+                        </ul>
+                        <a href="crm.html" class="btn-modern btn-primary">Contratar Enterprise Pro</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- =============================== CTA =============================== -->
+        <section class="lp-section">
+            <div class="container">
+                <div class="liquid-panel cta-panel">
+                    <h2>Lleva la elegancia táctil a tu operación.</h2>
+                    <p>Empieza por el CRM o explora cada módulo; todos comparten la misma paleta.</p>
+                    <div class="view-actions">
+                        <a href="crm.html" class="btn-gradient-mesh" style="padding: 14px 30px;">Empezar ahora</a>
+                        <a href="#top" class="btn-get-started" onclick="window.scrollTo({ top: 0, behavior: 'smooth' }); return false;">
+                            <span>Volver arriba</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;stroke-width:2;"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="lp-footer">
+        <div class="container">
+            <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+                <span class="nx-logo">JFast</span>
+                <span>&mdash; Suite corporativa de vidrio líquido. &copy; 2026</span>
+            </div>
+            <nav aria-label="Pie de página">
+                <a href="index.html">Inicio</a>
+                <a href="crm.html">CRM</a>
+                <a href="social.html">Red Social</a>
+                <a href="pagos.html">Pagos</a>
+                <a href="widgets.html">Widgets</a>
+                <a href="tablas.html">Tablas</a>
+            </nav>
+        </div>
+    </footer>
+
+    <!-- =============================== MODALES DE EJEMPLO =============================== -->
+    <div class="apple-modal-overlay" id="landingSheetModal" style="display: none;">
+        <div class="apple-modal-card">
+            <div class="apple-modal-header">
+                <div>
+                    <h3>Logística Austral S.A.</h3>
+                    <p class="mono" style="font-size: 0.7rem; color: var(--text-dim); margin-top: 2px;">Cuenta corporativa Tier 1 &middot; #C-9042</p>
+                </div>
+                <button type="button" class="apple-modal-close-pill" onclick="closeAppleModal('landingSheetModal')" aria-label="Cerrar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="apple-modal-body">
+                <div class="info-list">
+                    <div><span>Contacto principal</span><strong>Ing. Roberto Soto</strong></div>
+                    <div><span>Facturación total</span><strong class="mono" style="color: rgb(var(--c-glow));">$94,500 USD</strong></div>
+                    <div><span>Estatus fiscal SAT</span><span class="badge-status status-completed"><span class="status-dot"></span>CFDI 4.0 validado</span></div>
+                </div>
+                <p style="font-size: 0.84rem; color: var(--text-dim); line-height: 1.6;">
+                    Contrato marco con SLA de 99.99%. Próxima conciliación programada para el 15 de octubre de 2026.
+                </p>
+            </div>
+            <div class="apple-modal-footer">
+                <button type="button" class="btn-modern btn-outline" onclick="closeAppleModal('landingSheetModal')">Cerrar</button>
+                <a href="crm.html" class="btn-modern btn-primary">Ver en el CRM</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="apple-modal-overlay" id="landingAlertModal" style="display: none;">
+        <div class="apple-modal-card" style="max-width: 420px; text-align: center;">
+            <div style="padding: 30px 26px 22px;">
+                <div class="alert-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-lg" style="stroke-width:2;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                </div>
+                <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 8px;">¿Confirmar acción crítica?</h3>
+                <p style="font-size: 0.86rem; color: var(--text-dim); line-height: 1.55;">
+                    La acción pedirá confirmación antes de modificar la base de datos fiscal.
+                </p>
+            </div>
+            <div class="alert-actions">
+                <button type="button" onclick="closeAppleModal('landingAlertModal')">Cancelar</button>
+                <button type="button" onclick="closeAppleModal('landingAlertModal'); showToast('Acción confirmada', 'Ejemplo de acción destructiva ejecutado.', 'danger');">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="apple-modal-overlay" id="landingActionSheet" style="display: none;">
+        <div class="apple-modal-card apple-action-sheet">
+            <div class="sheet-title">Opciones rápidas</div>
+            <button type="button" class="apple-sheet-option" onclick="closeAppleModal('landingActionSheet'); openCustomizationDrawer();">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+                Abrir la paleta
+            </button>
+            <button type="button" class="apple-sheet-option" onclick="closeAppleModal('landingActionSheet'); toggleTheme();">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20z" fill="currentColor"/></svg>
+                Alternar estudio claro / oscuro
+            </button>
+            <button type="button" class="apple-sheet-option" onclick="closeAppleModal('landingActionSheet'); window.location.href='tablas.html';">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><rect width="18" height="18" x="3" y="3" rx="3"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+                Ver tablas fiscales
+            </button>
+            <button type="button" class="apple-sheet-option destructive" onclick="closeAppleModal('landingActionSheet'); showToast('Sesión', 'Sesión de demostración restablecida.', 'info');">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                Restablecer parámetros
+            </button>
+            <div style="padding: 12px; background: var(--bg-muted); border-top: 1px solid var(--card-border);">
+                <button type="button" class="btn-modern btn-outline" style="width: 100%;" onclick="closeAppleModal('landingActionSheet')">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="assets/js/nexora-common.js"></script>
+    <script src="assets/js/nexora-liquid.js"></script>
+    <script>
+        function switchStudioTab(key, btn) {
+            document.querySelectorAll('.studio-tab').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.studio-view').forEach(v => v.classList.remove('active'));
+            btn.classList.add('active');
+            const view = document.getElementById('studio-' + key);
+            if (view) view.classList.add('active');
+        }
+
+        // Mensual / anual
+        const PRICES = { month: ['$49', '$149', '/ mes'], year: ['$39', '$119', '/ mes · anual'] };
+        document.getElementById('billingSeg').addEventListener('click', (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            const key = btn.dataset.value;
+            document.querySelectorAll('#billingSeg button').forEach(b => { b.dataset.active = String(b === btn); });
+            const [starter, enterprise, period] = PRICES[key];
+            document.getElementById('priceStarter').textContent = starter;
+            document.getElementById('priceEnterprise').textContent = enterprise;
+            document.getElementById('periodStarter').textContent = period;
+            document.getElementById('periodEnterprise').textContent = period;
+            if (key === 'year') showToast('Descuento anual', '20% de ahorro aplicado a los planes.', 'success');
+        });
+
+        // Swatches del bento
+        document.querySelectorAll('[data-landing-preset]').forEach(btn => {
+            btn.addEventListener('click', () => NexoraTheme.setPreset(btn.dataset.landingPreset));
+        });
+        function syncLandingSwatches() {
+            const preset = NexoraTheme.state.preset;
+            document.querySelectorAll('[data-landing-preset]').forEach(b => b.classList.toggle('active', b.dataset.landingPreset === preset));
+        }
+        document.addEventListener('nexora:palette', syncLandingSwatches);
+        syncLandingSwatches();
+
+        // Pulso del vidrio 3D
+        document.getElementById('btnPulse').addEventListener('click', () => {
+            if (window.NexoraLiquid) NexoraLiquid.pulse();
+            const orb = document.getElementById('bentoOrb');
+            orb.style.transform = 'scale(1.18)';
+            orb.style.filter = 'saturate(1.6)';
+            setTimeout(() => { orb.style.transform = ''; orb.style.filter = ''; }, 450);
+        });
+
+        // Métricas vivas
+        setInterval(() => {
+            document.getElementById('latencyCounter').textContent = `~${10 + Math.floor(Math.random() * 4)}ms`;
+        }, 2800);
+
+        (function fpsMeter() {
+            const el = document.getElementById('fpsCounter');
+            let frames = 0, last = performance.now();
+            (function loop(now) {
+                frames++;
+                if (now - last > 700) {
+                    const fps = Math.min(144, Math.round(frames * 1000 / (now - last)));
+                    el.textContent = fps;
+                    el.style.color = fps >= 50 ? 'var(--success)' : 'rgb(var(--c-glow))';
+                    frames = 0;
+                    last = now;
+                }
+                requestAnimationFrame(loop);
+            })(last);
+        })();
+    </script>
+</body>
+</html>

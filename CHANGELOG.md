@@ -215,6 +215,17 @@ these it had written itself, and each one it got wrong in the same place.
   app and applied before first paint. `VITE_ACCENT` sets the project's default.
 - **The brand is the project's name** (`VITE_APP_NAME`), `jfastframework` when
   it is empty.
+- **3D, 2D or no background**, in the same popover: the ribbon, its still
+  frame without downloading three.js, or the plain page colour. Remembered per
+  app, applied before first paint; `VITE_BACKGROUND` sets the project default.
+- **The menu button folds the sidebar on a wide screen**, and it stays folded
+  across reloads. It used to be visible there and do nothing: the rule hiding
+  it lost to `.nx-round-btn`, and its click only drove the phone drawer.
+- **JFast Suite as a reference.** With `--agent-docs`, a nexora frontend gets
+  the `nexora-reference` skill: a copy of the suite's pages (about 1 MB, the
+  images as WebP) and how to bring a pattern from them into the project.
+  Templates may now carry files that are not `.j2`; they are copied byte for
+  byte.
 - **The look is recorded** in `.jfast-template`, and `jfast new view` draws new
   pages in it (`--template` overrides). Unknown looks, and a look given to a
   service without a frontend, are refused before anything is written.

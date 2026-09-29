@@ -1,0 +1,2781 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JFast CRM & ERP | Plataforma Empresarial Avanzada</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,700&display=swap" rel="stylesheet">
+    
+    <!-- Unified CSS -->
+    <link rel="stylesheet" href="assets/css/nexora.css">
+
+    <style>
+        /* ==================================================================
+           CRM — Liquid Glass
+           Barra lateral de vidrio + isla superior flotante sobre el estudio
+           negro. Todo sale de los tokens de nexora.css (claro = html.nx-light).
+           ================================================================== */
+        #crm-app-layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* ---------- Barra lateral de vidrio ---------- */
+        aside.crm-sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-sidebar);
+            backdrop-filter: blur(28px) saturate(170%);
+            -webkit-backdrop-filter: blur(28px) saturate(170%);
+            border-right: 1px solid var(--card-border);
+            box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03), 18px 0 50px -30px rgba(0, 0, 0, 0.6);
+            color: var(--text-main);
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+            transition: width 0.28s var(--ease-out), left 0.3s var(--ease-out);
+        }
+
+        html.nx-light aside.crm-sidebar {
+            box-shadow: inset -1px 0 0 #fff, 18px 0 40px -30px rgba(28, 35, 60, 0.18);
+        }
+
+        aside.crm-sidebar.collapsed { width: 72px; }
+
+        body.sidebar-collapsed main.crm-main-wrapper {
+            margin-left: 72px;
+            width: calc(100% - 72px);
+        }
+
+        .crm-sidebar-brand {
+            height: 76px;
+            display: flex;
+            align-items: center;
+            padding: 0 22px;
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        .crm-brand-link {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .crm-brand-link .nx-logo { font-size: 1.9rem !important; }
+        .crm-brand-link:hover .nx-logo { transform: scale(1.03); }
+
+        .crm-brand-sub {
+            font-family: var(--font-mono);
+            font-size: 0.6rem;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--text-sub);
+            margin-top: 3px;
+            white-space: nowrap;
+        }
+
+        .crm-brand-mark {
+            display: none;
+            font-family: var(--font-script);
+            font-size: 2rem;
+            font-weight: 700;
+            line-height: 1;
+            color: var(--text-main);
+        }
+
+        .crm-brand-mark::after {
+            content: "";
+            display: inline-block;
+            width: 5px;
+            height: 5px;
+            margin-left: 2px;
+            border-radius: 50%;
+            background: rgb(var(--c-accent));
+            box-shadow: 0 0 10px rgb(var(--c-accent) / 0.8);
+        }
+
+        /* Botón redondo que cabalga el borde de la barra */
+        .btn-sidebar-collapse {
+            position: absolute;
+            top: 24px;
+            right: -14px;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--card-solid);
+            border: 1px solid var(--badge-border);
+            color: var(--text-dim);
+            box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.5), inset 0 1px 1px var(--card-specular);
+            cursor: pointer;
+            z-index: 2;
+            transition: transform 0.2s var(--ease-out), color 0.2s ease, border-color 0.2s ease;
+        }
+
+        .btn-sidebar-collapse svg { width: 14px; height: 14px; }
+
+        .btn-sidebar-collapse:hover {
+            color: rgb(var(--c-accent));
+            border-color: var(--card-hover-border);
+            transform: scale(1.08);
+        }
+
+        /* Buscador de módulos */
+        .sidebar-search-box { padding: 2px 16px 8px; }
+
+        .sidebar-search-field { position: relative; }
+
+        .sidebar-search-field svg {
+            position: absolute;
+            left: 13px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 14px;
+            height: 14px;
+            color: var(--text-sub);
+            pointer-events: none;
+        }
+
+        .sidebar-search-input {
+            width: 100%;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            border-radius: 9999px;
+            padding: 9px 14px 9px 34px;
+            color: var(--text-main);
+            font-size: 0.8rem;
+            outline: none;
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            transition: var(--transition-fast);
+        }
+
+        .sidebar-search-input::placeholder { color: var(--text-sub); }
+
+        .sidebar-search-input:focus {
+            border-color: rgb(var(--c-accent) / 0.55);
+            box-shadow: 0 0 0 4px rgb(var(--c-accent) / 0.12);
+        }
+
+        .crm-sidebar-menu {
+            padding: 6px 12px 12px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .nav-group-accordion { margin-bottom: 6px; }
+
+        /* Categorías: etiquetas mono tenues */
+        .nav-group-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            padding: 12px 12px 6px;
+            background: transparent;
+            border: none;
+            color: var(--text-sub);
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            cursor: pointer;
+            border-radius: var(--radius-sm);
+            transition: color 0.18s ease;
+        }
+
+        .nav-group-header:hover { color: var(--text-dim); }
+
+        .nav-chevron {
+            width: 12px;
+            height: 12px;
+            min-width: 12px;
+            transition: transform 0.22s var(--ease-out), color 0.2s ease;
+        }
+
+        .nav-group-header.open .nav-chevron { transform: rotate(180deg); }
+
+        .nav-group-items {
+            display: none;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .nav-group-items.open { display: flex; }
+
+        .nav-sublink {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 8px 12px;
+            color: var(--text-dim);
+            border-radius: 9999px;
+            font-size: 0.83rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid transparent;
+            background: transparent;
+            width: 100%;
+            text-align: left;
+            white-space: nowrap;
+            transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+        }
+
+        .nav-sublink > svg:first-child { width: 17px; height: 17px; min-width: 17px; opacity: 0.85; transition: color 0.2s ease; }
+
+        .nav-sublink:hover {
+            background: var(--pill-bg);
+            color: var(--text-main);
+        }
+
+        .nav-sublink.active {
+            background: var(--pill-bg);
+            border-color: var(--badge-border);
+            color: var(--text-main);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+        }
+
+        .nav-sublink.active > svg:first-child {
+            color: rgb(var(--c-accent));
+            opacity: 1;
+            filter: drop-shadow(0 0 6px rgb(var(--c-accent) / 0.55));
+        }
+
+        .nav-sublink .sidebar-text-hide { overflow: hidden; text-overflow: ellipsis; }
+
+        .nav-ext { width: 12px; height: 12px; margin-left: auto; opacity: 0.45; }
+
+        .nav-badge-count {
+            margin-left: auto;
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            color: var(--text-dim);
+        }
+
+        .nav-badge-count.accent {
+            background: rgb(var(--c-accent) / 0.14);
+            border-color: rgb(var(--c-accent) / 0.3);
+            color: rgb(var(--c-glow));
+        }
+
+        html.nx-light .nav-badge-count.accent { color: rgb(var(--c-accent)); }
+
+        .nav-badge-count.danger {
+            background: var(--danger-light);
+            border-color: var(--danger-border);
+            color: var(--danger);
+        }
+
+        /* Tarjeta de usuario al pie */
+        .crm-sidebar-footer {
+            margin: 10px 12px 14px;
+            padding: 10px 12px;
+            border-radius: 18px;
+            border: 1px solid var(--card-border);
+            background: var(--pill-bg);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: border-color 0.2s ease, background 0.2s ease;
+        }
+
+        .crm-sidebar-footer:hover {
+            background: var(--pill-hover);
+            border-color: var(--card-hover-border);
+        }
+
+        .user-avatar-wrap { position: relative; flex-shrink: 0; }
+
+        .user-avatar-sm {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 2px solid rgb(var(--c-accent) / 0.7);
+            box-shadow: 0 0 14px rgb(var(--c-accent) / 0.35);
+            object-fit: cover;
+            display: block;
+        }
+
+        .user-status-dot-online {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--success);
+            border: 2px solid var(--card-solid);
+        }
+
+        .user-details-wrap { overflow: hidden; flex: 1; min-width: 0; }
+        .user-name { font-size: 0.84rem; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .user-role { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.06em; color: var(--text-dim); white-space: nowrap; }
+        .user-more { width: 16px; height: 16px; color: var(--text-sub); }
+
+        /* ---------- Estado colapsado (solo iconos) ---------- */
+        aside.crm-sidebar.collapsed .sidebar-text-hide,
+        aside.crm-sidebar.collapsed .nav-badge-count,
+        aside.crm-sidebar.collapsed .nav-ext,
+        aside.crm-sidebar.collapsed .sidebar-search-box,
+        aside.crm-sidebar.collapsed .brand-title-wrap,
+        aside.crm-sidebar.collapsed .user-details-wrap,
+        aside.crm-sidebar.collapsed .user-more {
+            display: none !important;
+        }
+
+        aside.crm-sidebar.collapsed .crm-brand-mark { display: inline-flex; align-items: flex-end; }
+        aside.crm-sidebar.collapsed .crm-sidebar-brand { justify-content: center; padding: 0; }
+        aside.crm-sidebar.collapsed .crm-sidebar-menu { padding: 6px 10px 12px; }
+
+        aside.crm-sidebar.collapsed .nav-group-header {
+            height: 1px;
+            padding: 0;
+            margin: 10px 8px;
+            background: var(--card-border);
+            pointer-events: none;
+        }
+
+        aside.crm-sidebar.collapsed .nav-group-header > * { display: none; }
+        aside.crm-sidebar.collapsed .nav-group-accordion:first-child .nav-group-header { margin-top: 2px; }
+        aside.crm-sidebar.collapsed .nav-group-items { display: flex; }
+
+        aside.crm-sidebar.collapsed .nav-sublink {
+            justify-content: center;
+            padding: 0;
+            width: 44px;
+            height: 40px;
+            margin: 0 auto;
+        }
+
+        aside.crm-sidebar.collapsed .crm-sidebar-footer {
+            justify-content: center;
+            padding: 8px 0;
+            margin: 10px 10px 14px;
+        }
+
+        /* ---------- Contenido principal ---------- */
+        main.crm-main-wrapper {
+            margin-left: var(--sidebar-width);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            min-width: 0;
+            width: calc(100% - var(--sidebar-width));
+            transition: margin-left 0.28s var(--ease-out), width 0.28s var(--ease-out);
+        }
+
+        /* Isla superior de vidrio */
+        .crm-top-header {
+            position: sticky;
+            top: 14px;
+            z-index: 90;
+            height: var(--header-height);
+            margin: 14px 28px 0;
+            padding: 0 10px 0 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-radius: 9999px;
+            background: var(--nav-bg);
+            backdrop-filter: blur(24px) saturate(190%);
+            -webkit-backdrop-filter: blur(24px) saturate(190%);
+            border: 1px solid var(--nav-border);
+            box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.35), inset 0 1px 1px var(--card-specular);
+        }
+
+        html.nx-light .crm-top-header {
+            box-shadow: 0 16px 36px -12px rgba(28, 35, 60, 0.14), inset 0 1px 1px #fff;
+        }
+
+        .crm-header-left,
+        .crm-header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .crm-header-right { flex-shrink: 0; }
+
+        .crm-header-btn-new { padding: 9px 18px; font-size: 0.8rem; }
+
+        .header-alert-badge {
+            position: absolute;
+            top: -3px;
+            right: -3px;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 4px;
+            border-radius: 9999px;
+            background: var(--danger);
+            color: #fff;
+            font-family: var(--font-mono);
+            font-size: 0.6rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid var(--card-solid);
+            box-shadow: 0 0 10px rgba(255, 77, 94, 0.55);
+        }
+
+        /* Selector de empresa */
+        .empresa-selector-wrap { position: relative; min-width: 0; }
+
+        .empresa-selector-btn {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            max-width: 100%;
+            padding: 7px 12px 7px 14px;
+            border-radius: 9999px;
+            border: 1px solid var(--badge-border);
+            background: var(--pill-bg);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            color: var(--text-main);
+            font-size: 0.82rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: var(--transition-fast);
+        }
+
+        .empresa-selector-btn:hover {
+            background: var(--pill-hover);
+            border-color: var(--card-hover-border);
+        }
+
+        .empresa-selector-btn .empresa-icon { color: rgb(var(--c-accent)); }
+        .empresa-selector-btn .empresa-caret { width: 13px; height: 13px; color: var(--text-dim); }
+
+        #activeEmpresaLabel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        .empresa-dropdown {
+            position: absolute;
+            top: calc(100% + 12px);
+            left: 0;
+            width: 340px;
+            background: var(--card-solid);
+            border: 1px solid var(--nav-border);
+            border-radius: 22px;
+            box-shadow: 0 30px 70px -18px rgba(0, 0, 0, 0.7), inset 0 1px 1.5px var(--card-specular);
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 200;
+            padding: 14px;
+        }
+
+        html.nx-light .empresa-dropdown { box-shadow: 0 30px 60px -18px rgba(28, 35, 60, 0.22), inset 0 1px 1.5px #fff; }
+
+        .empresa-dropdown.open { display: flex; animation: nxPop 0.22s var(--ease-out); }
+
+        @keyframes nxPop {
+            from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+            to { opacity: 1; transform: none; }
+        }
+
+        .empresa-dropdown .form-input { padding: 8px 14px; font-size: 0.78rem; border-radius: 9999px; }
+
+        #empresasDropdownList {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+
+        .empresa-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 14px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-main);
+            text-align: left;
+            cursor: pointer;
+            transition: background 0.18s ease, border-color 0.18s ease;
+        }
+
+        .empresa-option:hover { background: var(--pill-bg); }
+
+        .empresa-option.active {
+            background: rgb(var(--c-accent) / 0.08);
+            border-color: rgb(var(--c-accent) / 0.25);
+        }
+
+        .empresa-option-name { font-weight: 700; font-size: 0.82rem; }
+        .empresa-option-meta { font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-dim); margin-top: 2px; }
+
+        .empresa-option-check {
+            width: 16px;
+            height: 16px;
+            margin-left: auto;
+            color: rgb(var(--c-accent));
+            opacity: 0;
+        }
+
+        .empresa-option.active .empresa-option-check { opacity: 1; }
+
+        .crm-content-area {
+            padding: 30px 28px 48px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            min-width: 0;
+        }
+
+        /* Vistas */
+        .crm-view-section {
+            display: none;
+            flex-direction: column;
+            gap: 22px;
+            min-width: 0;
+            animation: viewAppear 0.35s var(--ease-out) forwards;
+        }
+
+        .crm-view-section.active { display: flex; }
+
+        .crm-view-section .page-header-row { margin-bottom: 4px; }
+        .crm-view-section .page-title .nx-eyebrow { margin-bottom: 10px; }
+
+        @keyframes viewAppear {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .panel-title { font-size: 1.08rem; font-weight: 800; letter-spacing: -0.03em; }
+        .panel-sub { font-size: 0.8rem; color: var(--text-dim); margin-top: 3px; }
+
+        .panel-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
+
+        .mono-amount { font-family: var(--font-mono); font-weight: 700; letter-spacing: -0.02em; }
+
+        /* ---------- KPIs ---------- */
+        .kpi-grid-crm {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+        }
+
+        .kpi-card-crm {
+            background: var(--card-bg);
+            backdrop-filter: blur(28px) saturate(170%);
+            -webkit-backdrop-filter: blur(28px) saturate(170%);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-lg);
+            padding: 20px 20px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            box-shadow: var(--card-shadow), inset 0 1px 1.5px var(--card-specular);
+            transition: border-color 0.25s ease, transform 0.25s var(--ease-out);
+            position: relative;
+            overflow: hidden;
+        }
+
+        html.nx-light .kpi-card-crm { box-shadow: var(--card-shadow), inset 0 1px 2px #fff; }
+
+        /* Luz de relleno del acento en la esquina */
+        .kpi-card-crm::before {
+            content: "";
+            position: absolute;
+            top: -60px;
+            right: -60px;
+            width: 160px;
+            height: 160px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgb(var(--c-accent) / 0.16), transparent 70%);
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            opacity: 0.7;
+        }
+
+        .kpi-card-crm:hover {
+            transform: translateY(-3px);
+            border-color: var(--card-hover-border);
+        }
+
+        .kpi-card-crm:hover::before { opacity: 1; }
+        .kpi-card-crm.is-link { cursor: pointer; }
+
+        .kpi-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .kpi-label {
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-dim);
+        }
+
+        .kpi-value {
+            font-family: var(--font-mono);
+            font-size: 1.7rem;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            line-height: 1.1;
+            color: var(--text-main);
+        }
+
+        .kpi-value small {
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            color: var(--text-sub);
+            margin-left: 4px;
+        }
+
+        .kpi-foot { font-size: 0.76rem; color: var(--text-dim); }
+
+        .kpi-card-crm .badge-status { font-family: var(--font-mono); font-size: 0.64rem; }
+
+        /* ---------- Facturación + vencimientos ---------- */
+        .fact-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+            gap: 16px;
+            border-radius: var(--radius-lg);
+        }
+
+        .fact-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 10px;
+            font-size: 0.84rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .fact-bar {
+            width: 100%;
+            height: 12px;
+            padding: 2px;
+            background: var(--bg-muted);
+            border: 1px solid var(--card-border);
+            border-radius: 9999px;
+            overflow: hidden;
+            margin-bottom: 18px;
+        }
+
+        .fact-bar > div {
+            height: 100%;
+            border-radius: 9999px;
+        }
+
+        .fact-bar .fill-accent {
+            background: linear-gradient(90deg, rgb(var(--c-accent-deep)), rgb(var(--c-accent)) 55%, rgb(var(--c-glow)));
+            box-shadow: 0 0 14px rgb(var(--c-accent) / 0.55);
+        }
+
+        .fact-bar .fill-success {
+            background: linear-gradient(90deg, color-mix(in srgb, var(--success) 45%, transparent), var(--success));
+            box-shadow: 0 0 14px color-mix(in srgb, var(--success) 45%, transparent);
+        }
+
+        .fact-foot {
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 4px;
+            padding-top: 14px;
+            border-top: 1px solid var(--card-border);
+            font-size: 0.78rem;
+            color: var(--text-dim);
+        }
+
+        .fact-foot strong { font-family: var(--font-mono); }
+
+        .venc-list { display: flex; flex-direction: column; gap: 8px; }
+
+        .venc-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            padding: 11px 12px;
+            background: var(--pill-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            font-size: 0.8rem;
+            transition: border-color 0.2s ease, background 0.2s ease;
+        }
+
+        .venc-item:hover { border-color: var(--card-hover-border); background: var(--pill-hover); }
+        .venc-title { font-weight: 700; }
+        .venc-meta { font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-dim); margin-top: 2px; }
+        .venc-item .badge-status { font-family: var(--font-mono); font-size: 0.64rem; }
+
+        /* ---------- Tablas dentro de paneles ---------- */
+        .card-panel .table-responsive,
+        .liquid-panel .table-responsive {
+            background: transparent;
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+            box-shadow: none;
+            border-radius: 16px;
+        }
+
+        .card-panel .erp-table th,
+        .card-panel .erp-table td { padding-left: 14px; padding-right: 14px; }
+
+        .cell-title { font-weight: 700; color: var(--text-main); }
+        .cell-sub { font-size: 0.74rem; color: var(--text-dim); margin-top: 2px; }
+        .cell-amount { font-family: var(--font-mono); font-weight: 700; font-size: 0.86rem; color: var(--text-main); }
+        .erp-table .badge-status,
+        .erp-table .stage-pill { font-size: 0.68rem; }
+
+        #crmClientsTableBody .company-cell { min-width: 230px; }
+        .company-name { font-weight: 700; color: var(--text-main); font-size: 0.88rem; line-height: 1.25; }
+
+        .company-rfc {
+            font-family: var(--font-mono);
+            font-size: 0.66rem;
+            color: var(--text-dim);
+            margin-top: 3px;
+        }
+
+        .contact-pill,
+        .email-cell,
+        .phone-cell {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            white-space: nowrap;
+        }
+
+        .contact-pill { font-weight: 600; font-size: 0.84rem; }
+        .contact-pill svg { color: var(--text-dim); }
+
+        .email-cell {
+            font-family: var(--font-mono);
+            font-size: 0.76rem;
+            color: var(--text-dim);
+            transition: color 0.15s ease;
+        }
+
+        .email-cell:hover { color: rgb(var(--c-glow)); }
+        html.nx-light .email-cell:hover { color: rgb(var(--c-accent)); }
+
+        .phone-cell { font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-main); }
+        .phone-cell svg, .email-cell svg { opacity: 0.6; }
+
+        .stage-pill {
+            border: 1px solid var(--badge-border);
+            background: var(--pill-bg);
+            white-space: nowrap;
+        }
+
+        .status-review {
+            background: var(--info-light);
+            color: var(--info);
+            border-color: var(--info-border);
+        }
+
+        .btn-table-ficha { white-space: nowrap; }
+        .erp-table td:last-child { white-space: nowrap; }
+
+        .search-pill { position: relative; max-width: 400px; width: 100%; }
+
+        .search-pill svg {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-dim);
+            pointer-events: none;
+        }
+
+        .search-pill .form-input { padding-left: 40px; border-radius: 9999px; }
+
+        /* ---------- Pipeline (kanban) ---------- */
+        .pipeline-board {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+            padding-bottom: 6px;
+        }
+
+        .pipeline-col {
+            background: var(--card-bg);
+            backdrop-filter: blur(24px) saturate(160%);
+            -webkit-backdrop-filter: blur(24px) saturate(160%);
+            border: 1px solid var(--card-border);
+            box-shadow: var(--card-shadow), inset 0 1px 1.5px var(--card-specular);
+            border-radius: var(--radius-lg);
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 460px;
+            min-width: 0;
+        }
+
+        html.nx-light .pipeline-col { box-shadow: var(--card-shadow), inset 0 1px 2px #fff; }
+
+        .pipeline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            padding: 2px 4px 12px;
+            margin-bottom: 2px;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .pipeline-stage {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-dim);
+            min-width: 0;
+        }
+
+        .pipeline-stage::before {
+            content: "";
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            background: var(--stage-color, var(--text-sub));
+            box-shadow: 0 0 10px var(--stage-color, transparent);
+        }
+
+        .pipeline-count {
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            padding: 1px 7px;
+            border-radius: 9999px;
+            background: var(--pill-bg);
+            border: 1px solid var(--badge-border);
+            color: var(--text-main);
+            letter-spacing: 0;
+        }
+
+        .pipeline-total { font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: var(--text-main); }
+
+        .pipeline-col.stage-1 { --stage-color: var(--text-dim); }
+        .pipeline-col.stage-2 { --stage-color: rgb(var(--c-glow)); }
+        .pipeline-col.stage-3 { --stage-color: rgb(var(--c-accent)); }
+        .pipeline-col.stage-won { --stage-color: var(--success); }
+        .pipeline-col.stage-won .pipeline-stage { color: var(--success); }
+
+        .deal-card {
+            position: relative;
+            background: var(--pill-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 13px 14px;
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            cursor: grab;
+            transition: transform 0.22s var(--ease-out), border-color 0.2s ease, background 0.2s ease, box-shadow 0.22s ease;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .deal-card:hover {
+            transform: translateY(-2px);
+            background: var(--pill-hover);
+            border-color: var(--card-hover-border);
+            box-shadow: 0 14px 28px -14px rgb(var(--c-accent) / 0.45), inset 0 1px 1px var(--card-specular);
+        }
+
+        .deal-card.is-won { border-color: var(--success-border); }
+        .deal-card.is-won::before {
+            content: "";
+            position: absolute;
+            left: -1px;
+            top: 14px;
+            bottom: 14px;
+            width: 3px;
+            border-radius: 3px;
+            background: var(--success);
+            box-shadow: 0 0 10px var(--success);
+        }
+
+        .deal-client { font-weight: 700; font-size: 0.86rem; letter-spacing: -0.01em; }
+        .deal-desc { font-size: 0.76rem; color: var(--text-dim); }
+        .deal-amount { font-family: var(--font-mono); font-weight: 700; color: rgb(var(--c-glow)); font-size: 0.86rem; margin-top: 2px; }
+        html.nx-light .deal-amount { color: rgb(var(--c-accent)); }
+        .deal-card.is-won .deal-amount { color: var(--success); }
+
+        /* ---------- Mensajería ---------- */
+        .messaging-layout {
+            display: grid;
+            grid-template-columns: 300px minmax(0, 1fr);
+            overflow: hidden;
+            height: calc(100vh - 230px);
+            min-height: 540px;
+        }
+
+        .msg-sidebar {
+            border-right: 1px solid var(--card-border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 0;
+        }
+
+        .msg-sidebar-header { padding: 14px; border-bottom: 1px solid var(--card-border); }
+        .msg-sidebar-header .form-input { font-size: 0.8rem; padding: 8px 14px; border-radius: 9999px; }
+
+        .msg-section { padding: 12px 12px; }
+        .msg-section + .msg-section { border-top: 1px solid var(--card-border); }
+        .msg-section.is-scroll { flex: 1; overflow-y: auto; }
+
+        .msg-section-label {
+            font-family: var(--font-mono);
+            font-size: 0.6rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--text-sub);
+            margin: 0 6px 8px;
+        }
+
+        .channel-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 9999px;
+            background: none;
+            border: 1px solid transparent;
+            color: var(--text-dim);
+            font-size: 0.83rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: left;
+            transition: var(--transition-fast);
+        }
+
+        .channel-btn span { font-family: var(--font-mono); color: var(--text-sub); }
+
+        .channel-btn:hover { background: var(--pill-bg); color: var(--text-main); }
+
+        .channel-btn.active {
+            background: var(--pill-bg);
+            border-color: var(--badge-border);
+            color: var(--text-main);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+        }
+
+        .channel-btn.active span { color: rgb(var(--c-accent)); }
+
+        .contact-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 9px 10px;
+            border-radius: 16px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: var(--transition-fast);
+        }
+
+        .contact-item img { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1px solid var(--badge-border); }
+        .contact-item:hover { background: var(--pill-bg); }
+
+        .contact-item.active {
+            background: rgb(var(--c-accent) / 0.08);
+            border-color: rgb(var(--c-accent) / 0.22);
+        }
+
+        .contact-name { font-size: 0.84rem; font-weight: 700; }
+        .contact-preview { font-size: 0.74rem; color: var(--text-dim); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+
+        .msg-main-chat {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 0;
+        }
+
+        .msg-chat-head {
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--card-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .msg-chat-head img { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; border: 1px solid var(--badge-border); }
+        .msg-chat-name { font-weight: 800; font-size: 0.98rem; letter-spacing: -0.02em; }
+        .msg-chat-sub { font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-dim); }
+
+        .msg-conversation-body {
+            flex: 1;
+            padding: 22px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: var(--bg-muted);
+        }
+
+        .peer-bubble {
+            max-width: 75%;
+            padding: 11px 16px;
+            border-radius: 20px;
+            font-size: 0.86rem;
+            line-height: 1.5;
+            animation: bubbleFadeIn 0.25s var(--ease-out);
+        }
+
+        @keyframes bubbleFadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .peer-bubble.incoming {
+            align-self: flex-start;
+            background: var(--card-bg);
+            color: var(--text-main);
+            border: 1px solid var(--card-border);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            border-bottom-left-radius: 6px;
+        }
+
+        .peer-bubble.outgoing {
+            align-self: flex-end;
+            background: linear-gradient(135deg, color-mix(in srgb, rgb(var(--c-glow)) 40%, rgb(var(--c-accent))), rgb(var(--c-accent)) 45%, color-mix(in srgb, rgb(var(--c-accent)) 70%, rgb(var(--c-accent-deep))));
+            color: rgb(var(--c-on-accent));
+            box-shadow: 0 10px 24px -10px rgb(var(--c-accent) / 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.35);
+            border-bottom-right-radius: 6px;
+        }
+
+        .msg-input-bar {
+            padding: 12px 14px;
+            border-top: 1px solid var(--card-border);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .msg-input-bar input {
+            flex: 1;
+            min-width: 0;
+            padding: 11px 18px;
+            border-radius: 9999px;
+            border: 1px solid var(--card-border);
+            background: var(--bg-input);
+            color: var(--text-main);
+            font-size: 0.86rem;
+            outline: none;
+            transition: var(--transition-fast);
+        }
+
+        .msg-input-bar input::placeholder { color: var(--text-light); }
+
+        .msg-input-bar input:focus {
+            border-color: rgb(var(--c-accent) / 0.6);
+            box-shadow: 0 0 0 4px rgb(var(--c-accent) / 0.14);
+        }
+
+        /* ---------- Modales ---------- */
+        .modal-title-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .modal-sub { font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-dim); letter-spacing: 0.04em; }
+
+        .modal-orb {
+            width: 38px;
+            height: 38px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+        }
+
+        .modal-orb svg { width: 18px; height: 18px; }
+
+        .modal-orb.liquid-orb-accent {
+            box-shadow: inset -4px -4px 10px rgba(0, 0, 0, 0.55), inset 3px 3px 7px rgba(255, 255, 255, 0.45), 0 8px 18px -6px rgb(var(--c-accent) / 0.6);
+        }
+
+        .detail-box {
+            background: var(--bg-muted);
+            border: 1px solid var(--card-border);
+            padding: 6px 16px;
+            border-radius: 18px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 11px 0;
+            font-size: 0.86rem;
+        }
+
+        .detail-row + .detail-row { border-top: 1px solid var(--card-border); }
+        .detail-row > span:first-child { color: var(--text-dim); font-size: 0.78rem; }
+
+        .detail-email { font-family: var(--font-mono); font-size: 0.8rem; color: rgb(var(--c-glow)); word-break: break-all; text-align: right; }
+        html.nx-light .detail-email { color: rgb(var(--c-accent)); }
+        .detail-ltv { font-family: var(--font-mono); color: rgb(var(--c-accent)); font-weight: 800; font-size: 1.1rem; letter-spacing: -0.03em; }
+
+        .info-note {
+            padding: 12px 14px;
+            border-radius: 14px;
+            background: var(--info-light);
+            border: 1px solid var(--info-border);
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+
+        .info-note svg { flex-shrink: 0; margin-top: 2px; color: var(--info); }
+        .info-note p { font-size: 0.78rem; color: var(--text-dim); line-height: 1.5; }
+
+        .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        .form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+        .form-grid-2 .form-group, .form-grid-3 .form-group { margin-bottom: 0; }
+        .modal-body .form-group { margin-bottom: 0; }
+
+        .section-label {
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+        }
+
+        .compras-table {
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            overflow: hidden;
+            font-size: 0.78rem;
+        }
+
+        .compra-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 8px;
+            padding: 10px 14px;
+            align-items: center;
+        }
+
+        .compra-row + .compra-row,
+        #comprasRecentList .compra-row { border-top: 1px solid var(--card-border); }
+
+        .compra-row.is-head {
+            background: var(--bg-muted);
+            font-family: var(--font-mono);
+            font-size: 0.6rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+            padding: 9px 14px;
+        }
+
+        .compra-row.is-new { background: rgb(var(--c-accent) / 0.06); }
+        .compra-row code { font-size: 0.72rem; color: var(--text-dim); }
+        .compra-row .mono-amount { font-size: 0.76rem; }
+        .compra-row .badge-status { font-size: 0.62rem; }
+
+        .modal-footer .btn-live-demo { justify-content: center; font-size: 0.85rem; padding: 10px 20px; }
+
+        /* ---------- Cajón de alertas (panel de vidrio flotante) ---------- */
+        .alertas-drawer {
+            position: fixed;
+            top: 14px;
+            right: 14px;
+            bottom: 14px;
+            width: 400px;
+            max-width: calc(100vw - 28px);
+            background: var(--card-bg);
+            backdrop-filter: blur(36px) saturate(180%);
+            -webkit-backdrop-filter: blur(36px) saturate(180%);
+            border: 1px solid var(--nav-border);
+            border-radius: var(--radius-xl);
+            box-shadow: 0 40px 90px -20px rgba(0, 0, 0, 0.7), inset 0 1px 1.5px var(--card-specular);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transform: translateX(calc(100% + 40px));
+            visibility: hidden;
+            transition: transform 0.38s var(--ease-out), visibility 0.38s;
+        }
+
+        html.nx-light .alertas-drawer { box-shadow: 0 40px 80px -20px rgba(28, 35, 60, 0.25), inset 0 1px 2px #fff; }
+
+        .alertas-drawer.open { transform: none; visibility: visible; }
+
+        .alertas-drawer-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 2, 4, 0.5);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 999;
+            display: none;
+        }
+
+        html.nx-light .alertas-drawer-overlay { background: rgba(240, 242, 248, 0.5); }
+
+        .alertas-drawer-overlay.open { display: block; }
+
+        .alertas-head {
+            padding: 18px 18px 16px 20px;
+            border-bottom: 1px solid var(--card-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .alertas-head-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--danger-light);
+            border: 1px solid var(--danger-border);
+            color: var(--danger);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .alertas-toolbar {
+            padding: 12px 18px;
+            border-bottom: 1px solid var(--card-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            background: var(--bg-muted);
+        }
+
+        .alertas-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+        .alert-chip {
+            padding: 5px 11px;
+            border-radius: 9999px;
+            border: 1px solid var(--badge-border);
+            background: var(--pill-bg);
+            color: var(--text-dim);
+            font-family: var(--font-mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: var(--transition-fast);
+        }
+
+        .alert-chip:hover { color: var(--text-main); border-color: var(--card-hover-border); }
+
+        .alert-chip.active {
+            background: rgb(var(--c-accent));
+            border-color: rgb(var(--c-accent));
+            color: rgb(var(--c-on-accent));
+            box-shadow: 0 4px 12px -2px rgb(var(--c-accent) / 0.5);
+        }
+
+        .alert-mark-read {
+            background: none;
+            border: none;
+            color: rgb(var(--c-accent));
+            font-family: var(--font-mono);
+            font-size: 0.66rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+        }
+
+        #alertasListContainer {
+            padding: 16px 16px 20px;
+            overflow-y: auto;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .alert-item-card {
+            border: 1px solid var(--card-border);
+            background: var(--pill-bg);
+            box-shadow: inset 0 1px 1px var(--card-specular);
+            border-radius: 18px;
+            padding: 14px;
+            transition: border-color 0.2s ease, background 0.2s ease;
+        }
+
+        .alert-item-card.is-danger { border-color: var(--danger-border); background: color-mix(in srgb, var(--danger) 6%, transparent); }
+        .alert-item-card.is-warning { border-color: var(--warning-border); background: color-mix(in srgb, var(--warning) 5%, transparent); }
+
+        .alert-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .alert-top .badge-status { font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.04em; }
+        .alert-time { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-sub); white-space: nowrap; }
+        .alert-title { font-weight: 700; font-size: 0.84rem; margin-bottom: 4px; letter-spacing: -0.01em; }
+        .alert-text { font-size: 0.76rem; color: var(--text-dim); line-height: 1.5; }
+        .alert-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+        .alert-actions .btn-modern { padding: 6px 12px; font-size: 0.7rem; }
+
+        /* Velo del menú lateral en móvil */
+        .crm-sidebar-scrim {
+            position: fixed;
+            inset: 0;
+            z-index: 99;
+            background: rgba(2, 2, 4, 0.5);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            display: none;
+        }
+
+        html.nx-light .crm-sidebar-scrim { background: rgba(240, 242, 248, 0.5); }
+
+        /* ---------- Responsive ---------- */
+        @media (max-width: 1180px) {
+            .fact-grid { grid-template-columns: minmax(0, 1fr); }
+            .pipeline-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .pipeline-col { min-height: 0; }
+        }
+
+        @media (max-width: 950px) {
+            aside.crm-sidebar,
+            aside.crm-sidebar.collapsed { left: -290px; width: var(--sidebar-width); }
+            aside.crm-sidebar.mobile-open { left: 0; }
+            aside.crm-sidebar.mobile-open ~ .crm-sidebar-scrim { display: block; }
+            .btn-sidebar-collapse { display: none; }
+            main.crm-main-wrapper,
+            body.sidebar-collapsed main.crm-main-wrapper { margin-left: 0; width: 100%; }
+            .messaging-layout { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
+            .msg-sidebar { border-right: none; border-bottom: 1px solid var(--card-border); max-height: 320px; }
+            .msg-conversation-body { min-height: 320px; }
+        }
+
+        @media (max-width: 720px) {
+            .crm-top-header { margin: 12px 16px 0; top: 12px; padding: 0 8px; }
+            .crm-content-area { padding: 24px 16px 40px; }
+            .crm-header-btn-new span,
+            #activeEmpresaLabel,
+            .crm-hide-sm { display: none; }
+            .empresa-selector-wrap { position: static; }
+            .empresa-dropdown { left: 0; right: 0; width: auto; }
+            .pipeline-board { grid-template-columns: minmax(0, 1fr); }
+            .form-grid-2, .form-grid-3 { grid-template-columns: 1fr; }
+            .compra-row { grid-template-columns: 1.4fr 1fr 1fr; }
+            .compra-row > :nth-child(2) { display: none; }
+            .kpi-value { font-size: 1.5rem; }
+            .panel-head .btn-modern { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Demo Auth Overlay (can be toggled or bypassed) -->
+    <div id="crm-auth-container" style="display: none; position: fixed; inset: 0; background: rgba(2,2,4,0.62); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); z-index: 3000; align-items: center; justify-content: center;">
+        <div class="liquid-panel" style="max-width: 420px; width: 90%; text-align: center; padding: 32px 28px;">
+            <div class="nx-logo" style="justify-content: center; margin-bottom: 10px;">JFast <span>Suite</span></div>
+            <h2 style="font-weight: 900; font-size: 1.4rem; letter-spacing: -0.04em; margin-bottom: 6px;">CRM &amp; ERP</h2>
+            <p class="nx-mono" style="font-size: 0.72rem; color: var(--text-dim); margin-bottom: 22px;">Sesión autenticada como Elena Valenzuela</p>
+            <button class="btn-modern btn-primary" style="width: 100%; padding: 12px;" onclick="document.getElementById('crm-auth-container').style.display='none'">
+                Continuar al dashboard
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <div id="crm-app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="crm-sidebar" id="crmSidebar">
+            <div class="crm-sidebar-brand">
+                <a href="index.html" class="crm-brand-link" aria-label="JFast Suite, inicio">
+                    <span class="crm-brand-mark" aria-hidden="true">J</span>
+                    <div class="brand-title-wrap">
+                        <div class="nx-logo">JFast <span>Suite</span></div>
+                        <div class="crm-brand-sub">CRM · ERP Enterprise</div>
+                    </div>
+                </a>
+                <button type="button" class="btn-sidebar-collapse" onclick="toggleSidebarCollapse()" id="sidebarCollapseBtn" title="Colapsar menú lateral" aria-label="Colapsar menú lateral">
+                    <svg id="collapseIconSvg" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.5;"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+            </div>
+
+            <!-- Buscador Rápido de Módulos (Inspirado en Econt-JFast LayoutAuthenticated) -->
+            <div class="sidebar-search-box">
+                <div class="sidebar-search-field">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="search" id="sidebarSearchInput" class="sidebar-search-input" placeholder="Buscar módulo o vista…" oninput="filterSidebarModules(this.value)">
+                </div>
+            </div>
+
+            <nav class="crm-sidebar-menu" id="crmSidebarMenu">
+                
+                <!-- GRUPO 1: OPERACIONES & CLIENTES -->
+                <div class="nav-group-accordion open" id="group-operaciones">
+                    <button type="button" class="nav-group-header open" onclick="toggleNavGroup(this)">
+                        <span class="group-title">Operaciones & Clientes</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm nav-chevron" style="stroke-width:2;"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="nav-group-items open">
+                        <button class="nav-sublink active" onclick="switchCrmView('dashboard', this)" title="Dashboard Central">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+                            <span class="sidebar-text-hide">Dashboard Central</span>
+                        </button>
+                        <button class="nav-sublink" onclick="switchCrmView('clientes', this)" title="Cartera de Clientes">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            <span class="sidebar-text-hide">Cartera de Clientes</span>
+                            <span class="nav-badge-count accent">148</span>
+                        </button>
+                        <button class="nav-sublink" onclick="switchCrmView('pipeline', this)" title="Pipeline de Ventas">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
+                            <span class="sidebar-text-hide">Pipeline de Ventas</span>
+                            <span class="nav-badge-count">$142k</span>
+                        </button>
+                        <button class="nav-sublink" onclick="openModalControlCompras()" title="Control de Compras">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
+                            <span class="sidebar-text-hide">Control de Compras</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- GRUPO 2: FINANZAS & FACTURACIÓN (E-Cont) -->
+                <div class="nav-group-accordion open" id="group-finanzas">
+                    <button type="button" class="nav-group-header open" onclick="toggleNavGroup(this)">
+                        <span class="group-title">Finanzas & Cobros</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm nav-chevron" style="stroke-width:2;"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="nav-group-items open">
+                        <button class="nav-sublink" onclick="scrollAndHighlightWidget('widgetFacturacionMes')" title="Facturación del Mes">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                            <span class="sidebar-text-hide">Facturación del Mes</span>
+                        </button>
+                        <button class="nav-sublink" onclick="showToast('Cuentas por Cobrar', '14 facturas por vencer en los próximos 15 días ($68,400 USD).', 'info')" title="Cuentas por Cobrar">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+                            <span class="sidebar-text-hide">Cuentas por Cobrar</span>
+                            <span class="nav-badge-count">14</span>
+                        </button>
+                        <button class="nav-sublink" onclick="showToast('Cheques & SPEI', 'Módulo de transferencias bancarias en línea.', 'info')" title="Cheques y Transferencias">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01m12 0h.01"/></svg>
+                            <span class="sidebar-text-hide">Cheques & SPEI</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- GRUPO 3: COMUNICACIÓN & EQUIPO -->
+                <div class="nav-group-accordion open" id="group-comunicacion">
+                    <button type="button" class="nav-group-header open" onclick="toggleNavGroup(this)">
+                        <span class="group-title">Comunicación & Equipo</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm nav-chevron" style="stroke-width:2;"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="nav-group-items open">
+                        <button class="nav-sublink" onclick="switchCrmView('mensajeria', this)" title="Mensajería Departamental">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                            <span class="sidebar-text-hide">Mensajería Departamental</span>
+                            <span class="nav-badge-count">3</span>
+                        </button>
+                        <button class="nav-sublink" onclick="toggleAlertasDrawer()" title="Alertas y Notificaciones">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                            <span class="sidebar-text-hide">Alertas y Notificaciones</span>
+                            <span class="nav-badge-count danger">3</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- GRUPO 4: MÓDULOS DE LA SUITE -->
+                <div class="nav-group-accordion open" id="group-suite">
+                    <button type="button" class="nav-group-header open" onclick="toggleNavGroup(this)">
+                        <span class="group-title">Módulos de la Suite</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm nav-chevron" style="stroke-width:2;"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="nav-group-items open">
+                        <a href="index.html" class="nav-sublink" title="Landing Principal">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                            <span class="sidebar-text-hide">Landing Principal</span>
+                            <svg class="nav-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.2;"><path d="M7 17 17 7M8 7h9v9"/></svg>
+                        </a>
+                        <a href="social.html" class="nav-sublink" title="Red Social Corporativa">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            <span class="sidebar-text-hide">Red Social Corporativa</span>
+                            <svg class="nav-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.2;"><path d="M7 17 17 7M8 7h9v9"/></svg>
+                        </a>
+                        <a href="pagos.html" class="nav-sublink" title="Pasarela de Pago 3D">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+                            <span class="sidebar-text-hide">Pasarela de Pago 3D</span>
+                            <svg class="nav-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.2;"><path d="M7 17 17 7M8 7h9v9"/></svg>
+                        </a>
+                        <a href="widgets.html" class="nav-sublink" title="Widgets & Selects">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:1.75;"><rect width="7" height="7" x="3" y="3" rx="2"/><rect width="7" height="7" x="14" y="3" rx="2"/><rect width="7" height="7" x="14" y="14" rx="2"/><rect width="7" height="7" x="3" y="14" rx="2"/></svg>
+                            <span class="sidebar-text-hide">Widgets & Selects</span>
+                            <svg class="nav-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.2;"><path d="M7 17 17 7M8 7h9v9"/></svg>
+                        </a>
+                        <a href="tablas.html" class="nav-sublink" title="Tablas Fiscales ERP">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><line x1="3" x2="21" y1="6" y2="6"/><line x1="3" x2="21" y1="12" y2="12"/><line x1="3" x2="21" y1="18" y2="18"/></svg>
+                            <span class="sidebar-text-hide">Tablas Fiscales ERP</span>
+                            <svg class="nav-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.2;"><path d="M7 17 17 7M8 7h9v9"/></svg>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- GRUPO 5: AJUSTES & AUDITORÍA -->
+                <div class="nav-group-accordion open" id="group-ajustes">
+                    <button type="button" class="nav-group-header open" onclick="toggleNavGroup(this)">
+                        <span class="group-title">Ajustes & Sistema</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm nav-chevron" style="stroke-width:2;"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="nav-group-items open">
+                        <button class="nav-sublink" onclick="openCustomizationDrawer()" title="Paleta líquida">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+                            <span class="sidebar-text-hide">Paleta líquida</span>
+                        </button>
+                        <button class="nav-sublink" onclick="showToast('Auditoría', 'Registro de auditoría interna: 0 incidentes detectados en 2026.', 'success')" title="Auditoría & Seguridad">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-md" style="stroke-width:2;"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            <span class="sidebar-text-hide">Auditoría & Seguridad</span>
+                        </button>
+                    </div>
+                </div>
+
+            </nav>
+
+            <div class="crm-sidebar-footer" onclick="openProfileModal()">
+                <div class="user-avatar-wrap">
+                    <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&h=120&q=80" alt="Avatar" class="user-avatar-sm">
+                    <span class="user-status-dot-online"></span>
+                </div>
+                <div class="user-details-wrap">
+                    <div class="user-name">Elena Valenzuela</div>
+                    <div class="user-role">ADMIN · GENERAL</div>
+                </div>
+                <svg class="user-more" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2;"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </div>
+        </aside>
+        <div class="crm-sidebar-scrim" onclick="closeMobileSidebar()"></div>
+
+        <!-- Main Wrapper -->
+        <main class="crm-main-wrapper">
+            <header class="crm-top-header">
+                <div class="crm-header-left">
+                    <button type="button" class="nx-round-btn" onclick="toggleSidebarCollapse()" title="Colapsar o expandir menú lateral" aria-label="Menú lateral">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+                    </button>
+
+                    <!-- EmpresaSelector Widget en el Header del CRM (Inspirado en Econt-JFast) -->
+                    <div class="empresa-selector-wrap" id="crmEmpresaSelectorWrap">
+                        <button type="button" class="empresa-selector-btn" onclick="toggleEmpresaDropdown()" aria-haspopup="listbox">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm empresa-icon" style="stroke-width:2;"><path d="M3 21h18"/><path d="M9 8h1"/><path d="M9 12h1"/><path d="M9 16h1"/><path d="M14 8h1"/><path d="M14 12h1"/><path d="M14 16h1"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/></svg>
+                            <span id="activeEmpresaLabel">Consorcio JFast S.A.</span>
+                            <span class="badge-status status-completed nx-mono" id="activeSucursalBadge" style="padding: 2px 8px; font-size: 0.62rem;">Matriz CDMX</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="empresa-caret" style="stroke-width:2.2;"><path d="m6 9 6 6 6-6"/></svg>
+                        </button>
+
+                        <div class="empresa-dropdown" id="crmEmpresaDropdown">
+                            <div class="section-label" style="margin: 2px 4px 0;">Contexto corporativo activo</div>
+                            <input type="text" class="form-input" placeholder="Buscar por RFC o razón social..." oninput="filterEmpresasList(this.value)">
+                            <div id="empresasDropdownList">
+                                <!-- Item 1 -->
+                                <button type="button" class="empresa-option active" data-rfc="CNE200915AB4" onclick="selectEmpresa('Consorcio JFast S.A.', 'Matriz CDMX', 'CNE200915AB4')">
+                                    <div>
+                                        <div class="empresa-option-name">Consorcio JFast S.A. de C.V.</div>
+                                        <div class="empresa-option-meta">RFC CNE200915AB4 · Matriz CDMX</div>
+                                    </div>
+                                    <svg class="empresa-option-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.5;"><path d="M20 6 9 17l-5-5"/></svg>
+                                </button>
+                                <!-- Item 2 -->
+                                <button type="button" class="empresa-option" data-rfc="NLN220412882" onclick="selectEmpresa('JFast Logística Norte', 'Sucursal MTY', 'NLN220412882')">
+                                    <div>
+                                        <div class="empresa-option-name">JFast Logística Norte S.A.P.I.</div>
+                                        <div class="empresa-option-meta">RFC NLN220412882 · Sucursal Monterrey</div>
+                                    </div>
+                                    <svg class="empresa-option-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.5;"><path d="M20 6 9 17l-5-5"/></svg>
+                                </button>
+                                <!-- Item 3 -->
+                                <button type="button" class="empresa-option" data-rfc="DAB210809CC1" onclick="selectEmpresa('Distribución Austral Bajío', 'Sucursal GDL', 'DAB210809CC1')">
+                                    <div>
+                                        <div class="empresa-option-name">Distribución Austral Bajío S.A.</div>
+                                        <div class="empresa-option-meta">RFC DAB210809CC1 · Sucursal Guadalajara</div>
+                                    </div>
+                                    <svg class="empresa-option-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="stroke-width:2.5;"><path d="M20 6 9 17l-5-5"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="crm-header-right">
+                    <!-- Alertas Bell Drawer Trigger (E-Cont Inspired) -->
+                    <button type="button" class="nx-round-btn" onclick="toggleAlertasDrawer()" title="Centro de alertas corporativas" aria-label="Centro de alertas" style="position: relative;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                        <span id="headerAlertsBadge" class="header-alert-badge">3</span>
+                    </button>
+
+                    <button type="button" class="nx-round-btn crm-hide-sm" data-open-palette aria-label="Personalizar paleta" title="Personalizar paleta">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;color:rgb(var(--c-accent));"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 11.994 2z"/></svg>
+                    </button>
+
+                    <button type="button" class="nx-round-btn theme-toggle-btn" onclick="toggleTheme()" aria-label="Tema">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="icon-sm" style="stroke-width:2;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                    </button>
+                    <button type="button" class="btn-modern btn-primary crm-header-btn-new" onclick="openModal('modalNewClient')" aria-label="Nuevo cliente">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.5;"><path d="M12 5v14M5 12h14"/></svg>
+                        <span>Nuevo cliente</span>
+                    </button>
+                </div>
+            </header>
+
+            <div class="crm-content-area">
+
+                <!-- 1. VISTA DASHBOARD CENTRAL -->
+                <section id="crm-view-dashboard" class="crm-view-section active">
+                    <div class="page-header-row">
+                        <div class="page-title">
+                            <span class="nx-eyebrow"><span class="nx-live-dot"></span>Consola · En vivo</span>
+                            <h1>Consola central ERP &amp; CRM</h1>
+                            <p>Monitoreo ejecutivo de ventas, clientes corporativos y actividad del equipo</p>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn-modern btn-outline" onclick="showToast('Sincronización', 'Conexión con ERP completada.', 'success')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px;stroke-width:2;"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                                Sincronizar ERP
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- KPIs -->
+                    <div class="kpi-grid-crm">
+                        <div class="kpi-card-crm">
+                            <div class="kpi-head">
+                                <span class="kpi-label">Ingresos del mes</span>
+                                <span class="badge-status status-completed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:11px;height:11px;stroke-width:2.5;"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>+14.2%</span>
+                            </div>
+                            <div class="kpi-value">$284,520<small>USD</small></div>
+                            <span class="kpi-foot">Meta mensual alcanzada al 112%</span>
+                        </div>
+
+                        <div class="kpi-card-crm is-link" onclick="switchCrmView('clientes')">
+                            <div class="kpi-head">
+                                <span class="kpi-label">Clientes activos</span>
+                                <span class="badge-status status-processing">148 cuentas</span>
+                            </div>
+                            <div class="kpi-value">12<small>nuevos</small></div>
+                            <span class="kpi-foot">En los últimos 30 días</span>
+                        </div>
+
+                        <div class="kpi-card-crm is-link" onclick="switchCrmView('pipeline')">
+                            <div class="kpi-head">
+                                <span class="kpi-label">Pipeline en negociación</span>
+                                <span class="badge-status status-pending">8 tratos</span>
+                            </div>
+                            <div class="kpi-value">$142,800<small>USD</small></div>
+                            <span class="kpi-foot">Probabilidad de cierre: 74%</span>
+                        </div>
+
+                        <div class="kpi-card-crm is-link" onclick="switchCrmView('mensajeria')">
+                            <div class="kpi-head">
+                                <span class="kpi-label">Chat de equipo</span>
+                                <span class="badge-status status-completed"><span class="status-dot"></span>En vivo</span>
+                            </div>
+                            <div class="kpi-value">3<small>mensajes</small></div>
+                            <span class="kpi-foot">Carlos Mendoza te escribió</span>
+                        </div>
+                    </div>
+
+                    <!-- Facturación del Mes & Vencimientos (Inspirado en Econt-JFast HomeView) -->
+                    <div id="widgetFacturacionMes" class="fact-grid">
+                        <!-- Monto Emitido vs Recibido -->
+                        <div class="card-panel">
+                            <div class="panel-head">
+                                <div>
+                                    <h3 class="panel-title">Facturación del mes</h3>
+                                    <p class="panel-sub">Emitido vs. recibido en el período actual (CFDI 4.0)</p>
+                                </div>
+                                <span class="badge-status status-completed nx-mono" style="font-size: 0.64rem;"><span class="status-dot"></span>Sincronizado SAT</span>
+                            </div>
+
+                            <div class="fact-row">
+                                <span>Emitido <span class="nx-dim" style="font-weight: 500;">· ventas a clientes</span></span>
+                                <span class="mono-amount" style="color: rgb(var(--c-accent));">$284,520 USD</span>
+                            </div>
+                            <div class="fact-bar"><div class="fill-accent" style="width: 78%;"></div></div>
+
+                            <div class="fact-row">
+                                <span>Recibido <span class="nx-dim" style="font-weight: 500;">· compras y gastos</span></span>
+                                <span class="mono-amount" style="color: var(--success);">$142,800 USD</span>
+                            </div>
+                            <div class="fact-bar"><div class="fill-success" style="width: 45%;"></div></div>
+
+                            <div class="fact-foot">
+                                <span>Margen operativo bruto <strong style="color: var(--text-main);">+49.8%</strong></span>
+                                <span>Saldo neto a favor <strong style="color: var(--success);">+$141,720 USD</strong></span>
+                            </div>
+                        </div>
+
+                        <!-- Próximos Vencimientos (E-Cont) -->
+                        <div class="card-panel">
+                            <div class="panel-head" style="align-items: center;">
+                                <h3 class="panel-title">Próximos vencimientos</h3>
+                                <button class="btn-modern btn-ghost" style="padding: 5px 12px; font-size: 0.72rem;" onclick="showToast('Vencimientos', 'Calendario fiscal actualizado.', 'info')">Ver todo</button>
+                            </div>
+                            <div class="venc-list">
+                                <div class="venc-item">
+                                    <div>
+                                        <div class="venc-title">Declaración pago provisional IVA</div>
+                                        <div class="venc-meta">Impuestos federales SAT</div>
+                                    </div>
+                                    <span class="badge-status status-pending">5 días</span>
+                                </div>
+                                <div class="venc-item">
+                                    <div>
+                                        <div class="venc-title">Factura Cisco Systems S.A.</div>
+                                        <div class="venc-meta">$14,200 USD · CXP</div>
+                                    </div>
+                                    <span class="badge-status status-completed">8 días</span>
+                                </div>
+                                <div class="venc-item">
+                                    <div>
+                                        <div class="venc-title">Dispersión quincenal nóminas</div>
+                                        <div class="venc-meta">Banorte SPEI · 64 cuentas</div>
+                                    </div>
+                                    <span class="badge-status status-processing">12 días</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tabla de Clientes Destacados -->
+                    <div class="card-panel">
+                        <div class="panel-head" style="align-items: center;">
+                            <div>
+                                <h3 class="panel-title">Cuentas corporativas clave <span class="nx-mono nx-dim" style="font-size: 0.7rem; font-weight: 600;">TIER 1</span></h3>
+                                <p class="panel-sub">Clientes de mayor valor y recurrencia en 2026</p>
+                            </div>
+                            <button class="btn-modern btn-outline" onclick="switchCrmView('clientes')">
+                                Ver todos <span class="nx-mono" style="opacity: 0.6;">148</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                            </button>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="erp-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 28%;">Cliente / Empresa</th>
+                                        <th style="width: 22%;">Contacto principal</th>
+                                        <th style="width: 16%;">Etapa CRM</th>
+                                        <th style="width: 16%;">Valor (LTV)</th>
+                                        <th style="width: 10%;">Estado</th>
+                                        <th style="width: 8%; text-align: right;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>
+                                            <div class="cell-title">Logística Austral S.A.</div>
+                                            <div class="cell-sub">Transporte & Carga Pesada</div>
+                                        </td>
+                                        <td>
+                                            <span style="font-weight: 600;">Ing. Roberto Soto</span>
+                                            <div class="cell-sub">Director de Operaciones</div>
+                                        </td>
+                                        <td><span class="badge-status status-completed">Cliente Cerrado</span></td>
+                                        <td><span class="cell-amount">$94,500 USD</span></td>
+                                        <td><span class="badge-status status-completed"><span class="status-dot"></span>Activo</span></td>
+                                        <td style="text-align: right;">
+                                            <button class="btn-table-ficha" onclick="viewClientDetail('Logística Austral S.A.', 'roberto@logisticaustral.com', '$94,500 USD', 'Cliente Cerrado')">Ficha</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            <div class="cell-title">TechGlobal Soluciones Corp</div>
+                                            <div class="cell-sub">Desarrollo Cloud & SaaS</div>
+                                        </td>
+                                        <td>
+                                            <span style="font-weight: 600;">Dra. Maricarmen Ruiz</span>
+                                            <div class="cell-sub">VP de Infraestructura</div>
+                                        </td>
+                                        <td><span class="badge-status status-pending">Propuesta Enviada</span></td>
+                                        <td><span class="cell-amount">$48,200 USD</span></td>
+                                        <td><span class="badge-status status-pending"><span class="status-dot"></span>Negociación</span></td>
+                                        <td style="text-align: right;">
+                                            <button class="btn-table-ficha" onclick="viewClientDetail('TechGlobal Soluciones Corp', 'mruiz@techglobal.com', '$48,200 USD', 'Propuesta Enviada')">Ficha</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            <div class="cell-title">Industrias Mineras del Norte</div>
+                                            <div class="cell-sub">Extracción & Logística Minera</div>
+                                        </td>
+                                        <td>
+                                            <span style="font-weight: 600;">Lic. Fernando Garza</span>
+                                            <div class="cell-sub">Contraloría General</div>
+                                        </td>
+                                        <td><span class="badge-status status-completed">Auditoría Técnica</span></td>
+                                        <td><span class="cell-amount">$128,000 USD</span></td>
+                                        <td><span class="badge-status status-completed"><span class="status-dot"></span>Contrato Marco</span></td>
+                                        <td style="text-align: right;">
+                                            <button class="btn-table-ficha" onclick="viewClientDetail('Industrias Mineras del Norte', 'fgarza@minerasnorte.com', '$128,000 USD', 'Auditoría Técnica')">Ficha</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 2. VISTA CARTERA DE CLIENTES CRM -->
+                <section id="crm-view-clientes" class="crm-view-section">
+                    <div class="page-header-row">
+                        <div class="page-title">
+                            <span class="nx-eyebrow">Cartera · 148 cuentas</span>
+                            <h1>Directorio de clientes</h1>
+                            <p>Gestión integral de contactos corporativos, scoring de leads y oportunidades</p>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn-modern btn-primary" onclick="openModal('modalNewClient')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.5;"><path d="M12 5v14M5 12h14"/></svg>
+                                Registrar cliente
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="card-panel">
+                        <div class="panel-head" style="align-items: center;">
+                            <div class="search-pill">
+                                <input type="text" id="crmClientSearch" class="form-input" placeholder="Filtrar por nombre, RFC o correo corporativo..." oninput="filterCrmClients(this.value)">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                            </div>
+                            <button class="btn-modern btn-outline" onclick="showToast('Exportación', 'Exportando lista de contactos a CSV...', 'info')">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                Exportar directorio
+                            </button>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="erp-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 25%;">Empresa / Cliente</th>
+                                        <th style="width: 20%;">Contacto principal</th>
+                                        <th style="width: 22%;">Correo corporativo</th>
+                                        <th style="width: 15%;">Teléfono</th>
+                                        <th style="width: 10%;">Etapa</th>
+                                        <th style="width: 8%; text-align: right;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="crmClientsTableBody">
+                                    <!-- Rendered dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 3. VISTA PIPELINE DE VENTAS (KANBAN) -->
+                <section id="crm-view-pipeline" class="crm-view-section">
+                    <div class="page-header-row">
+                        <div class="page-title">
+                            <span class="nx-eyebrow">Embudo B2B · $142k en juego</span>
+                            <h1>Pipeline de ventas</h1>
+                            <p>Arrastra o gestiona oportunidades comerciales por etapa de maduración</p>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn-modern btn-primary" onclick="showToast('Nuevo Trato', 'Formulario de nueva oportunidad comercial abierto.', 'info')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.5;"><path d="M12 5v14M5 12h14"/></svg>
+                                Nueva oportunidad
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="pipeline-board">
+                        <div class="pipeline-col stage-1">
+                            <div class="pipeline-header">
+                                <span class="pipeline-stage">Prospectos <span class="pipeline-count">3</span></span>
+                                <span class="pipeline-total">$38,000</span>
+                            </div>
+                            <div class="deal-card">
+                                <div class="deal-client">Financiera Boreal</div>
+                                <div class="deal-desc">Migración cloud privada</div>
+                                <div class="deal-amount">$18,500 USD</div>
+                            </div>
+                            <div class="deal-card">
+                                <div class="deal-client">Almacenes del Bajío</div>
+                                <div class="deal-desc">Servidores Dell & switches</div>
+                                <div class="deal-amount">$19,500 USD</div>
+                            </div>
+                        </div>
+
+                        <div class="pipeline-col stage-2">
+                            <div class="pipeline-header">
+                                <span class="pipeline-stage">En contacto <span class="pipeline-count">2</span></span>
+                                <span class="pipeline-total">$44,200</span>
+                            </div>
+                            <div class="deal-card">
+                                <div class="deal-client">TechGlobal Corp</div>
+                                <div class="deal-desc">Renovación 50 seats SaaS</div>
+                                <div class="deal-amount">$24,200 USD</div>
+                            </div>
+                            <div class="deal-card">
+                                <div class="deal-client">Grupo Industrial Monterrey</div>
+                                <div class="deal-desc">Firewall & seguridad perimetral</div>
+                                <div class="deal-amount">$20,000 USD</div>
+                            </div>
+                        </div>
+
+                        <div class="pipeline-col stage-3">
+                            <div class="pipeline-header">
+                                <span class="pipeline-stage">Propuesta <span class="pipeline-count">2</span></span>
+                                <span class="pipeline-total">$60,600</span>
+                            </div>
+                            <div class="deal-card">
+                                <div class="deal-client">Banco Panamericano</div>
+                                <div class="deal-desc">Clúster dedicado Kubernetes</div>
+                                <div class="deal-amount">$64,900 USD</div>
+                            </div>
+                        </div>
+
+                        <div class="pipeline-col stage-won">
+                            <div class="pipeline-header">
+                                <span class="pipeline-stage">Ganado <span class="pipeline-count">1</span></span>
+                                <span class="pipeline-total">$94,500</span>
+                            </div>
+                            <div class="deal-card is-won">
+                                <div class="deal-client">Logística Austral S.A.</div>
+                                <div class="deal-desc">3x servidores PowerEdge + SLA</div>
+                                <div class="deal-amount">$94,500 USD</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 4. VISTA MENSAJERÍA & EQUIPO -->
+                <section id="crm-view-mensajeria" class="crm-view-section">
+                    <div class="page-header-row">
+                        <div class="page-title">
+                            <span class="nx-eyebrow"><span class="nx-live-dot"></span>Equipo · 3 sin leer</span>
+                            <h1>Mensajería del equipo</h1>
+                            <p>Canales corporativos y mensajes directos con colaboradores departamentales</p>
+                        </div>
+                    </div>
+
+                    <div class="messaging-layout liquid-panel">
+                        <!-- Sidebar de Canales y Contactos -->
+                        <div class="msg-sidebar">
+                            <div class="msg-sidebar-header">
+                                <input type="text" class="form-input" placeholder="Buscar canal o compañero..." oninput="filterMsgContacts(this.value)">
+                            </div>
+
+                            <div class="msg-section">
+                                <div class="msg-section-label">Canales de empresa</div>
+                                <button class="channel-btn active" onclick="switchPeerChat('Canal #general-empresa', 'Canal corporativo oficial', 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=100&h=100&q=80', this)">
+                                    <span>#</span> general-empresa
+                                </button>
+                                <button class="channel-btn" onclick="switchPeerChat('Canal #ventas-latam', 'Coordinación Comercial y Cierres', 'https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=100&h=100&q=80', this)">
+                                    <span>#</span> ventas-latam
+                                </button>
+                                <button class="channel-btn" onclick="switchPeerChat('Canal #almacen-logistica', 'Despachos y Stock en Tiempo Real', 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=100&h=100&q=80', this)">
+                                    <span>#</span> almacen-logistica
+                                </button>
+                            </div>
+
+                            <div class="msg-section is-scroll">
+                                <div class="msg-section-label">Mensajes directos</div>
+                                <div class="contact-item" onclick="switchPeerChat('Carlos Mendoza', 'Jefe de Almacén & Logística', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80', this)">
+                                    <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80" alt="">
+                                    <div style="flex:1; overflow:hidden;">
+                                        <div class="contact-name">Carlos Mendoza</div>
+                                        <div class="contact-preview">¿Autorizas el despacho para Logística Austral?</div>
+                                    </div>
+                                </div>
+                                <div class="contact-item" onclick="switchPeerChat('Sofía Arismendi', 'Directora Financiera', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=80', this)">
+                                    <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=80" alt="">
+                                    <div style="flex:1; overflow:hidden;">
+                                        <div class="contact-name">Sofía Arismendi</div>
+                                        <div class="contact-preview">El cierre de mes fue enviado al banco.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Chat Central -->
+                        <div class="msg-main-chat">
+                            <div class="msg-chat-head">
+                                <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+                                    <img id="activeChatAvatar" src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=100&h=100&q=80" alt="">
+                                    <div style="min-width: 0;">
+                                        <div id="activeChatName" class="msg-chat-name">Canal #general-empresa</div>
+                                        <div id="activeChatSub" class="msg-chat-sub">Canal corporativo oficial</div>
+                                    </div>
+                                </div>
+                                <span class="badge-status status-completed nx-mono" style="font-size: 0.62rem;"><span class="status-dot"></span>Activo</span>
+                            </div>
+
+                            <div class="msg-conversation-body" id="msgConversationBody">
+                                <div class="peer-bubble incoming">
+                                    ¡Buenos días equipo! Recordatorio: hoy cerramos la facturación fiscal del trimestre. Favor de validar órdenes pendientes en el módulo de Tablas.
+                                </div>
+                                <div class="peer-bubble outgoing">
+                                    Enterada. Los folios de Logística Austral y TechGlobal ya quedaron autorizados en el ERP.
+                                </div>
+                            </div>
+
+                            <form class="msg-input-bar" onsubmit="sendChatMessage(event)">
+                                <input type="text" id="msgInputBox" placeholder="Escribe un mensaje para el equipo..." required>
+                                <button type="submit" class="btn-modern btn-primary" style="padding: 10px 18px;">
+                                    Enviar
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal Detalle Cliente -->
+    <div id="modalClientDetail" class="modal-overlay" style="display: none;">
+        <div class="modal-card" style="max-width: 540px;">
+            <div class="modal-header">
+                <div class="modal-title-row">
+                    <div class="modal-orb liquid-orb-accent">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </div>
+                    <div style="min-width: 0;">
+                        <h3 id="modalClientName">Logística Austral S.A.</h3>
+                        <span class="modal-sub">FICHA CORPORATIVA · TIER 1</span>
+                    </div>
+                </div>
+                <button class="modal-close-btn" onclick="closeModal('modalClientDetail')" aria-label="Cerrar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div class="modal-body">
+                <div class="detail-box">
+                    <div class="detail-row">
+                        <span>Correo corporativo</span>
+                        <strong id="modalClientEmail" class="detail-email">roberto@logisticaustral.com</strong>
+                    </div>
+                    <div class="detail-row">
+                        <span>Facturación total LTV</span>
+                        <span class="detail-ltv" id="modalClientLtv">$94,500 USD</span>
+                    </div>
+                    <div class="detail-row">
+                        <span>Etapa comercial</span>
+                        <span class="stage-pill status-completed" id="modalClientStage">Cliente Cerrado</span>
+                    </div>
+                </div>
+                <div class="info-note">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                    <p>Cuenta prioritaria con garantía de SLA 99.99%. Próxima conciliación fiscal automatizada programada para el próximo corte mensual.</p>
+                </div>
+            </div>
+            <div class="modal-footer" style="gap: 12px;">
+                <button class="btn-modern btn-outline" style="flex: 1;" onclick="closeModal('modalClientDetail')">Cerrar</button>
+                <a href="tablas.html" class="btn-live-demo" style="flex: 1.4;">
+                    <span>Ver facturas en Tablas</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Nuevo Cliente -->
+    <div id="modalNewClient" class="modal-overlay" style="display: none;">
+        <div class="modal-card" style="max-width: 580px;">
+            <div class="modal-header">
+                <div style="min-width: 0;">
+                    <h3>Registrar nuevo cliente</h3>
+                    <span class="modal-sub">ALTA RÁPIDA · VALIDACIÓN FISCAL DE RFC</span>
+                </div>
+                <button class="modal-close-btn" onclick="closeModal('modalNewClient')" aria-label="Cerrar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <form onsubmit="handleCreateClient(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label class="form-label">Razón social / Empresa</label>
+                        <input type="text" id="newClientNameInput" class="form-input" placeholder="Ej: Aceros Panamericanos S.A." required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Contacto principal</label>
+                        <input type="text" id="newClientContactInput" class="form-input" placeholder="Ing. Alejandro Morales" required>
+                    </div>
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label class="form-label">Correo electrónico</label>
+                            <input type="email" id="newClientEmailInput" class="form-input" placeholder="contacto@empresa.com" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Teléfono</label>
+                            <input type="tel" id="newClientPhoneInput" class="form-input nx-mono" placeholder="+52 55 1234 5678" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Etapa de la oportunidad</label>
+                        <select id="newClientStageSelect" class="form-select">
+                            <option value="Prospecto">Prospecto / Lead</option>
+                            <option value="En Contacto">En Contacto Inicial</option>
+                            <option value="Propuesta Enviada">Propuesta Enviada</option>
+                            <option value="Cliente Cerrado">Cliente Cerrado / Ganado</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-modern btn-outline" onclick="closeModal('modalNewClient')">Cancelar</button>
+                    <button type="submit" class="btn-live-demo">Guardar en CRM</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Control de Compras (Inspirado en Econt-JFast ModuloControlCompras) -->
+    <div id="modalControlCompras" class="modal-overlay" style="display: none;">
+        <div class="modal-card" style="max-width: 680px;">
+            <div class="modal-header">
+                <div class="modal-title-row">
+                    <div class="modal-orb liquid-orb-accent" style="width: 34px; height: 34px;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;stroke-width:2.4;"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
+                    </div>
+                    <div style="min-width: 0;">
+                        <h3>Control de compras</h3>
+                        <span class="modal-sub">ÓRDENES DE COMPRA · VINCULACIÓN CFDI</span>
+                    </div>
+                </div>
+                <button class="modal-close-btn" onclick="closeModal('modalControlCompras')" aria-label="Cerrar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <form onsubmit="handleRegistrarCompra(event)">
+                <div class="modal-body">
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label class="form-label">Proveedor / Razón social</label>
+                            <select id="compraProveedorSelect" class="form-select" required>
+                                <option value="Aceros de México S.A. de C.V. (AME980211KZ9)">Aceros de México S.A. (AME980211KZ9)</option>
+                                <option value="Servicios Cloud Latam S. de R.L. (SCL190304PX1)">Servicios Cloud Latam (SCL190304PX1)</option>
+                                <option value="Papelería y Suministros Alfa (PSA150820T33)">Papelería Alfa (PSA150820T33)</option>
+                                <option value="Transportes Rápidos del Bajío (TRB170110H22)">Transportes Rápidos Bajío (TRB170110H22)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Folio / Referencia factura</label>
+                            <input type="text" id="compraFolioInput" class="form-input nx-mono" placeholder="Ej: FAC-2026-9812" required>
+                        </div>
+                    </div>
+
+                    <div class="form-grid-3">
+                        <div class="form-group">
+                            <label class="form-label">Monto bruto ($)</label>
+                            <input type="number" id="compraMontoInput" class="form-input nx-mono" placeholder="0.00" step="0.01" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Moneda</label>
+                            <select id="compraMonedaSelect" class="form-select">
+                                <option value="USD">USD (Dólares)</option>
+                                <option value="MXN">MXN (Pesos)</option>
+                                <option value="EUR">EUR (Euros)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Centro de costo</label>
+                            <select id="compraCentroSelect" class="form-select">
+                                <option value="Operaciones">Operaciones</option>
+                                <option value="Tecnología">Tecnología / IT</option>
+                                <option value="Logística">Logística & Almacén</option>
+                                <option value="Administración">Administración</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Concepto o descripción del gasto</label>
+                        <textarea id="compraConceptoInput" class="form-textarea" rows="2" placeholder="Detalle de la adquisición o servicio adquirido..." required></textarea>
+                    </div>
+
+                    <div>
+                        <div class="section-label">Últimas compras auditadas en este ejercicio</div>
+                        <div class="compras-table">
+                            <div class="compra-row is-head">
+                                <span>Proveedor</span>
+                                <span>Folio</span>
+                                <span>Total</span>
+                                <span>Estatus</span>
+                            </div>
+                            <div id="comprasRecentList">
+                                <div class="compra-row">
+                                    <span style="font-weight: 600;">Aceros de México S.A.</span>
+                                    <code>FAC-8819</code>
+                                    <span class="mono-amount">$14,250 USD</span>
+                                    <span><span class="badge-status status-completed">Validado SAT</span></span>
+                                </div>
+                                <div class="compra-row">
+                                    <span style="font-weight: 600;">Servicios Cloud Latam</span>
+                                    <code>FAC-4410</code>
+                                    <span class="mono-amount">$3,400 USD</span>
+                                    <span><span class="badge-status status-pending">Por pagar</span></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-modern btn-outline" onclick="closeModal('modalControlCompras')">Cancelar</button>
+                    <button type="submit" class="btn-modern btn-primary">Registrar compra</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Alertas Drawer (Slide-Over Inspirado en Econt-JFast AlertasDrawer) -->
+    <div class="alertas-drawer-overlay" id="crmAlertasOverlay" onclick="toggleAlertasDrawer()"></div>
+    <aside class="alertas-drawer" id="crmAlertasDrawer" aria-label="Centro de Alertas">
+        <div class="alertas-head">
+            <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+                <div class="alertas-head-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;stroke-width:2.2;"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                </div>
+                <div style="min-width: 0;">
+                    <h3 style="font-size: 1.05rem; font-weight: 800; letter-spacing: -0.03em;">Centro de alertas</h3>
+                    <p class="modal-sub">FISCALES Y OPERATIVAS · TIEMPO REAL</p>
+                </div>
+            </div>
+            <button class="modal-close-btn" onclick="toggleAlertasDrawer()" aria-label="Cerrar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;stroke-width:2.2;"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+
+        <!-- Filter tabs & Mark All Read -->
+        <div class="alertas-toolbar">
+            <div class="alertas-chips">
+                <button type="button" class="alert-chip alert-filter-btn active" onclick="filterAlerts('todas', this)">Todas (<span id="alertCountAll">3</span>)</button>
+                <button type="button" class="alert-chip alert-filter-btn" onclick="filterAlerts('sat', this)">SAT (2)</button>
+                <button type="button" class="alert-chip alert-filter-btn" onclick="filterAlerts('operaciones', this)">Operaciones (1)</button>
+            </div>
+            <button type="button" class="alert-mark-read" onclick="markAllAlertsRead()" title="Marcar todas como leídas">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;stroke-width:2.4;"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>
+                Leídas
+            </button>
+        </div>
+
+        <!-- Alert Items Container -->
+        <div id="alertasListContainer">
+            <div class="alert-item-card is-danger" data-category="sat">
+                <div class="alert-top">
+                    <span class="badge-status status-cancelled">SAT · Urgente</span>
+                    <span class="alert-time">Hace 15 min</span>
+                </div>
+                <div class="alert-title">Solicitud de cancelación CFDI folio A-8492</div>
+                <div class="alert-text">El cliente Transportes Potosinos solicitó la cancelación del comprobante por <span class="nx-mono">$24,800 MXN</span>. Requiere respuesta antes de 72 h para evitar aceptación ficta.</div>
+                <div class="alert-actions">
+                    <button class="btn-modern btn-primary" onclick="showToast('CFDI SAT', 'Abriendo validación fiscal en SAT...', 'info')">Revisar CFDI</button>
+                    <button class="btn-modern btn-outline" onclick="this.closest('.alert-item-card').remove(); updateAlertsBadge();">Descartar</button>
+                </div>
+            </div>
+
+            <div class="alert-item-card is-warning" data-category="operaciones">
+                <div class="alert-top">
+                    <span class="badge-status status-pending">CXP · Vencimiento</span>
+                    <span class="alert-time">Hace 2 h</span>
+                </div>
+                <div class="alert-title">Factura por vencer en 3 días</div>
+                <div class="alert-text">Proveedor Aceros de México S.A. — monto <span class="nx-mono">$14,250 USD</span> pendiente para programar dispersión por SPEI.</div>
+                <div class="alert-actions">
+                    <button class="btn-modern btn-outline" onclick="showToast('SPEI', 'Orden enviada a programación de tesorería', 'success')">Programar pago</button>
+                </div>
+            </div>
+
+            <div class="alert-item-card" data-category="sat">
+                <div class="alert-top">
+                    <span class="badge-status status-completed">Auditoría SAT 69-B</span>
+                    <span class="alert-time">Ayer</span>
+                </div>
+                <div class="alert-title">Validación de lista negra SAT al 100% limpia</div>
+                <div class="alert-text">Se cotejaron 342 RFC de proveedores activos contra la última publicación del DOF de EFOS y EDOS; ninguna coincidencia detectada.</div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="assets/js/nexora-common.js"></script>
+    <script>
+        // Clients DB
+        let crmClients = [
+            { id: 1, name: 'Logística Austral S.A.', contact: 'Ing. Roberto Soto', email: 'roberto@logisticaustral.com', phone: '+52 55 4918 2039', stage: 'Cliente Cerrado', ltv: '$94,500 USD' },
+            { id: 2, name: 'TechGlobal Soluciones Corp', contact: 'Dra. Maricarmen Ruiz', email: 'mruiz@techglobal.com', phone: '+52 81 8320 9182', stage: 'Propuesta Enviada', ltv: '$48,200 USD' },
+            { id: 3, name: 'Industrias Mineras del Norte', contact: 'Lic. Fernando Garza', email: 'fgarza@minerasnorte.com', phone: '+52 87 1829 4710', stage: 'Cliente Cerrado', ltv: '$128,000 USD' },
+            { id: 4, name: 'Banco Panamericano SA', contact: 'Mtro. Héctor Valdés', email: 'hvaldes@bancopan.com', phone: '+52 55 5283 0001', stage: 'Propuesta Enviada', ltv: '$64,900 USD' },
+            { id: 5, name: 'Distribuidora Farma Express', contact: 'Q.F.B. Lucía Méndez', email: 'lmendez@farmaexpress.mx', phone: '+52 33 3920 1823', stage: 'Cliente Cerrado', ltv: '$32,400 USD' },
+            { id: 6, name: 'Grupo Constructor Altiplano', contact: 'Arq. Javier Domínguez', email: 'jdominguez@altiplano.mx', phone: '+52 44 2819 0392', stage: 'En Contacto', ltv: '$15,000 USD' }
+        ];
+
+        function switchCrmView(viewName, btn) {
+            document.querySelectorAll('.crm-view-section').forEach(v => v.classList.remove('active'));
+            const target = document.getElementById('crm-view-' + viewName);
+            if (target) target.classList.add('active');
+
+            // Sincroniza el item activo de la barra aunque la vista se abra desde un KPI
+            const link = btn || document.querySelector(`.crm-sidebar .nav-sublink[onclick*="switchCrmView('${viewName}'"]`);
+            if (link) {
+                document.querySelectorAll('.crm-sidebar .nav-sublink').forEach(b => b.classList.remove('active'));
+                link.classList.add('active');
+            }
+
+            if (window.innerWidth <= 950) closeMobileSidebar();
+        }
+
+        function renderCrmClients(filter = '') {
+            const tbody = document.getElementById('crmClientsTableBody');
+            const filtered = crmClients.filter(c => 
+                c.name.toLowerCase().includes(filter.toLowerCase()) || 
+                c.contact.toLowerCase().includes(filter.toLowerCase()) ||
+                c.email.toLowerCase().includes(filter.toLowerCase())
+            );
+
+            // Esferas de vidrio en tonos de la paleta activa
+            const gradients = [
+                'radial-gradient(circle at 30% 25%, rgb(var(--c-glow)), rgb(var(--c-accent)) 50%, rgb(var(--c-accent-deep)))',
+                'radial-gradient(circle at 30% 25%, rgb(var(--c-accent)), rgb(var(--c-body)) 55%, rgb(var(--c-accent-deep)))',
+                'radial-gradient(circle at 30% 25%, #5b5f6e, #23252e 55%, #0b0c10)'
+            ];
+
+            tbody.innerHTML = filtered.map((c, i) => {
+                const initials = c.name.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+                const grad = gradients[i % gradients.length];
+                const stageClass = c.stage.includes('Cerrado') ? 'status-completed' : (c.stage.includes('Propuesta') ? 'status-pending' : 'status-review');
+                const rfc = `RFC: ${c.name.replace(/[^A-Z]/g, '').slice(0, 4)}26092${i}K${i}`;
+
+                return `
+                <tr>
+                    <td>
+                        <div class="company-cell">
+                            <div class="company-avatar-badge" style="background: ${grad};">${initials}</div>
+                            <div>
+                                <div class="company-name">${c.name}</div>
+                                <div class="company-rfc">${rfc} • LTV: <span style="color: rgb(var(--c-glow)); font-weight:700;">${c.ltv}</span></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="contact-pill">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.6;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                            <span>${c.contact}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <a href="mailto:${c.email}" class="email-cell">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                            <span>${c.email}</span>
+                        </a>
+                    </td>
+                    <td>
+                        <div class="phone-cell">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                            <span>${c.phone}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="stage-pill ${stageClass}">${c.stage}</span>
+                    </td>
+                    <td style="text-align: right;">
+                        <button class="btn-table-ficha" onclick="viewClientDetail('${c.name}', '${c.email}', '${c.ltv}', '${c.stage}')">
+                            <span>Ver Ficha</span>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                        </button>
+                    </td>
+                </tr>
+            `;
+            }).join('');
+        }
+
+        function filterCrmClients(val) {
+            renderCrmClients(val);
+        }
+
+        function viewClientDetail(name, email, ltv, stage) {
+            document.getElementById('modalClientName').textContent = name;
+            document.getElementById('modalClientEmail').textContent = email;
+            document.getElementById('modalClientLtv').textContent = ltv;
+            const stageEl = document.getElementById('modalClientStage');
+            stageEl.textContent = stage;
+            stageEl.className = 'stage-pill ' + (stage.includes('Cerrado') || stage.includes('Auditoría') ? 'status-completed' : (stage.includes('Propuesta') ? 'status-pending' : 'status-review'));
+            openModal('modalClientDetail');
+        }
+
+        function handleCreateClient(e) {
+            e.preventDefault();
+            const name = document.getElementById('newClientNameInput').value.trim();
+            const contact = document.getElementById('newClientContactInput').value.trim();
+            const email = document.getElementById('newClientEmailInput').value.trim();
+            const phone = document.getElementById('newClientPhoneInput').value.trim();
+            const stage = document.getElementById('newClientStageSelect').value;
+
+            crmClients.unshift({
+                id: Date.now(),
+                name: name,
+                contact: contact,
+                email: email,
+                phone: phone,
+                stage: stage,
+                ltv: '$0.00 USD'
+            });
+
+            closeModal('modalNewClient');
+            e.target.reset();
+            renderCrmClients();
+            showToast('Cliente Registrado', `${name} guardado en el CRM.`, 'success');
+        }
+
+        // Chat
+        function switchPeerChat(name, sub, avatarUrl, el) {
+            document.querySelectorAll('.channel-btn, .contact-item').forEach(i => i.classList.remove('active'));
+            if (el) el.classList.add('active');
+
+            document.getElementById('activeChatName').textContent = name;
+            document.getElementById('activeChatSub').textContent = sub;
+            document.getElementById('activeChatAvatar').src = avatarUrl;
+
+            const chatBody = document.getElementById('msgConversationBody');
+            chatBody.innerHTML = `
+                <div class="peer-bubble incoming">
+                    Has entrado a la conversación: <strong>${name}</strong> (${sub}).
+                </div>
+            `;
+        }
+
+        function sendChatMessage(e) {
+            e.preventDefault();
+            const box = document.getElementById('msgInputBox');
+            const text = box.value.trim();
+            if (!text) return;
+
+            const chatBody = document.getElementById('msgConversationBody');
+            chatBody.innerHTML += `<div class="peer-bubble outgoing">${text}</div>`;
+            box.value = '';
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            setTimeout(() => {
+                chatBody.innerHTML += `<div class="peer-bubble incoming">Enterado. Me encargo de actualizar la gestión en el CRM.</div>`;
+                chatBody.scrollTop = chatBody.scrollHeight;
+            }, 800);
+        }
+
+        function filterMsgContacts(val) {
+            // simple filter for contacts
+        }
+
+        // Tema: el cajón propio se retiró; todo pasa por el panel global de
+        // nexora-common.js. Se conservan los nombres por si algo más los llama.
+        function openThemeDrawer() { openCustomizationDrawer(); }
+        function closeThemeDrawer() { closeCustomizationDrawer(); }
+        function setThemeMode(isDark) { setThemeModeDirect(isDark); }
+        function setAccentColor(hex) { NexoraTheme.setColors({ accent: hex }); }
+
+        function openProfileModal() {
+            showToast('Perfil', 'Elena Valenzuela | Administradora General (ID #ADM-902)', 'info');
+        }
+
+        // ==========================================
+        // COLLAPSIBLE SIDEBAR & ACCORDION SYSTEM
+        // (Inspirado en Econt-JFast LayoutAuthenticated & menuAside)
+        // ==========================================
+
+        function closeMobileSidebar() {
+            const sidebar = document.getElementById('crmSidebar');
+            if (sidebar) sidebar.classList.remove('mobile-open');
+        }
+
+        function toggleSidebarCollapse() {
+            const sidebar = document.getElementById('crmSidebar');
+            if (!sidebar) return;
+
+            // En móvil la barra vive fuera de pantalla: el botón la abre completa
+            if (window.innerWidth <= 950) {
+                sidebar.classList.remove('collapsed');
+                document.body.classList.remove('sidebar-collapsed');
+                sidebar.classList.toggle('mobile-open');
+                return;
+            }
+
+            const isCollapsed = sidebar.classList.toggle('collapsed');
+            document.body.classList.toggle('sidebar-collapsed', isCollapsed);
+
+            const iconSvg = document.getElementById('collapseIconSvg');
+            if (iconSvg) {
+                iconSvg.innerHTML = isCollapsed
+                    ? '<path d="m9 18 6-6-6-6"/>'
+                    : '<path d="m15 18-6-6 6-6"/>';
+            }
+
+            const collapseBtn = document.getElementById('sidebarCollapseBtn');
+            if (collapseBtn) {
+                collapseBtn.setAttribute('title', isCollapsed ? 'Expandir menú lateral' : 'Colapsar menú lateral');
+                collapseBtn.setAttribute('aria-label', collapseBtn.getAttribute('title'));
+            }
+
+            showToast(
+                'Menú Lateral',
+                isCollapsed ? 'Modo compacto (iconos) activado' : 'Modo expandido completo activado',
+                'info'
+            );
+        }
+
+        function toggleNavGroup(btn) {
+            const group = btn.closest('.nav-group-accordion');
+            if (!group) return;
+            const items = group.querySelector('.nav-group-items');
+            const isOpen = group.classList.toggle('open');
+            btn.classList.toggle('open', isOpen);
+            if (items) {
+                items.classList.toggle('open', isOpen);
+            }
+        }
+
+        function filterSidebarModules(query) {
+            const term = (query || '').toLowerCase().trim();
+            const groups = document.querySelectorAll('.nav-group-accordion');
+            
+            groups.forEach(group => {
+                const links = group.querySelectorAll('.nav-sublink');
+                let groupHasMatch = false;
+
+                links.forEach(link => {
+                    const text = link.textContent.toLowerCase();
+                    if (!term || text.includes(term)) {
+                        link.style.display = 'flex';
+                        groupHasMatch = true;
+                    } else {
+                        link.style.display = 'none';
+                    }
+                });
+
+                const header = group.querySelector('.nav-group-header');
+                const items = group.querySelector('.nav-group-items');
+
+                if (term) {
+                    if (groupHasMatch) {
+                        group.style.display = 'block';
+                        group.classList.add('open');
+                        if (header) header.classList.add('open');
+                        if (items) items.classList.add('open');
+                    } else {
+                        group.style.display = 'none';
+                    }
+                } else {
+                    group.style.display = 'block';
+                }
+            });
+        }
+
+        // ==========================================
+        // EMPRESA SELECTOR CONTEXT SWITCHER (E-Cont)
+        // ==========================================
+
+        function toggleEmpresaDropdown() {
+            const dropdown = document.getElementById('crmEmpresaDropdown');
+            if (dropdown) {
+                dropdown.classList.toggle('open');
+            }
+        }
+
+        function selectEmpresa(name, branch, rfc) {
+            const label = document.getElementById('activeEmpresaLabel');
+            const badge = document.getElementById('activeSucursalBadge');
+            if (label) label.textContent = name;
+            if (badge) badge.textContent = branch;
+            document.querySelectorAll('#empresasDropdownList .empresa-option').forEach(b => {
+                b.classList.toggle('active', b.dataset.rfc === rfc);
+            });
+
+            const dropdown = document.getElementById('crmEmpresaDropdown');
+            if (dropdown) dropdown.classList.remove('open');
+
+            showToast('Contexto de Empresa', `Cambiado a: ${name} (${rfc})`, 'success');
+        }
+
+        function filterEmpresasList(query) {
+            const term = (query || '').toLowerCase().trim();
+            const list = document.getElementById('empresasDropdownList');
+            if (!list) return;
+            const buttons = list.querySelectorAll('button');
+            buttons.forEach(btn => {
+                const text = btn.textContent.toLowerCase();
+                btn.style.display = (!term || text.includes(term)) ? 'flex' : 'none';
+            });
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            const wrap = document.getElementById('crmEmpresaSelectorWrap');
+            const dropdown = document.getElementById('crmEmpresaDropdown');
+            if (wrap && dropdown && !wrap.contains(e.target)) {
+                dropdown.classList.remove('open');
+            }
+        });
+
+        // ==========================================
+        // ALERTAS DRAWER (E-Cont AlertasDrawer)
+        // ==========================================
+
+        function toggleAlertasDrawer() {
+            const drawer = document.getElementById('crmAlertasDrawer');
+            const overlay = document.getElementById('crmAlertasOverlay');
+            if (drawer && overlay) {
+                drawer.classList.toggle('open');
+                overlay.classList.toggle('open');
+            }
+        }
+
+        function filterAlerts(category, btn) {
+            const container = document.getElementById('alertasListContainer');
+            if (!container) return;
+
+            document.querySelectorAll('.alert-filter-btn').forEach(b => b.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+
+            const cards = container.querySelectorAll('.alert-item-card');
+            cards.forEach(card => {
+                const cardCat = card.getAttribute('data-category');
+                if (category === 'todas' || cardCat === category) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+
+        function markAllAlertsRead() {
+            const container = document.getElementById('alertasListContainer');
+            if (!container) return;
+            const cards = container.querySelectorAll('.alert-item-card');
+            cards.forEach(card => card.classList.remove('is-danger', 'is-warning'));
+            const badge = document.getElementById('headerAlertsBadge');
+            if (badge) badge.style.display = 'none';
+            const countAll = document.getElementById('alertCountAll');
+            if (countAll) countAll.textContent = '0';
+            showToast('Alertas', 'Todas las alertas han sido marcadas como leídas', 'success');
+        }
+
+        function updateAlertsBadge() {
+            const container = document.getElementById('alertasListContainer');
+            if (!container) return;
+            const remaining = container.querySelectorAll('.alert-item-card').length;
+            const badge = document.getElementById('headerAlertsBadge');
+            const countAll = document.getElementById('alertCountAll');
+            if (countAll) countAll.textContent = remaining;
+            if (badge) {
+                if (remaining > 0) {
+                    badge.style.display = 'flex';
+                    badge.textContent = remaining;
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+
+        // ==========================================
+        // CONTROL DE COMPRAS & ERP ACTIONS
+        // ==========================================
+
+        function openModalControlCompras() {
+            openModal('modalControlCompras');
+        }
+
+        function handleRegistrarCompra(e) {
+            e.preventDefault();
+            const prov = document.getElementById('compraProveedorSelect').value;
+            const folio = document.getElementById('compraFolioInput').value.trim();
+            const monto = parseFloat(document.getElementById('compraMontoInput').value) || 0;
+            const moneda = document.getElementById('compraMonedaSelect').value;
+            const concepto = document.getElementById('compraConceptoInput').value.trim();
+
+            const recentList = document.getElementById('comprasRecentList');
+            if (recentList) {
+                const provShort = prov.split('(')[0].trim();
+                const newRow = document.createElement('div');
+                newRow.className = 'compra-row is-new';
+                newRow.innerHTML = `
+                    <span style="font-weight: 600;">${provShort}</span>
+                    <code>${folio}</code>
+                    <span class="mono-amount">$${monto.toLocaleString()} ${moneda}</span>
+                    <span><span class="badge-status status-completed">Registrada</span></span>
+                `;
+                recentList.prepend(newRow);
+            }
+
+            closeModal('modalControlCompras');
+            e.target.reset();
+            showToast('Compra Registrada', `Orden ${folio} vinculada a contabilidad electrónica.`, 'success');
+        }
+
+        function scrollAndHighlightWidget(widgetId) {
+            switchCrmView('dashboard');
+            setTimeout(() => {
+                const el = document.getElementById(widgetId);
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    el.style.transition = 'box-shadow 0.3s ease, border-color 0.3s ease';
+                    el.style.boxShadow = '0 0 0 2px rgb(var(--c-accent) / 0.7), 0 0 40px -6px rgb(var(--c-accent) / 0.55)';
+                    setTimeout(() => {
+                        el.style.boxShadow = '';
+                    }, 1800);
+                }
+            }, 100);
+        }
+
+        // Init
+        renderCrmClients();
+    </script>
+</body>
+</html>

@@ -1,0 +1,95 @@
+---
+name: nexora-reference
+description: A working copy of JFast Suite (nexora-suite), the static pages the
+  Nexora look was drawn from -- dashboard, CRM, payments, social feed, tables,
+  widgets -- to look at before building a screen, and the steps for bringing
+  one of its patterns into {{ service_title }}.
+when_to_use: Building a screen the project does not have yet (a table, a
+  pipeline, a checkout, a feed, a settings drawer), or when the user points at
+  something "like the suite" or "like Nexora".
+when_not_to_use: Changing the look to something that is not Nexora -- see the
+  design-system skill -- or backend work.
+---
+
+## What is here
+
+`.jfast/skills/nexora-reference/suite/` is a copy of JFast Suite: plain HTML,
+CSS and JavaScript, no build. Every page is a finished screen in the Nexora look, and together they are the
+catalogue of patterns the design supports.
+
+| Page | Shows |
+| --- | --- |
+| `.jfast/skills/nexora-reference/suite/index.html` | The landing: hero, feature grid, the liquid ribbon, reveal cards, pricing |
+| `.jfast/skills/nexora-reference/suite/crm.html` | An ERP/CRM console: KPI cards, client directory, sales pipeline, team chat |
+| `.jfast/skills/nexora-reference/suite/pagos.html` | A payment gateway: card form, payment methods, invoicing |
+| `.jfast/skills/nexora-reference/suite/social.html` | A company social feed: posts, composer, profile cards |
+| `.jfast/skills/nexora-reference/suite/tablas.html` | Operations tables: dense data, filters, row actions, status badges |
+| `.jfast/skills/nexora-reference/suite/widgets.html` | Controls: selects, action sheets, modals, the colour-customisation drawer |
+
+Open it in a browser -- relative paths, so it needs a local server, not
+`file://`:
+
+```bash
+cd .jfast/skills/nexora-reference/suite && python -m http.server 4600
+# http://localhost:4600/crm.html
+```
+
+An agent without a browser reads the page's markup and the `<style>` block at
+its top: most of each page's look is there, not in the shared stylesheet.
+
+## It is a reference, never a dependency
+
+- **Do not link these files from the app**, import them, or copy the folder
+  into `src/` or the public folder. The app has its own
+  `src/nexora/nexora.css`, and two stylesheets describing one look drift
+  apart.
+- **The images are demo art** (cars, backdrops), shrunk to keep this copy
+  small. Do not ship them in the product.
+- **The suite loads three.js r128 from a CDN.** The app already has the ribbon
+  -- `src/nexora/liquid.js`, three.js from npm in its own lazy chunk, with the
+  3D / 2D / off switch. Do not add a second one.
+
+## Bringing a pattern across
+
+1. **Look for it in the project first.** The app ships `CardBox`, `BaseButton`,
+   `BaseBadge`, `BaseInput`, `BaseModal`, `EmptyState`, `SkeletonLoader`,
+   `SectionTitleLineWithButton` and `ToastHost` in `src/components/`, and
+   `src/nexora/nexora.css` already has `card-panel`, `btn-modern`,
+   `badge-status`, the `nx-*` shell and the KPI cards. A suite widget that is
+   one of those with different content is that component, not a new one.
+2. **Otherwise, move the CSS into the project's stylesheet.** Take the rules
+   from the page's `<style>` block, or from
+   `.jfast/skills/nexora-reference/suite/assets/css/nexora.css`, into
+   `src/nexora/nexora.css`, inside the same components layer. Rename them
+   `nx-<thing>` so they cannot collide with Tailwind or with another page.
+3. **Translate the tokens.** Most custom properties exist in both with the same
+   name (`--c-accent`, `--card-bg`, `--text-main`, ...). The suite-only ones map
+   like this:
+
+   | Suite | Use in the project |
+   | --- | --- |
+   | `--primary`, `--accent`, `--primary-rgb` | `rgb(var(--c-accent))`, `var(--c-accent)` |
+   | `--primary-glow`, `--liquid-glow`, `--shadow-glow` | `rgb(var(--c-glow) / <alpha>)` |
+   | `--primary-hover`, `--primary-light` | `color-mix()` over `--c-accent`, as `style.css` does for `brand-*` |
+   | `--text-muted` | `var(--text-dim)` |
+   | `--border-color` | `var(--card-border)` |
+   | `--shadow-*` | `var(--float-shadow)`, or the card's own shadow |
+
+   Never write the suite's hex colours in: the accent is the viewer's choice
+   (the picker in the top bar), and a hard-coded ruby ignores it.
+4. **Make it a component** in `src/components/`, named like the others, with
+   props for what changes between uses. Pages -- `src/Modulo<Name>/Pages/` --
+   use the component; they do not carry the markup.
+5. **Check it in both themes and at 375 px.** The suite is dark-first; the
+   project is not. In `nexora.css` light is the plain `:root`, and dark is
+   defined twice -- under `prefers-color-scheme: dark` and under
+   `:root[data-theme="dark"]`. Use the tokens and both come for free; a colour
+   you had to write by hand needs a value in all three places.
+
+## Interactions
+
+The suite's behaviour is in
+`.jfast/skills/nexora-reference/suite/assets/js/nexora-common.js` -- menus,
+sheets, modals, the customisation drawer, count-ups -- as DOM code. Read it for *what*
+happens; write it again as component state in the app's framework. Do not
+bring `document.querySelector` wiring into a Vue or React page.

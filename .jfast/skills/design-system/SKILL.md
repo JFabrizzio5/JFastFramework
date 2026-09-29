@@ -46,6 +46,12 @@ look, produce it: `--template classic` for the other shipped one, or a restyle
 of the tokens and components for anything else. The rules below keep a look
 consistent; none of them is a reason to keep the default.
 
+The pages the nexora look was drawn from -- JFast Suite: dashboard, CRM,
+payments, social feed, tables, widgets -- are copied into
+`src/jfastframework/templates/agent_design_nexora/.jfast/skills/nexora-reference/suite/`,
+and every nexora frontend generated with `--agent-docs` gets them as the
+`nexora-reference` skill. Look there before designing a screen from nothing.
+
 ## Steps
 
 1. **Find the DESIGN.md.** Check the frontend root, then the module, then the

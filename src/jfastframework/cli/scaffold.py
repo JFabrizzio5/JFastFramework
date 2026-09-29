@@ -331,6 +331,15 @@ class Scaffolder:
                 written.append(WrittenFile(destination, created=False))
                 continue
 
+            if not path.name.endswith(".j2"):
+                # Not a template: an image, a font -- copied byte for byte,
+                # because rendering one as text would corrupt it.
+                if not dry_run:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(path.read_bytes())
+                written.append(WrittenFile(destination, created=True))
+                continue
+
             env = self._env_for(relative)
             content = env.get_template(f"{template}/{relative.as_posix()}").render(**context)
             if not dry_run:
@@ -619,6 +628,11 @@ def service_trees(
             # The design skill lives with the thing it describes, which for a
             # frontend project is the frontend project.
             spa.append(Tree("agent_design", target))
+            if frontend_template == "nexora":
+                # JFast Suite, the pages the look was drawn from, as a
+                # catalogue an agent or a person can open before building a
+                # screen the project does not have yet.
+                spa.append(Tree("agent_design_nexora", target))
         return spa
 
     if kind == "gateway":

@@ -74,6 +74,8 @@ porque una página nexora nombraría clases que ese proyecto no tiene.
 | `src/nexora/accent.js` | El acento: seis presets, la paleta entera derivada de un color, y recordar lo que eligió quien mira |
 | `src/nexora/brand.js` | El nombre del producto en el logotipo |
 | `src/nexora/background.js` | Si el listón corre o no |
+| `src/nexora/backdrop.js` | El fondo que eligió quien mira: 3D, 2D o nada |
+| `src/nexora/sidebar.js` | Si el sidebar está plegado en pantalla ancha |
 | `src/nexora/liquid.js` | El listón, sobre three.js |
 | `src/components/AccentPicker.*`, `LiquidBackground.*` | Los dos componentes que el look classic no tiene |
 
@@ -104,6 +106,33 @@ no produce etiquetas ilegibles. Tres lugares lo fijan, gana el primero:
 3. los tripletes `--c-*` al inicio de `src/nexora/nexora.css`.
 
 Botones, brillos, badges, toda utilidad `brand-*` y el listón lo siguen.
+
+**El fondo** se elige en el mismo popover que el acento: **3D** es el listón,
+**2D** el cuadro fijo que tiene debajo -- y three.js nunca se descarga -- y
+**Off** el color liso de la página. Cambiar de 3D a otro destruye la escena que
+corre; regresar la carga. `VITE_BACKGROUND=liquid|still|none` en `.env` /
+`.env.production` es el default del proyecto, `liquid` si está vacío; la
+elección de quien mira, guardada bajo `<service>:backdrop`, gana sobre él. Los
+dos los aplica `index.html` antes del primer pintado, así que "Off" no muestra
+un instante el cuadro fijo al recargar.
+
+**El botón de menú** abre el drawer debajo de 960px y, arriba, pliega el
+sidebar para que la página use todo el ancho. Plegado se queda plegado entre
+páginas y recargas (`<service>:sidebar`), y un sidebar plegado queda fuera del
+foco del teclado, no solo fuera de la pantalla.
+
+### JFast Suite, como referencia
+
+Con `--agent-docs`, un frontend nexora también recibe la skill
+`nexora-reference`: una copia de JFast Suite -- las páginas estáticas de las que
+salió el look: una landing, una consola CRM, una pasarela de pagos, un feed
+social, tablas de operación, una galería de widgets -- en
+`.jfast/skills/nexora-reference/suite/`. Sirve esa carpeta y ábrela antes de
+construir una pantalla que el proyecto todavía no tiene. La skill dice cómo
+traer un patrón: reusar un componente incluido si alguno sirve, mover el CSS a
+`src/nexora/nexora.css` con los tokens del proyecto, y hacerlo componente. La
+suite nunca se enlaza desde la app, y sus imágenes (unos 400 kB en WebP) son
+arte de demostración.
 
 ### Pedir otro look
 

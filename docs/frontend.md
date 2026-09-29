@@ -73,6 +73,8 @@ page would name classes that project does not have.
 | `src/nexora/accent.js` | The accent: six presets, deriving the whole palette from one colour, remembering the viewer's pick |
 | `src/nexora/brand.js` | The product name on the wordmark |
 | `src/nexora/background.js` | Whether the ribbon runs at all |
+| `src/nexora/backdrop.js` | The background the viewer picked: 3D, 2D or off |
+| `src/nexora/sidebar.js` | Whether the sidebar is folded away on a wide screen |
 | `src/nexora/liquid.js` | The ribbon, on three.js |
 | `src/components/AccentPicker.*`, `LiquidBackground.*` | The two components the classic look does not have |
 
@@ -102,6 +104,32 @@ produce unreadable eyebrows. Three places set it, first one wins:
 3. the `--c-*` triplets at the top of `src/nexora/nexora.css`.
 
 Buttons, glows, badges, every `brand-*` utility and the ribbon follow.
+
+**The background** is chosen in the same popover as the accent: **3D** is the
+ribbon, **2D** the still frame under it -- and three.js is never downloaded --
+and **Off** the plain page colour. Switching away from 3D destroys a running
+scene; switching back loads it. `VITE_BACKGROUND=liquid|still|none` in `.env`
+/ `.env.production` is the project's default, `liquid` when empty; the
+viewer's choice, kept under `<service>:backdrop`, wins over it. Both are
+applied by `index.html` before the first paint, so "off" does not flash the
+still frame on reload.
+
+**The menu button** opens the drawer below 960px and, above, folds the sidebar
+away so the page takes the full width. Folded stays folded across pages and
+reloads (`<service>:sidebar`), and a folded sidebar is hidden from keyboard
+focus, not only moved off screen.
+
+### JFast Suite, as a reference
+
+With `--agent-docs`, a nexora frontend also gets the `nexora-reference` skill:
+a copy of JFast Suite -- the static pages the look was drawn from: a landing, a
+CRM console, a payment gateway, a social feed, operations tables, a widget
+gallery -- in `.jfast/skills/nexora-reference/suite/`. Serve that folder and
+open it before building a screen the project does not have yet. The skill says
+how to bring a pattern across: reuse a shipped component if one fits, move the
+CSS into `src/nexora/nexora.css` with the project's tokens, make it a
+component. The suite is never linked from the app, and its images (about
+400 kB of WebP) are demo art.
 
 ### Asking for a different look
 

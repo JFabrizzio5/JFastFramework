@@ -11,6 +11,7 @@ same failure one command later.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -311,3 +312,93 @@ def test_an_overlay_wins_over_the_tree_beneath_it_even_under_force(
     assert (target / "shared.txt").read_text() == "look\n"
     assert (target / "only_base.txt").read_text() == "base\n"
     assert sorted(file.path.name for file in written) == ["only_base.txt", "shared.txt"]
+
+
+# ---------------------------------------------------------------------------
+# Background, the folding sidebar, and the suite as a reference
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("framework", FRAMEWORKS)
+def test_the_viewer_can_pick_3d_2d_or_no_background(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, framework: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = _generate(tmp_path, framework, name="shop_web")
+
+    backdrop = (root / "src/nexora/backdrop.js").read_text(encoding="utf-8")
+    assert "'shop-web:backdrop'" in backdrop
+    for value in ("'liquid'", "'still'", "'none'"):
+        assert value in backdrop
+    # The ribbon's loader asks before downloading three.js.
+    assert "currentBackdrop() !== 'liquid'" in (root / "src/nexora/background.js").read_text(
+        encoding="utf-8"
+    )
+    # Applied before the first paint, with the project's default from .env.
+    index = (root / "index.html").read_text(encoding="utf-8")
+    assert "%VITE_BACKGROUND%" in index and "shop-web:backdrop" in index
+    assert "VITE_BACKGROUND=" in (root / ".env").read_text(encoding="utf-8")
+    picker = "AccentPicker.vue" if framework == "vue" else "AccentPicker.jsx"
+    assert "BACKDROPS" in (root / "src/components" / picker).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("framework", FRAMEWORKS)
+def test_the_menu_button_folds_the_sidebar_on_a_wide_screen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, framework: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = _generate(tmp_path, framework)
+
+    layout = "LayoutAuthenticated.vue" if framework == "vue" else "LayoutAuthenticated.jsx"
+    source = (root / "src/layouts" / layout).read_text(encoding="utf-8")
+    assert "setCollapsed" in source and "toggleMenu" in source
+    css = (root / "src/nexora/nexora.css").read_text(encoding="utf-8")
+    assert 'html[data-sidebar="collapsed"] .nx-main { margin-left: 0; }' in css
+    # The rule that hid the button on desktop -- and lost to .nx-round-btn,
+    # leaving a button that did nothing -- is gone.
+    assert ".nx-menu-toggle { display: none; }" not in css
+
+
+@pytest.mark.parametrize("framework", FRAMEWORKS)
+def test_agent_docs_bring_the_suite_as_a_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, framework: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = _generate(tmp_path, framework, "--agent-docs")
+
+    skill = root / ".jfast/skills/nexora-reference"
+    assert "name: nexora-reference" in (skill / "SKILL.md").read_text(encoding="utf-8")
+    for page in ("index", "crm", "pagos", "social", "tablas", "widgets"):
+        html = (skill / f"suite/{page}.html").read_text(encoding="utf-8")
+        assert "assets/css/nexora.css" in html
+    # Every image a page points at is there, and arrived intact.
+    pages = "".join(p.read_text(encoding="utf-8") for p in (skill / "suite").glob("*.html"))
+
+    for image in set(re.findall(r"assets/img/[\w-]+\.webp", pages)):
+        data = (skill / "suite" / image).read_bytes()
+        assert data[:4] == b"RIFF" and data[8:12] == b"WEBP", image
+    assert "nexora-reference" in (root / ".jfast/skills/design-system/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_suite_is_not_copied_without_agent_docs_or_into_classic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    plain = _generate(tmp_path, "vue", name="plain")
+    classic = _generate(tmp_path, "vue", "--template", "classic", "--agent-docs", name="classic")
+    assert not (plain / ".jfast/skills/nexora-reference").exists()
+    assert not (classic / ".jfast/skills/nexora-reference").exists()
+
+
+def test_a_file_that_is_not_a_template_is_copied_byte_for_byte(tmp_path: Path) -> None:
+    root = tmp_path / "templates"
+    (root / "t").mkdir(parents=True)
+    blob = bytes(range(256)) * 4  # not valid UTF-8, and full of {{ lookalikes
+    (root / "t" / "image.bin").write_bytes(blob)
+    (root / "t" / "note.txt.j2").write_text("{{ name }}", encoding="utf-8")
+
+    Scaffolder(root).render_tree("t", tmp_path / "out", {"name": "rendered"})
+    assert (tmp_path / "out" / "image.bin").read_bytes() == blob
+    assert (tmp_path / "out" / "note.txt").read_text(encoding="utf-8") == "rendered"
