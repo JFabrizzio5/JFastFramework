@@ -37,7 +37,7 @@ su propia escritura enseguida podía llegar antes que el commit. Todos los
 módulos generados conectaban la sesión de esa forma.
 
 > Las entradas de `0.1.0a6` a `0.1.0a8` solo están en inglés, en el
-> [CHANGELOG](../../CHANGELOG.md) del repositorio.
+> [CHANGELOG del repositorio](https://github.com/JFabrizzio5/JFastFramework/blob/main/CHANGELOG.md).
 
 ### Incompatible
 
@@ -90,6 +90,32 @@ módulos generados conectaban la sesión de esa forma.
   que instalar requiere `--pre`, y no es así mientras solo existan pre-releases;
   STATUS decía que no había techos de versión, que `0.1.0a8` agregó; la CI decía
   que el paquete no estaba en PyPI.
+
+### Sitio de documentación
+
+- **Las páginas en español llevan a páginas en español.** Todo enlace del menú
+  lateral, del paginador y de los botones de la landing en una página en
+  español apuntaba a la página en inglés un directorio arriba, así que a las
+  traducciones solo se llegaba con el botón de idioma. `es/docs.html` cargaba
+  una hoja de estilos que no existe y decía `lang="en"`. Nada de eso se vio
+  porque `docs-site/check.py` solo revisaba el primer nivel; ahora revisa
+  `es/`, rechaza un enlace que salga del español al inglés salvo el propio
+  botón de idioma, y revisa `<html lang>`. Contra el build anterior reporta
+  1,197 problemas.
+- **La versión es el release.** Las páginas imprimían el directorio donde se
+  publican, así que todos los pies decían "JFastFramework latest". Ahora
+  imprimen la versión del paquete, leída del código, y el selector dice
+  `latest · 0.1.0a9`. Las cifras de la landing -- plugins, arquitecturas,
+  funciones de test -- se cuentan al construir en vez de escribirse en el
+  texto, que llevaba un mes diciendo 17 plugins y 509 tests.
+- **Textos del sitio en los dos idiomas.** El paginador, el botón de copiar, el
+  pie, la portada de la documentación, la etiqueta de costo y la del botón de
+  tema estaban en inglés en las páginas en español.
+- **Rubí líquido.** Oscuro por defecto, paneles de vidrio, barra de navegación
+  flotante y, en la landing, una cinta de vidrio dibujada con three.js --
+  fijada y con hash desde cdnjs, con un brillo fijo cuando no puede correr. El
+  logo va a la derecha del hero, en su propio panel de vidrio. Ver
+  `docs-site/assets/BRAND.md`.
 
 ### Sin hacer, y nombrado
 

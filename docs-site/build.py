@@ -32,9 +32,6 @@ DOCS = REPO / "docs"
 ASSETS = Path(__file__).resolve().parent / "assets"
 GITHUB = "https://github.com/JFabrizzio5/JFastFramework"
 PYPI = "https://pypi.org/project/jfastframework/"
-# The mascot is a raster the project owns; the site works without it, which is
-# what keeps a missing binary from breaking the build.
-MASCOT = ASSETS / "mascot.png"
 DESCRIPTION = "A plugin-based FastAPI framework for microservices, built to be driven by AI agents."
 
 
@@ -49,15 +46,18 @@ THEME_BOOT = """<script>
       document.documentElement.setAttribute("data-theme", saved);
     }
   } catch (e) {
-    /* Private mode, or site data blocked. The OS preference still applies. */
+    /* Private mode, or site data blocked. The default, dark, applies. */
   }
 })();
 </script>"""
 
+
 #: The button itself. Two icons, one shown at a time by CSS, so the control
 #: says what it will do rather than what is currently true.
-THEME_TOGGLE = """  <button class="theme-toggle" type="button" data-theme-toggle
-          aria-label="Switch between light and dark">
+def theme_toggle(lang: str = "en") -> str:
+    label = "Switch between light and dark" if lang == "en" else "Cambiar entre claro y oscuro"
+    return f"""  <button class="theme-toggle" type="button" data-theme-toggle
+          aria-label="{label}">
     <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linecap="round" aria-hidden="true">
       <circle cx="12" cy="12" r="4"></circle>
@@ -70,21 +70,16 @@ THEME_TOGGLE = """  <button class="theme-toggle" type="button" data-theme-toggle
     </svg>
   </button>"""
 
-#: Toggling walks the same three states the CSS knows about: no attribute means
-#: follow the OS, so the first click has to resolve what the OS is currently
-#: saying before it can pick the opposite.
+
+#: Two states. No attribute is dark -- the default the glass is drawn for --
+#: and light is a choice the reader makes and the site remembers.
 THEME_SCRIPT = """<script>
 (function () {
   var button = document.querySelector("[data-theme-toggle]");
   if (!button) return;
   button.addEventListener("click", function () {
     var root = document.documentElement;
-    var current = root.getAttribute("data-theme");
-    if (!current) {
-      current = window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light";
-    }
+    var current = root.getAttribute("data-theme") || "dark";
     var next = current === "dark" ? "light" : "dark";
     root.setAttribute("data-theme", next);
     try {
@@ -663,12 +658,47 @@ def heading_toc(body: str, label: str = "On this page") -> str:
     )
 
 
-def pager(active: str, root: str) -> str:
-    """Previous and next in reading order.
+#: Everything the page chrome says, per language. The article bodies come from
+#: the markdown; these are the words around them, and a Spanish page that says
+#: "Previous" and "source" is a Spanish page that was never read by anyone.
+CHROME: dict[str, dict[str, str]] = {
+    "en": {
+        "previous": "Previous",
+        "next": "Next",
+        "version": "Version",
+        "source": "source",
+        "changelog": "changelog",
+        "nav": "Documentation",
+        "docs_title": "Documentation",
+        "docs_lede": (
+            "Every page, grouped the way the sidebar groups them. Start at the top, "
+            "or jump to the one you already half-remember."
+        ),
+    },
+    "es": {
+        "previous": "Anterior",
+        "next": "Siguiente",
+        "version": "Versión",
+        "source": "código",
+        "changelog": "cambios",
+        "nav": "Documentación",
+        "docs_title": "Documentación",
+        "docs_lede": (
+            "Todas las páginas, agrupadas como en el menú lateral. Empieza "
+            "arriba, o salta a la que ya recuerdas a medias."
+        ),
+    },
+}
+
+
+def pager(active: str, lang: str = "en") -> str:
+    """Previous and next in reading order, in the page's own language.
 
     The sidebar says where everything is; this says where to go next, which is
-    the question someone finishing a page actually has.
+    the question someone finishing a page actually has. Links stay in the same
+    directory, so a Spanish reader is handed the next Spanish page.
     """
+    chrome = CHROME[lang]
     order = [page for page in PAGES if page.slug not in ("changelog",)]
     index = next((i for i, page in enumerate(order) if page.slug == active), None)
     if index is None:
@@ -679,44 +709,78 @@ def pager(active: str, root: str) -> str:
     if previous is None and following is None:
         return ""
 
-    parts = ['    <nav class="pager" aria-label="Pagination">']
+    parts = [f'    <nav class="pager" aria-label="{chrome["previous"]} / {chrome["next"]}">']
     if previous is not None:
         parts.append(
-            f'      <a class="prev" href="{root}{previous.slug}.html">'
-            f"<small>Previous</small>{html.escape(previous.title)}</a>"
+            f'      <a class="prev" href="{previous.slug}.html">'
+            f"<small>{chrome['previous']}</small>{html.escape(page_title(previous, lang))}</a>"
         )
     if following is not None:
         parts.append(
-            f'      <a class="next" href="{root}{following.slug}.html">'
-            f"<small>Next</small>{html.escape(following.title)}</a>"
+            f'      <a class="next" href="{following.slug}.html">'
+            f"<small>{chrome['next']}</small>{html.escape(page_title(following, lang))}</a>"
         )
     parts.append("    </nav>")
     return chr(10).join(parts) + chr(10)
 
 
 # Vanilla, inline, and small enough to read. The site has no build step and
-# this is not the place to start one.
+# this is not the place to start one. The labels follow <html lang>.
 COPY_SCRIPT = """<script>
-document.querySelectorAll('pre').forEach(function (pre) {
-  var wrap = document.createElement('div');
-  wrap.className = 'snippet' + (pre.classList.contains('terminal') ? ' terminal-wrap' : '');
-  pre.parentNode.insertBefore(wrap, pre);
-  wrap.appendChild(pre);
+(function () {
+  var es = document.documentElement.lang === "es";
+  var label = es ? "copiar" : "copy";
+  var done = es ? "copiado" : "copied";
+  document.querySelectorAll("pre").forEach(function (pre) {
+    var wrap = document.createElement("div");
+    wrap.className = "snippet" + (pre.classList.contains("terminal") ? " terminal-wrap" : "");
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
 
-  var button = document.createElement('button');
-  button.className = 'copy';
-  button.type = 'button';
-  button.textContent = 'copy';
-  button.addEventListener('click', function () {
-    var text = pre.innerText.replace(/^\\$ /gm, '');
-    navigator.clipboard.writeText(text).then(function () {
-      button.textContent = 'copied';
-      setTimeout(function () { button.textContent = 'copy'; }, 1200);
+    var button = document.createElement("button");
+    button.className = "copy";
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", function () {
+      var text = pre.innerText.replace(/^\\$ /gm, "");
+      navigator.clipboard.writeText(text).then(function () {
+        button.textContent = done;
+        setTimeout(function () { button.textContent = label; }, 1200);
+      });
     });
+    wrap.appendChild(button);
   });
-  wrap.appendChild(button);
-});
+})();
 </script>"""
+
+
+#: Plus Jakarta Sans for the text and the display type, JetBrains Mono for
+#: code and for every label that is a label rather than a sentence.
+FONTS = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+    "family=JetBrains+Mono:wght@400;500;600;700;800&amp;"
+    'family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&amp;display=swap">'
+)
+
+
+def release_version() -> str:
+    """The package version this documentation describes, read from the source.
+
+    Not ``--version``: that is the directory the site is published under --
+    ``latest``, or ``v0.3`` -- and printing it where a reader expects a release
+    number is how every page came to say "JFastFramework latest". Read, not
+    imported, so building the site needs nothing the framework depends on.
+    """
+    source = (REPO / "src" / "jfastframework" / "__init__.py").read_text(encoding="utf-8")
+    match = re.search(r'^__version__ = "([^"]+)"', source, re.MULTILINE)
+    return match.group(1) if match else "unknown"
+
+
+def version_label(channel: str, release: str) -> str:
+    """What the picker shows: the channel, and the release it currently is."""
+    return f"{channel} · {release}" if channel == "latest" else channel
 
 
 def layout(
@@ -726,16 +790,19 @@ def layout(
     version: str,
     versions: list[str],
     active: str,
+    release: str,
     depth: int = 0,
     hero: str = "",
     wide: bool = False,
     lang: str = "en",
 ) -> str:
-    root = "../" * depth
+    # Assets live at the site root; pages live beside each other. A Spanish page
+    # is one directory down, so it reaches the stylesheet through ../ and its
+    # neighbours without it -- mixing the two up is how every Spanish sidebar
+    # link used to land on the English page.
+    assets = "../" * depth
     chrome = DOC_CHROME[lang]
-    # The same page in the other language: one level down from English, one up
-    # from Spanish. Both sit at the same filename, which is what makes the
-    # switch a link rather than a lookup table.
+    words = CHROME[lang]
     other_lang = "es" if lang == "en" else "en"
     other_page = f"es/{active}.html" if lang == "en" else f"../{active}.html"
 
@@ -745,7 +812,7 @@ def layout(
         active_class = ' class="active"' if page.slug == active else ""
         glyph = icon(PAGE_ICON.get(page.slug, "book"))
         return (
-            f'        <a href="{root}{page.slug}.html"{active_class}>'
+            f'        <a href="{page.slug}.html"{active_class}>'
             f"{glyph}<span>{html.escape(page_title(page, lang))}</span></a>"
         )
 
@@ -769,50 +836,55 @@ def layout(
 
     def version_option(name: str) -> str:
         selected = " selected" if name == version else ""
-        return f'          <option value="{name}"{selected}>{name}</option>'
+        return f'          <option value="{name}"{selected}>{version_label(name, release)}</option>'
 
     options = "\n".join(version_option(v) for v in versions)
+    # The same page under another version: up out of this version's directory
+    # (and out of es/ first, on a Spanish page), then back down.
+    up = "../" * (depth + 1)
+    down = "es/" if lang == "es" else ""
+    switch = f"location.href='{up}'+this.value+'/{down}'+location.pathname.split('/').pop()"
+
     return f"""<!doctype html>
 <html lang="{lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} · JFastFramework</title>
-<meta name="description" content="{DESCRIPTION}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="{root}assets/site.css">
-<link rel="icon" href="{root}assets/favicon.svg">
+<meta name="description" content="{html.escape(DESCRIPTIONS[lang])}">
+<meta name="theme-color" content="#030305">
+{FONTS}
+<link rel="stylesheet" href="{assets}assets/site.css">
+<link rel="icon" href="{assets}assets/favicon.svg">
 {THEME_BOOT}
 </head>
-<body>
+<body class="docs">
 <a class="skip" href="#main">{chrome["skip"]}</a>
 
 <header class="topbar">
-  <a class="brand" href="{root}index.html">
-    {brand_mark(root)}
+  <a class="brand" href="index.html">
+    {brand_mark(assets)}
     <span class="wordmark"><b>jfast</b>framework</span>
   </a>
   <div class="topbar-right">
     <label class="version-picker">
-      <span class="sr-only">Version</span>
-      <select onchange="location.href='../'+this.value+'/'+location.pathname.split('/').pop()">
+      <span class="sr-only">{words["version"]}</span>
+      <select onchange="{switch}">
 {options}
       </select>
     </label>
-    <a class="ghost" href="{root}docs.html">{chrome["docs"]}</a>
-    <a class="ghost lang" href="{root}{other_page}" hreflang="{other_lang}">{chrome["other"]}</a>
-    <a class="ghost" href="{PYPI}">PyPI</a>
-    <a class="ghost" href="{GITHUB}">GitHub</a>
-{THEME_TOGGLE}
+    <a class="ghost" href="docs.html">{chrome["docs"]}</a>
+    <a class="ghost lang" href="{other_page}" hreflang="{other_lang}">{chrome["other"]}</a>
+    <a class="ghost ext" href="{PYPI}">PyPI</a>
+    <a class="ghost ext" href="{GITHUB}">GitHub</a>
+{theme_toggle(lang)}
   </div>
 </header>
 
 {ICON_SPRITE}
 
 <div class="shell{" wide" if wide else ""}">
-  <nav class="sidebar" aria-label="Documentation">
+  <nav class="sidebar" aria-label="{words["nav"]}">
 {nav_items}
   </nav>
 
@@ -820,12 +892,12 @@ def layout(
 {hero}
 {heading_toc(body, chrome["toc"]) if not wide else ""}
 {body}
-{pager(active, root) if not wide else ""}
+{pager(active, lang) if not wide else ""}
     <footer class="page-footer">
-      <p>JFastFramework {html.escape(version)} · MIT ·
+      <p>JFastFramework {html.escape(release)} · MIT ·
         <a href="{PYPI}">PyPI</a> ·
-        <a href="{GITHUB}">source</a> ·
-        <a href="{GITHUB}/blob/main/CHANGELOG.md">changelog</a>
+        <a href="{GITHUB}">{words["source"]}</a> ·
+        <a href="changelog.html">{words["changelog"]}</a>
       </p>
     </footer>
   </main>
@@ -845,36 +917,70 @@ LANDING_CHROME: dict[str, dict[str, str]] = {
         "skip": "Skip to content",
         "docs": "Docs",
         "other_label": "Español",
-        "documentation": "documentation",
-        "source": "source",
-        "maturity": "maturity",
+        "documentation": "Documentation",
+        "source": "Source",
+        "maturity": "Maturity",
+        "changelog": "Changelog",
+        "tagline": "The backend nobody wants to write twice.",
     },
     "es": {
         "lang": "es",
         "skip": "Saltar al contenido",
         "docs": "Documentación",
         "other_label": "English",
-        "documentation": "documentación",
-        "source": "código",
-        "maturity": "madurez",
+        "documentation": "Documentación",
+        "source": "Código",
+        "maturity": "Madurez",
+        "changelog": "Cambios",
+        "tagline": "El backend que nadie quiere escribir dos veces.",
     },
 }
 
 
-def landing_layout(*, title: str, description: str, version: str, body: str, lang: str) -> str:
+#: three.js from cdnjs, pinned and hashed: a CDN that changes the file under a
+#: fixed URL gets a blocked script and the still fallback, not somebody else's
+#: code running on this page. The hash is cdnjs's own for r128.
+THREE_JS = (
+    '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"\n'
+    '        integrity="sha512-dLxUelApnYxpLt6K2iomGngnHO83iUvZytA3YjDUCjT0HDOHKXnVYdf3hU4'
+    'JjM8uEhxf9nD1/ey98U3t2vZ0qQ=="\n'
+    '        crossorigin="anonymous" referrerpolicy="no-referrer"></script>'
+)
+
+#: A few degrees of tilt under the pointer. Without it the cards stay flat,
+#: which is also what a reader who asked for less motion gets.
+TILT_SCRIPT = """<script>
+(function () {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (!window.matchMedia("(hover: hover)").matches) return;
+  document.querySelectorAll("[data-tilt]").forEach(function (card) {
+    card.addEventListener("pointermove", function (e) {
+      var r = card.getBoundingClientRect();
+      var rx = ((e.clientY - r.top) / r.height - 0.5) * -6;
+      var ry = ((e.clientX - r.left) / r.width - 0.5) * 6;
+      card.style.transform = "perspective(1000px) rotateX(" + rx + "deg) rotateY(" +
+        ry + "deg) scale3d(1.012,1.012,1.012)";
+    });
+    card.addEventListener("pointerleave", function () {
+      card.style.transform = "";
+    });
+  });
+})();
+</script>"""
+
+
+def landing_layout(*, description: str, release: str, body: str, lang: str) -> str:
     """The standalone front page, in one language.
 
     Deliberately not `layout()`. No sidebar, because there is nothing to
     navigate yet; no version picker, because somebody who has not installed it
-    does not have a version; no pager, because there is no previous page. What
-    is left is the argument and one way in.
+    does not have a version. What is left is the argument and one way in.
 
-    The Spanish page lives one directory down, so every local path needs the
-    `root` prefix -- getting that wrong is how a translated page loads with no
-    stylesheet and looks broken rather than translated.
+    The Spanish page lives one directory down: assets need `../`, and every page
+    it links to is the Spanish page beside it.
     """
     chrome = LANDING_CHROME[lang]
-    root = "../" if lang != "en" else ""
+    assets = "../" if lang != "en" else ""
     other = "es" if lang == "en" else "en"
     other_href = "es/index.html" if lang == "en" else "../index.html"
 
@@ -885,29 +991,32 @@ def landing_layout(*, title: str, description: str, version: str, body: str, lan
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JFastFramework · {html.escape(description)}</title>
 <meta name="description" content="{html.escape(description)}">
+<meta name="theme-color" content="#030305">
 <link rel="alternate" hreflang="en" href="{"../index.html" if lang != "en" else "index.html"}">
 <link rel="alternate" hreflang="es" href="{"index.html" if lang != "en" else "es/index.html"}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="{root}assets/site.css">
-<link rel="icon" href="{root}assets/favicon.svg">
+{FONTS}
+<link rel="stylesheet" href="{assets}assets/site.css">
+<link rel="icon" href="{assets}assets/favicon.svg">
 {THEME_BOOT}
 </head>
 <body class="landing">
+<canvas id="liquid" class="liquid-canvas" aria-hidden="true"></canvas>
+<div class="liquid-vignette" aria-hidden="true"></div>
+<div id="liquid-glow" class="liquid-glow" aria-hidden="true"></div>
+
 <a class="skip" href="#main">{chrome["skip"]}</a>
 
 <header class="topbar">
   <a class="brand" href="index.html">
-    {brand_mark(root)}
+    {brand_mark(assets)}
     <span class="wordmark"><b>jfast</b>framework</span>
   </a>
   <div class="topbar-right">
-    <a class="ghost" href="{root}docs.html">{chrome["docs"]}</a>
+    <a class="ghost" href="docs.html">{chrome["docs"]}</a>
     <a class="ghost lang" href="{other_href}" hreflang="{other}">{chrome["other_label"]}</a>
-    <a class="ghost" href="{PYPI}">PyPI</a>
-    <a class="ghost" href="{GITHUB}">GitHub</a>
-{THEME_TOGGLE}
+    <a class="ghost ext" href="{PYPI}">PyPI</a>
+    <a class="ghost ext" href="{GITHUB}">GitHub</a>
+{theme_toggle(lang)}
   </div>
 </header>
 
@@ -918,17 +1027,22 @@ def landing_layout(*, title: str, description: str, version: str, body: str, lan
 </main>
 
 <footer class="landing-footer">
-  <p>JFastFramework {html.escape(version)} · MIT ·
-    <a href="{root}docs.html">{chrome["documentation"]}</a> ·
-    <a href="{PYPI}">PyPI</a> ·
-    <a href="{GITHUB}">{chrome["source"]}</a> ·
-    <a href="{root}status.html">{chrome["maturity"]}</a>
-  </p>
+  <p><b>JFastFramework</b> {html.escape(release)} · MIT · {chrome["tagline"]}</p>
+  <nav>
+    <a href="docs.html">{chrome["documentation"]}</a>
+    <a href="status.html">{chrome["maturity"]}</a>
+    <a href="changelog.html">{chrome["changelog"]}</a>
+    <a href="{PYPI}">PyPI</a>
+    <a href="{GITHUB}">{chrome["source"]}</a>
+  </nav>
 </footer>
 {COPY_SCRIPT}
 {THEME_SCRIPT}
 {REVEAL_SCRIPT}
 {LANG_SCRIPT}
+{TILT_SCRIPT}
+{THREE_JS}
+<script src="{assets}assets/liquid.js"></script>
 </body>
 </html>
 """
@@ -961,8 +1075,6 @@ REVEAL_SCRIPT = """<script>
   if (!targets.length) return;
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
-  // Added by script, so a reader with JavaScript off -- or a crawler -- gets
-  // the finished page rather than a blank one.
   document.documentElement.classList.add("js-reveal");
 
   var queued = false;
@@ -1012,141 +1124,184 @@ STACK = (
 )
 
 
-def landing_body(version: str, lang: str) -> str:
+def project_numbers() -> dict[str, int]:
+    """The figures the landing quotes, counted from the repository at build time.
+
+    They used to be typed into the copy, and the copy said 17 plugins and 509
+    tests long after both had moved on. A number on the front page is a claim;
+    this keeps it one that was true when the page was built.
+    """
+    builtin = REPO / "src" / "jfastframework" / "plugins" / "builtin"
+    plugins = len([p for p in builtin.glob("*.py") if p.name != "__init__.py"])
+
+    tests = 0
+    for path in (REPO / "tests").rglob("test_*.py"):
+        text = path.read_text(encoding="utf-8")
+        tests += len(re.findall(r"^\s*(?:async\s+)?def test_", text, re.MULTILINE))
+
+    scaffold = (REPO / "src" / "jfastframework" / "cli" / "scaffold.py").read_text(encoding="utf-8")
+    found = re.search(r"MODULE_LAYOUTS = \(([^)]*)\)", scaffold)
+    layouts = len(re.findall(r'"\w+"', found.group(1))) if found else 0
+
+    return {"plugins": plugins, "tests": tests, "layouts": layouts}
+
+
+def landing_body(release: str, lang: str) -> str:
     """The landing's sections, in one language.
 
     One function for both, because the alternative -- two hand-written pages --
     means the Spanish one is a snapshot of what the English one said in August
-    and nobody notices for a year.
+    and nobody notices for a year. Every href to a page is relative to the
+    landing's own directory, so the Spanish landing leads to Spanish pages.
     """
     t = LANDING_COPY[lang]
-    root = "" if lang == "en" else "../"
-
-    def created(path: str, note: str) -> str:
-        return f'  <span class="dim">created</span>  {path:<20}<span class="dim">{note}</span>'
+    numbers = project_numbers()
+    assets = "" if lang == "en" else "../"
 
     prompt = '<span class="c">$</span>'
-    terminal = "\n".join(
+    ok = '<span class="ok">✓</span>'
+    start = "\n".join(
         [
             f"{prompt} pip install jfastframework",
             f"{prompt} jfast start shop",
             "",
-            created("shop/", "FastAPI · PostgreSQL · pgvector · Redis · jobs"),
-            created("shop-web/", "Vue 3 · Vite · Tailwind"),
-            created("docker-compose.yml", "one container per resource"),
-            created("Caddyfile", "one hostname, TLS, static assets"),
-            created(".env", "every DSN, generated from the bindings"),
+            f'{ok} shop/        <span class="dim">FastAPI · Postgres · Redis</span>',
+            f'{ok} shop-web/    <span class="dim">Vue 3 · Vite</span>',
+            f'{ok} compose      <span class="dim">{t["term_compose"]}</span>',
+            f'{ok} Caddyfile    <span class="dim">TLS · {t["term_proxy"]}</span>',
         ]
     )
 
-    # The page works without the mascot, which is what stops a missing binary
-    # from breaking the build.
-    if MASCOT.is_file():
-        art = (
-            f'<img class="mascot" src="{root}assets/mascot.png" width="760" height="507" '
-            'alt="" loading="eager">'
-        )
-    else:
-        art = (
-            f'<img class="mark-big" src="{root}assets/mark.svg" width="520" height="347" '
-            'alt="" loading="eager">'
-        )
-
     stack = "\n".join(f'        <span class="chip">{name}</span>' for name in STACK)
 
-    stats = "\n".join(
-        f'        <div class="stat"><b>{value}</b><span>{label}</span></div>'
-        for value, label in t["proof"]
+    def metric(value: str, label: str) -> str:
+        return f'        <div class="metric"><b>{value}</b><span>{label}</span></div>'
+
+    metrics = "\n".join(
+        [
+            metric("1", t["m_command"]),
+            metric(f"{numbers['plugins']}", t["m_plugins"]),
+            metric(f"{numbers['layouts']}", t["m_layouts"]),
+            metric(f"{numbers['tests']:,}", t["m_tests"]),
+        ]
     )
 
-    def heading(name: str, text: str) -> str:
-        return f"      <h2>{icon(name)}<span>{text}</span></h2>"
+    def kicker(name: str, text: str) -> str:
+        return f'      <p class="section-kicker">{icon(name)}<span>{text}</span></p>'
 
-    def card(key: str, cost: bool = False) -> str:
-        tail = f'\n          <p class="cost">{t[key + "_c"]}</p>' if cost else ""
-        return f"""        <article>
+    def idea(key: str, number: str, span: str = "") -> str:
+        cls = f' class="{span}"' if span else ""
+        return f"""        <article{cls} data-tilt>
+          <span class="card-icon">{icon(t[key + "_i"])}</span>
+          <span class="bento-num">{number}</span>
+          <h3>{t[key + "_h"]}</h3>
+          <p>{t[key + "_p"]}</p>
+          <p class="cost"><span class="cost-label">{t["cost_label"]}</span>{t[key + "_c"]}</p>
+        </article>"""
+
+    def guard(key: str) -> str:
+        return f"""        <article data-tilt>
           <span class="card-icon">{icon(t[key + "_i"])}</span>
           <h3>{t[key + "_h"]}</h3>
-          <p>{t[key + "_p"]}</p>{tail}
+          <p>{t[key + "_p"]}</p>
         </article>"""
 
     def audience(key: str, step: str) -> str:
-        return f"""        <article>
+        return f"""        <article class="span-3" data-tilt>
           <b class="step">{step}</b>
           <h3>{t[key + "_h"]}</h3>
           <p>{t[key + "_p"]}</p>
         </article>"""
 
     def link_card(key: str, href: str) -> str:
-        return f"""        <a class="link-card" href="{root}{href}">
+        return f"""        <a class="link-card" href="{href}" data-tilt>
           <span class="card-icon">{icon(t[key + "_i"])}</span>
           <h3>{t[key + "_h"]}</h3>
           <p>{t[key + "_p"]}</p>
+          <span class="go">{t["read"]} <span class="arrow">&rarr;</span></span>
         </a>"""
 
     return f"""    <section class="hero">
       <div class="hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow">{html.escape(version)} · {t["eyebrow"]}</p>
-          <h1>{t["h1"]}</h1>
+          <p class="pill-badge glass"><span class="pulse" aria-hidden="true"></span>
+            v{html.escape(release)} · {t["eyebrow"]}</p>
+          <h1 class="display">
+            <span>{t["h1_a"]}</span>
+            <span class="faded">{t["h1_b"]}</span>
+            <span>{t["h1_c"]}</span>
+          </h1>
           <p class="lede">{t["lede"]}</p>
           <div class="cta">
-            <a class="button primary" href="{root}local-setup.html">{t["cta_primary"]}</a>
-            <a class="button" href="{root}modules.html">{t["cta_secondary"]}</a>
-            <a class="cta-link" href="{root}architecture.html">{t["cta_link"]} &rarr;</a>
+            <a class="button primary" href="local-setup.html" data-pulse>
+              {icon("play")}<span>{t["cta_primary"]}</span></a>
+            <a class="button" href="modules.html">
+              <span>{t["cta_secondary"]}</span><span class="arrow">&rarr;</span></a>
+            <a class="cta-link" href="architecture.html">{t["cta_link"]} &rarr;</a>
           </div>
         </div>
-        <div class="hero-art">{art}</div>
+
+        <div class="hero-mark" aria-hidden="true">
+          <div class="mark-tile">
+            <img src="{assets}assets/mark.svg" width="264" height="192" alt="">
+          </div>
+        </div>
       </div>
-      <pre class="terminal"><code>{terminal}</code></pre>
+
+      <pre class="terminal start"><code>{start}</code></pre>
+
+      <div class="metrics">
+{metrics}
+      </div>
       <p class="dim-note">{t["honest"]}</p>
+
       <div class="stack">
         <p class="stack-label">{t["stack_label"]}</p>
 {stack}
       </div>
     </section>
 
-    <section class="stats reveal">
-{stats}
-    </section>
-
     <section class="argument reveal">
-{heading("compare", t["before_title"])}
-      <div class="compare">
-        <div class="compare-col before">
+{kicker("compare", t["before_kicker"])}
+      <h2>{t["before_title"]}</h2>
+      <div class="bento">
+        <div class="compare-col before span-5" data-tilt>
           <p class="compare-label">{t["before_label"]}</p>
           <p>{t["before"]}</p>
         </div>
-        <div class="compare-col after">
+        <div class="compare-col after span-7" data-tilt>
           <p class="compare-label">{t["after_label"]}</p>
           <p>{t["after"]}</p>
         </div>
       </div>
     </section>
 
-    <section class="argument banded reveal">
-{heading("layers", t["pillars_title"])}
-      <div class="argument-grid">
-{card("p1", cost=True)}
-{card("p2", cost=True)}
-{card("p3", cost=True)}
+    <section class="argument reveal">
+{kicker("layers", t["pillars_kicker"])}
+      <h2>{t["pillars_title"]}</h2>
+      <div class="bento argument-grid">
+{idea("p1", "01")}
+{idea("p2", "02")}
+{idea("p3", "03")}
       </div>
     </section>
 
     <section class="argument reveal">
-{heading("shield", t["guard_title"])}
+{kicker("shield", t["guard_kicker"])}
+      <h2>{t["guard_title"]}</h2>
       <p class="lede">{t["guard_lede"]}</p>
       <pre class="terminal check"><code>{CHECK_SAMPLE}</code></pre>
-      <div class="argument-grid">
-{card("g1")}
-{card("g2")}
-{card("g3")}
+      <div class="bento argument-grid">
+{guard("g1")}
+{guard("g2")}
+{guard("g3")}
       </div>
     </section>
 
-    <section class="argument banded reveal">
-{heading("terminal", t["audience_title"])}
-      <div class="audience-grid">
+    <section class="argument reveal">
+{kicker("users", t["audience_kicker"])}
+      <h2>{t["audience_title"]}</h2>
+      <div class="bento audience-grid">
 {audience("a1", "01")}
 {audience("a2", "02")}
 {audience("a3", "03")}
@@ -1155,15 +1310,25 @@ def landing_body(version: str, lang: str) -> str:
     </section>
 
     <section class="argument reveal">
-{heading("book", t["start_title"])}
-      <div class="argument-grid">
+{kicker("book", t["start_kicker"])}
+      <h2>{t["start_title"]}</h2>
+      <div class="bento">
 {link_card("s1", "local-setup.html")}
 {link_card("s2", "modules.html")}
-{link_card("s3", "contracts.html")}
+{link_card("s3", "transactions.html")}
       </div>
-      <p class="dim-note">
-        <a href="{root}docs.html">{t["all_docs"]} &rarr;</a>
-      </p>
+      <p class="dim-note"><a href="docs.html">{t["all_docs"]} &rarr;</a></p>
+    </section>
+
+    <section class="cta-panel reveal">
+      <h2>{t["final_title"]}</h2>
+      <p>{t["final_p"]}</p>
+      <div class="cta">
+        <a class="button ruby" href="local-setup.html" data-pulse>
+          <span>{t["cta_primary"]}</span><span class="arrow">&rarr;</span></a>
+        <a class="button" href="#main">
+          <span>{t["back_top"]}</span><span class="arrow">&uarr;</span></a>
+      </div>
     </section>
 """
 
@@ -1174,18 +1339,17 @@ DESCRIPTIONS: dict[str, str] = {
     "en": DESCRIPTION,
     "es": (
         "Un framework FastAPI de plugins para microservicios, pensado para que "
-        "escribas la logica de negocio y no la plomeria."
+        "escribas la lógica de negocio y no la plomería."
     ),
 }
 
 
-def build_landing(version: str, lang: str = "en") -> str:
+def build_landing(release: str, lang: str = "en") -> str:
     """The front page, in one language."""
     return landing_layout(
-        title="JFastFramework",
         description=DESCRIPTIONS[lang],
-        version=version,
-        body=landing_body(version, lang),
+        release=release,
+        body=landing_body(release, lang),
         lang=lang,
     )
 
@@ -1197,26 +1361,30 @@ def build_landing(version: str, lang: str = "en") -> str:
 LANDING_COPY: dict[str, dict[str, str]] = {
     "en": {
         "eyebrow": "alpha",
-        "h1": "Stop rebuilding the same backend.",
+        "h1_a": "Stop rebuilding",
+        "h1_b": "the same",
+        "h1_c": "backend.",
         "lede": (
             "One command: FastAPI, PostgreSQL, Redis, jobs, a Vue frontend and "
-            "a reverse proxy. Wired together, containerised, migrating on boot."
+            "a reverse proxy. Wired together, containerised, migrating on boot. "
+            "What you write is the part only you know."
         ),
         "cta_primary": "Start in one command",
         "cta_secondary": "See what it generates",
         "cta_link": "Why it is built this way",
+        "term_compose": "one container per resource",
+        "term_proxy": "one hostname",
+        "m_command": "command to a running stack",
+        "m_plugins": "plugins, each removable",
+        "m_layouts": "architectures per module",
+        "m_tests": "test functions",
         "honest": (
             'Alpha. <a href="status.html">The maturity table</a> says which '
             "parts are tested against real infrastructure and which are not."
         ),
-        "proof": (
-            ("1", "command to a running stack"),
-            ("17", "plugins, each removable"),
-            ("4", "architectures per module"),
-            ("509", "tests · 14 smoke suites"),
-        ),
         "stack_label": "It generates",
-        "before_title": "The same feature, twice",
+        "before_kicker": "Before and after",
+        "before_title": "The same feature, twice.",
         "before_label": "By hand",
         "after_label": "Here",
         "before": (
@@ -1229,7 +1397,9 @@ LANDING_COPY: dict[str, dict[str, str]] = {
             "repository, schemas and a test, registered, under a contract that "
             "fails the build if the handler ever touches the database."
         ),
-        "pillars_title": "Three ideas",
+        "pillars_kicker": "The design",
+        "pillars_title": "Three ideas, and what each one costs.",
+        "cost_label": "Trade-off",
         "p1_i": "zap",
         "p1_h": "Business logic first",
         "p1_p": "The plumbing is a plugin list. The diff on a branch is the feature.",
@@ -1242,7 +1412,8 @@ LANDING_COPY: dict[str, dict[str, str]] = {
         "p3_h": "Split when you know the seams",
         "p3_p": "A modular monolith today; one command promotes a module to a service.",
         "p3_c": "A monolith on day one.",
-        "guard_title": "Vibe-code with a seatbelt",
+        "guard_kicker": "Guardrails",
+        "guard_title": "Vibe-code with a seatbelt.",
         "guard_lede": (
             "Generating code fast is solved. Keeping it coherent after the fourth feature is not."
         ),
@@ -1252,10 +1423,11 @@ LANDING_COPY: dict[str, dict[str, str]] = {
         "g2_i": "gauge",
         "g2_h": "No blocking calls",
         "g2_p": "One <code>time.sleep</code> stalls every request on the worker.",
-        "g3_i": "lock",
-        "g3_h": "Shared code stays pure",
-        "g3_p": "Sharing a repository is sharing a table.",
-        "audience_title": "Whoever is writing it",
+        "g3_i": "database",
+        "g3_h": "A 201 means the row exists",
+        "g3_p": "The session commits before the response, and a race is a 409, not a lost write.",
+        "audience_kicker": "Who it is for",
+        "audience_title": "Whoever is writing it.",
         "a1_h": "First backend",
         "a1_p": "The generated module is a worked example you can read in five minutes.",
         "a2_h": "Shipping features",
@@ -1264,133 +1436,162 @@ LANDING_COPY: dict[str, dict[str, str]] = {
         "a3_p": "The review is about the feature, because the structure is CI's job.",
         "a4_h": "Driving agents",
         "a4_p": "Rules an agent reads first and cannot quietly break.",
-        "start_title": "Start reading",
+        "start_kicker": "Documentation",
+        "start_title": "Start reading.",
+        "read": "Read",
         "s1_i": "rocket",
         "s1_h": "Run it locally",
         "s1_p": "One command to a running stack. Fifteen minutes.",
         "s2_i": "layers",
         "s2_h": "Modules and layouts",
         "s2_p": "Four architectures, and how to pick one.",
-        "s3_i": "shield",
-        "s3_h": "Contracts",
-        "s3_p": "The rules, and how they are enforced.",
+        "s3_i": "database",
+        "s3_h": "Transactions",
+        "s3_p": "When a write commits, and what it fails with.",
         "all_docs": "All documentation",
+        "final_title": "Write the rules. Not the plumbing.",
+        "final_p": (
+            "Generate the stack in one command, and let CI keep it the shape you "
+            "chose while a team &mdash; or an agent &mdash; works on it."
+        ),
+        "back_top": "Back to top",
     },
     "es": {
         "eyebrow": "alpha",
-        "h1": "Deja de reconstruir el mismo backend.",
+        "h1_a": "Deja de reconstruir",
+        "h1_b": "el mismo",
+        "h1_c": "backend.",
         "lede": (
             "Un comando: FastAPI, PostgreSQL, Redis, jobs, un frontend en Vue y "
-            "un reverse proxy. Conectados, en contenedores, migrando al arrancar."
+            "un reverse proxy. Conectados, en contenedores, migrando al arrancar. "
+            "Lo que escribes es la parte que solo tú conoces."
         ),
         "cta_primary": "Empieza con un comando",
-        "cta_secondary": "Mira qu&eacute; genera",
-        "cta_link": "Por qu&eacute; est&aacute; hecho as&iacute;",
+        "cta_secondary": "Mira qué genera",
+        "cta_link": "Por qué está hecho así",
+        "term_compose": "un contenedor por recurso",
+        "term_proxy": "un solo host",
+        "m_command": "comando y el stack corre",
+        "m_plugins": "plugins, todos removibles",
+        "m_layouts": "arquitecturas por módulo",
+        "m_tests": "funciones de test",
         "honest": (
-            'Alpha. <a href="../status.html">La tabla de madurez</a> dice '
-            "qu&eacute; partes est&aacute;n probadas contra infraestructura real "
-            "y cu&aacute;les no."
-        ),
-        "proof": (
-            ("1", "comando y el stack corre"),
-            ("17", "plugins, todos removibles"),
-            ("4", "arquitecturas por m&oacute;dulo"),
-            ("509", "tests · 14 suites de humo"),
+            'Alpha. <a href="status.html">La tabla de madurez</a> dice qué '
+            "partes están probadas contra infraestructura real y cuáles no."
         ),
         "stack_label": "Genera",
-        "before_title": "La misma funci&oacute;n, dos veces",
+        "before_kicker": "Antes y después",
+        "before_title": "La misma función, dos veces.",
         "before_label": "A mano",
-        "after_label": "Aqu&iacute;",
+        "after_label": "Aquí",
         "before": (
-            "Conectar la sesi&oacute;n. Decidir d&oacute;nde va la query. Agregar "
-            "modelo, router, migraci&oacute;n y servicio de compose. Enterarte en "
-            "el review de que alguien consult&oacute; la base desde un handler."
+            "Conectar la sesión. Decidir dónde va la query. Agregar "
+            "modelo, router, migración y servicio de compose. Enterarte en "
+            "el review de que alguien consultó la base desde un handler."
         ),
         "after": (
             "<code>jfast new module invoice</code> &mdash; router, service, "
             "repository, schemas y un test, registrados, bajo un contrato que "
             "rompe el build si el handler toca la base."
         ),
-        "pillars_title": "Tres ideas",
+        "pillars_kicker": "El diseño",
+        "pillars_title": "Tres ideas, y lo que cuesta cada una.",
+        "cost_label": "Costo",
         "p1_i": "zap",
-        "p1_h": "La l&oacute;gica de negocio primero",
-        "p1_p": (
-            "La plomer&iacute;a es una lista de plugins. El diff de la rama es la funcionalidad."
-        ),
+        "p1_h": "La lógica de negocio primero",
+        "p1_p": ("La plomería es una lista de plugins. El diff de la rama es la funcionalidad."),
         "p1_c": "Heredas opiniones, y se exigen.",
         "p2_i": "bot",
-        "p2_h": "Los agentes no se desv&iacute;an",
-        "p2_p": (
-            "Cada regla la verifica una m&aacute;quina, y cada violaci&oacute;n dice el arreglo."
-        ),
+        "p2_h": "Los agentes no se desvían",
+        "p2_p": ("Cada regla la verifica una máquina, y cada violación dice el arreglo."),
         "p2_c": "Escribir el contrato es trabajo.",
         "p3_i": "split",
-        "p3_h": "Parte cuando sepas d&oacute;nde",
-        "p3_p": "Hoy un monolito modular; un comando asciende un m&oacute;dulo a servicio.",
-        "p3_c": "Un monolito el d&iacute;a uno.",
-        "guard_title": "Vibe-coding con cintur&oacute;n",
+        "p3_h": "Separa cuando sepas dónde",
+        "p3_p": "Hoy un monolito modular; un comando convierte un módulo en servicio.",
+        "p3_c": "Un monolito el día uno.",
+        "guard_kicker": "Barandales",
+        "guard_title": "Vibe-coding con cinturón.",
         "guard_lede": (
-            "Generar c&oacute;digo r&aacute;pido ya est&aacute; resuelto. "
+            "Generar código rápido ya está resuelto. "
             "Mantenerlo coherente tras la cuarta funcionalidad, no."
         ),
         "g1_i": "blocks",
-        "g1_h": "Los m&oacute;dulos siguen separados",
-        "g1_p": "Dos que se importan ya no se pueden separar.",
+        "g1_h": "Los módulos siguen separados",
+        "g1_p": "Dos que se importan entre sí ya no se pueden separar.",
         "g2_i": "gauge",
         "g2_h": "Nada bloqueante",
         "g2_p": "Un <code>time.sleep</code> frena todas las peticiones del worker.",
-        "g3_i": "lock",
-        "g3_h": "Lo compartido se mantiene puro",
-        "g3_p": "Compartir un repositorio es compartir una tabla.",
-        "audience_title": "Qui&eacute;n lo escribe",
+        "g3_i": "database",
+        "g3_h": "Un 201 significa que la fila existe",
+        "g3_p": (
+            "La sesión confirma antes de responder, y una carrera es un 409, "
+            "no una escritura perdida."
+        ),
+        "audience_kicker": "Para quién es",
+        "audience_title": "Para quien lo escriba.",
         "a1_h": "Tu primer backend",
-        "a1_p": "El m&oacute;dulo generado es un ejemplo que lees en cinco minutos.",
-        "a2_h": "Sacando features",
-        "a2_p": "Te saltas la plomer&iacute;a; el checker atrapa el atajo de las 6pm.",
+        "a1_p": "El módulo generado es un ejemplo que lees en cinco minutos.",
+        "a2_h": "Sacando funcionalidades",
+        "a2_p": "Te saltas la plomería; el checker atrapa el atajo de las 6pm.",
         "a3_h": "Liderando un equipo",
-        "a3_p": "El review es sobre la funcionalidad; la estructura la revisa CI.",
+        "a3_p": "El review es sobre la funcionalidad; la estructura la revisa la CI.",
         "a4_h": "Dirigiendo agentes",
         "a4_p": "Reglas que la IA lee primero y no puede romper en silencio.",
-        "start_title": "Por d&oacute;nde empezar",
+        "start_kicker": "Documentación",
+        "start_title": "Por dónde empezar.",
+        "read": "Leer",
         "s1_i": "rocket",
         "s1_h": "Correrlo en local",
         "s1_p": "Un comando hasta el stack corriendo. Quince minutos.",
         "s2_i": "layers",
-        "s2_h": "M&oacute;dulos y arquitecturas",
-        "s2_p": "Cuatro arquitecturas, y c&oacute;mo elegir.",
-        "s3_i": "shield",
-        "s3_h": "Contratos",
-        "s3_p": "Las reglas, y c&oacute;mo se exigen.",
-        "all_docs": "Toda la documentaci&oacute;n",
+        "s2_h": "Módulos y arquitecturas",
+        "s2_p": "Cuatro arquitecturas, y cómo elegir.",
+        "s3_i": "database",
+        "s3_h": "Transacciones",
+        "s3_p": "Cuándo se confirma una escritura, y con qué falla.",
+        "all_docs": "Toda la documentación",
+        "final_title": "Escribe las reglas. No la plomería.",
+        "final_p": (
+            "Genera el stack con un comando, y deja que la CI lo mantenga con la "
+            "forma que elegiste mientras un equipo &mdash; o un agente &mdash; trabaja en él."
+        ),
+        "back_top": "Volver arriba",
     },
 }
 
 
 def build_docs_home(
-    version: str, versions: list[str], summaries: dict[str, str], lang: str = "en"
+    version: str,
+    versions: list[str],
+    summaries: dict[str, str],
+    release: str,
+    lang: str = "en",
 ) -> str:
     """The documentation home: every page as a card, with the sidebar.
 
     Separate from the landing on purpose. Somebody who arrives here has already
     decided to read, so the sidebar is help rather than clutter -- and the
-    landing is free to be a landing.
+    landing is free to be a landing. The Spanish one is a Spanish page: its
+    headings, its titles, and summaries taken from the Spanish text.
     """
+    words = CHROME[lang]
+    by_slug = {page.slug: page for page in PAGES}
     sections = []
     for heading, slugs in SECTIONS:
-        by_slug = {page.slug: page for page in PAGES}
         cards = "\n".join(
-            f"""        <a class="card" href="{by_slug[slug].slug}.html">
-          <h3>{html.escape(by_slug[slug].title)}</h3>
-          <p>{html.escape(by_slug[slug].summary or summaries.get(slug, ""))}</p>
+            f"""        <a class="card" href="{slug}.html">
+          <h3>{html.escape(page_title(by_slug[slug], lang))}</h3>
+          <p>{html.escape(summaries.get(slug) or by_slug[slug].summary)}</p>
         </a>"""
             for slug in slugs
             if slug in by_slug
         )
         if not cards:
             continue
+        label = heading if lang == "en" else SECTION_ES.get(heading, heading)
         sections.append(
             f"""    <section class="doc-section">
-      <h2>{html.escape(heading)}</h2>
+      <h2>{html.escape(label)}</h2>
       <div class="cards">
 {cards}
       </div>
@@ -1399,23 +1600,29 @@ def build_docs_home(
 
     body = "\n".join(sections) + "\n"
     return layout(
-        title="Documentation",
+        title=words["docs_title"],
         body=body,
         version=version,
         versions=versions,
         active="docs",
+        release=release,
+        depth=0 if lang == "en" else 1,
         hero=(
-            '    <header class="doc-head"><h1>Documentation</h1>'
-            "<p>Every page, grouped the way the sidebar groups them. Start at the"
-            " top, or jump to the one you already half-remember.</p></header>\n"
+            f'    <header class="doc-head"><h1>{words["docs_title"]}</h1>'
+            f"<p>{words['docs_lede']}</p></header>\n"
         ),
         wide=True,
+        lang=lang,
     )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="latest")
+    parser.add_argument(
+        "--version",
+        default="latest",
+        help="The directory this build is published under: latest, or a minor series.",
+    )
     parser.add_argument("--output", type=Path, default=REPO / "site" / "latest")
     parser.add_argument(
         "--versions",
@@ -1427,12 +1634,13 @@ def main() -> int:
     versions = [v.strip() for v in args.versions.split(",") if v.strip()] or [args.version]
     if args.version not in versions:
         versions.insert(0, args.version)
+    release = release_version()
 
     output: Path = args.output
     output.mkdir(parents=True, exist_ok=True)
     shutil.copytree(ASSETS, output / "assets", dirs_exist_ok=True)
 
-    summaries: dict[str, str] = {}
+    summaries: dict[str, dict[str, str]] = {"en": {}, "es": {}}
     spanish = output / "es"
     spanish.mkdir(exist_ok=True)
     translated_count = 0
@@ -1451,23 +1659,24 @@ def main() -> int:
             body, summary = render_markdown(source.read_text(encoding="utf-8"))
             body = rewrite_links(body)
             body, own_title = strip_leading_h1(body)
-            if lang == "en":
-                summaries[page.slug] = summary
+            if lang == "en" or is_translated:
+                summaries[lang][page.slug] = summary
             if lang != "en" and is_translated:
                 translated_count += 1
 
-            heading = html.escape(own_title or page.title)
+            heading = html.escape(own_title or page_title(page, lang))
             hero = f'    <header class="doc-head"><h1>{heading}</h1></header>\n'
             if not is_translated:
                 hero += UNTRANSLATED_NOTICE
 
             (target / f"{page.slug}.html").write_text(
                 layout(
-                    title=page.title,
+                    title=page_title(page, lang),
                     body=body,
                     version=args.version,
                     versions=versions,
                     active=page.slug,
+                    release=release,
                     hero=hero,
                     depth=depth,
                     lang=lang,
@@ -1479,22 +1688,29 @@ def main() -> int:
     print(f"  translated {translated_count}/{len(PAGES)} pages into Spanish")
 
     (output / "docs.html").write_text(
-        build_docs_home(args.version, versions, summaries), encoding="utf-8"
+        build_docs_home(args.version, versions, summaries["en"], release), encoding="utf-8"
     )
     (spanish / "docs.html").write_text(
-        build_docs_home(args.version, versions, summaries, lang="es"), encoding="utf-8"
+        build_docs_home(
+            args.version,
+            versions,
+            {**summaries["en"], **summaries["es"]},
+            release,
+            lang="es",
+        ),
+        encoding="utf-8",
     )
     print("  built    docs.html (en, es)")
 
-    (output / "index.html").write_text(build_landing(args.version), encoding="utf-8")
+    (output / "index.html").write_text(build_landing(release), encoding="utf-8")
     print("  built    index.html")
 
     # Spanish lives one directory down rather than as index.es.html: a folder
     # is what a reader can bookmark and what a CDN can serve as a default.
-    (spanish / "index.html").write_text(build_landing(args.version, "es"), encoding="utf-8")
+    (spanish / "index.html").write_text(build_landing(release, "es"), encoding="utf-8")
     print("  built    es/index.html")
     (output / "versions.json").write_text(json.dumps(versions, indent=2), encoding="utf-8")
-    print(f"\nSite written to {output}")
+    print(f"\nSite written to {output} (release {release})")
     return 0
 
 

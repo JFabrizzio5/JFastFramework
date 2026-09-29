@@ -89,6 +89,29 @@ generated module wired its session that way.
   pre-releases exist; STATUS said there were no upper bounds, which `0.1.0a8`
   added; CI said the package was not on PyPI.
 
+### Documentation site
+
+- **Spanish pages lead to Spanish pages.** Every sidebar link, pager link and
+  landing button on a Spanish page pointed at the English page one directory
+  up, so the translations were reachable only through the language switch.
+  `es/docs.html` loaded a stylesheet that is not there and said `lang="en"`.
+  None of it was seen because `docs-site/check.py` only read the top level; it
+  now checks `es/` too, refuses a link that leaves Spanish for English other
+  than the switch itself, and checks `<html lang>`. Against the previous build
+  it reports 1,197 problems.
+- **The version is the release.** Pages printed the directory they are
+  published under, so every footer said "JFastFramework latest". They print the
+  package version now, read from the source, and the picker says
+  `latest · 0.1.0a9`. The landing's figures -- plugins, layouts, test functions
+  -- are counted at build time instead of typed into the copy, which had said
+  17 plugins and 509 tests for a month.
+- **Chrome in both languages.** Pager, copy button, footer, docs home, the
+  trade-off label and the theme toggle's label were English on Spanish pages.
+- **Liquid ruby.** Dark by default, glass panels, an island navbar, and on the
+  landing a glass ribbon drawn with three.js -- pinned and hashed from cdnjs,
+  with a still glow when it cannot run. The logo sits on the right of the hero
+  on its own pane of glass. See `docs-site/assets/BRAND.md`.
+
 ### Not done, and named
 
 The outbox (`enqueue` still commits in its own transaction), idempotency keys,

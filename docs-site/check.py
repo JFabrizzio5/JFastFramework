@@ -23,6 +23,9 @@ class Collector(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.links: list[str] = []
+        # Links that say which language they lead to: the switch, and nothing
+        # else, is allowed to cross from one language to the other.
+        self.switches: set[str] = set()
         self.assets: list[str] = []
         self.ids: set[str] = set()
         self.titles: list[str] = []
@@ -35,6 +38,8 @@ class Collector(HTMLParser):
             self.ids.add(identifier)
         if tag == "a" and (href := values.get("href")):
             self.links.append(href)
+            if values.get("hreflang"):
+                self.switches.add(href)
         if tag in ("link", "script", "img") and (src := values.get("href") or values.get("src")):
             self.assets.append(src)
         if tag == "title":
@@ -53,7 +58,10 @@ class Collector(HTMLParser):
 
 def check(site: Path) -> list[str]:
     problems: list[str] = []
-    pages = sorted(site.glob("*.html"))
+    # The Spanish pages too. They sit one directory down, and checking only the
+    # top level is how es/docs.html shipped loading a stylesheet that is not
+    # there, and every Spanish sidebar link shipped leading to English.
+    pages = sorted(site.glob("*.html")) + sorted((site / "es").glob("*.html"))
 
     if not pages:
         return [f"{site}: no pages were built"]
@@ -64,7 +72,8 @@ def check(site: Path) -> list[str]:
 
     for page in pages:
         text = page.read_text(encoding="utf-8")
-        name = page.name
+        name = page.relative_to(site).as_posix()
+        spanish = page.parent.name == "es"
 
         # A template that failed to substitute renders as literal braces. It
         # looks like a page and reads like a bug report.
@@ -93,6 +102,9 @@ def check(site: Path) -> list[str]:
                 problems.append(f"{name}: absolute link {href!r} breaks under a versioned path")
                 continue
             resolved = (page.parent / target).resolve()
+            crosses = resolved.suffix == ".html" and resolved.parent != page.parent
+            if spanish and crosses and href not in collector.switches:
+                problems.append(f"{name}: {href!r} leaves Spanish for another language")
             if not resolved.exists():
                 problems.append(f"{name}: dead link {href!r}")
             elif fragment and resolved.suffix == ".html" and resolved != page:
@@ -107,16 +119,23 @@ def check(site: Path) -> list[str]:
             if not (page.parent / src).resolve().exists():
                 problems.append(f"{name}: missing asset {src!r}")
 
+        # A page in es/ that says it is English is read aloud in the wrong
+        # accent and ranked for the wrong searches.
+        declared = re.search(r'<html lang="([a-z]+)"', text)
+        expected = "es" if spanish else "en"
+        if not declared or declared.group(1) != expected:
+            problems.append(f"{name}: <html lang> is not {expected!r}")
+
     css = (site / "assets" / "site.css").read_text(encoding="utf-8")
-    # Every token must exist outside a media query, or the light theme is
-    # undefined for whatever was only declared in the dark block.
+    # Every token the light theme re-points must exist on :root, or it is
+    # undefined in the default theme -- dark -- for whatever only light set.
     root_block = re.search(r":root\s*\{(.*?)\}", css, re.DOTALL)
-    dark_block = re.search(r"prefers-color-scheme: dark.*?:root\s*\{(.*?)\}", css, re.DOTALL)
-    if root_block and dark_block:
-        light = set(re.findall(r"(--[\w-]+):", root_block.group(1)))
-        dark = set(re.findall(r"(--[\w-]+):", dark_block.group(1)))
-        for token in sorted(dark - light):
-            problems.append(f"site.css: {token} is only defined in the dark theme")
+    light_block = re.search(r':root\[data-theme="light"\]\s*\{(.*?)\}', css, re.DOTALL)
+    if root_block and light_block:
+        default = set(re.findall(r"(--[\w-]+):", root_block.group(1)))
+        light = set(re.findall(r"(--[\w-]+):", light_block.group(1)))
+        for token in sorted(light - default):
+            problems.append(f"site.css: {token} is only defined in the light theme")
 
     return problems
 
@@ -124,7 +143,7 @@ def check(site: Path) -> list[str]:
 def main() -> int:
     site = Path(sys.argv[1] if len(sys.argv) > 1 else "site/latest")
     problems = check(site)
-    pages = len(list(site.glob("*.html")))
+    pages = len(list(site.glob("*.html"))) + len(list((site / "es").glob("*.html")))
 
     for problem in problems:
         print(f"  FAIL  {problem}")

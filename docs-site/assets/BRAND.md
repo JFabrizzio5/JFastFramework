@@ -1,13 +1,11 @@
 # Brand assets
 
-Three files, and one that is optional.
-
 | File | Where it is used |
 | --- | --- |
-| `mark.svg` | The topbar monogram, and the hero art when no mascot is present. |
+| `mark.svg` | The topbar monogram, and the landing's hero, large, on a pane of glass. |
 | `favicon.svg` | The browser tab. A square crop, with no gradients, because at 16px they turn to mud. |
-| `site.css` | The palette. Black and crimson; the tokens are defined once on `:root` and re-pointed under `prefers-color-scheme`. |
-| `mascot.png` | **Optional.** The owl. Drop it here and the home page hero uses it instead of the monogram. |
+| `site.css` | The palette -- liquid ruby. Tokens are defined once on `:root` (dark, the default) and re-pointed once under `[data-theme="light"]`. |
+| `liquid.js` | The glass ribbon behind the landing: two twisted tubes drawn with three.js, refracting a ruby body. |
 
 ## The mark
 
@@ -25,30 +23,30 @@ be noticed second, and they are dropped entirely from the favicon, where at
 the paths, recompute the transform: getting it wrong clips the hook off the
 right edge, which reads as a rendering bug rather than as a logo.
 
-## The mascot
+## The ribbon
 
-The site is built to work without it, which is what stops a missing binary from
-breaking the build:
+`liquid.js` needs three.js, which the landing loads from cdnjs, pinned to r128
+with an integrity hash. If the CDN is blocked, the hash does not match, or the
+browser has no WebGL, the script adds `no-webgl` to `<html>` and CSS paints a
+still ruby glow where the ribbon was. Nothing else on the page depends on it.
 
-```bash
-cp ~/wherever/owl.png docs-site/assets/mascot.png
-python docs-site/build.py --version latest --output site/latest
-```
-
-`build.py` checks for the file and falls back to `mark.svg` when it is absent.
-Nothing else needs editing.
-
-Save it at roughly 1520×1014 (2× the 760×507 the page reserves) so it stays
-sharp on a high-density display, and keep the black ground baked into the
-image — the hero paints black behind it in light mode for exactly that reason.
+It is on the landing only. Documentation keeps a still glow behind the text:
+reading over motion is reading nobody finishes.
 
 ## The palette
 
-| Token | Dark | Light |
+Ruby, on a near-black studio.
+
+| Token | Dark (default) | Light |
 | --- | --- | --- |
-| Accent | `#ff3b45` | `#d0111c` |
-| Background | `#08080a` | `#fbfbfc` |
-| Terminal | `#050506` | `#0b0b0e` |
+| Accent | `#e11d2e` | `#c8102e` |
+| Link text | `#ff4d5e` | `#b80f28` |
+| Glass body | `#7a0714` | `#7a0714` |
+| Background | `#030305` | `#f8f9fd` |
+| Terminal | `rgba(6, 6, 9, .86)` | `#0b0b10` |
+
+Links use the brighter ruby on the dark ground: `#e11d2e` there is 4.3:1, under
+AA for body text, while `#ff4d5e` is 6.4:1.
 
 The wordmark sets `jfast` in the accent and `framework` in the text colour, so
 it reads as one word and still says which half is the name.
