@@ -259,7 +259,7 @@ class _LazyConnection:
     def __init__(self, plugin: QueuePlugin) -> None:
         self._plugin = plugin
 
-    async def channel(self) -> Any:
+    async def channel(self, **options: Any) -> Any:
         if self._plugin._connection is None:
             raise PluginError("RabbitMQ connection is not open yet")
-        return await self._plugin._connection.channel()
+        return await self._plugin._connection.channel(**options)

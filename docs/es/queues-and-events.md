@@ -152,10 +152,45 @@ que muere deja su job visible para recuperarlo; una cola ingenua con `BRPOP` lo
 pierde. Al arrancar y al apagarse, el worker devuelve lo que haya quedado en su
 propia lista de procesamiento.
 
-**RabbitMQ** reintenta a través de un dead-letter exchange con TTL: un job
-rechazado va a una cola de retraso cuyos mensajes expiran de vuelta a la cola
-principal. Dormir dentro del worker, en cambio, mantendría una conexión ocupada
-y perdería el retraso al reiniciar.
+**RabbitMQ** sostiene en el broker los jobs diferidos y el backoff de los
+reintentos, sin plugin; ver [Retrasos en RabbitMQ](#retrasos-en-rabbitmq).
+Dormir dentro del worker, en cambio, mantendría una conexión ocupada y perdería
+el retraso al reiniciar.
+
+### Retrasos en RabbitMQ
+
+`Job(available_at=...)` y cada reintento van por el mismo camino. El diseño
+obvio -- una cola de retraso, un TTL por mensaje -- está mal: RabbitMQ solo
+expira el mensaje que está a la **cabeza** de la cola, así que un job diferido
+diez minutos detiene a uno diferido un segundo que se publicó después. Una
+tarea periódica que se vuelve a encolar con retraso deja de ser periódica.
+
+En su lugar el backend declara una cascada. El nivel `n` es una cola cuyo TTL
+es `2**n` × 100 ms *para todos sus mensajes*, así que expiran en el orden en
+que llegaron y nada espera detrás de uno más largo. El retraso se escribe en
+binario en la routing key y se publica en el nivel más alto; el topic exchange
+de cada nivel mete el mensaje en su cola cuando su bit es 1 y lo pasa al nivel
+de abajo cuando es 0, y un mensaje expirado va por dead-letter al nivel
+inferior. El tiempo en la cascada es la suma de los niveles cuyo bit está
+encendido.
+
+- **Precisión:** redondeada hacia arriba a 100 ms. Un job puede empezar hasta
+  100 ms tarde y nunca antes.
+- **Alcance:** 25 niveles sostienen unos 38 días. Un retraso mayor pasa por la
+  cascada al máximo llevando su hora debida en un header, y el worker que lo
+  recibe antes de tiempo lo manda otra vuelta -- el único paso que compara
+  relojes.
+- **Topología:** para una cola llamada `jfast.jobs` el broker tiene
+  `jfast.jobs.delay.0` a `jfast.jobs.delay.24`, cada uno un exchange y una
+  cola. Se declaran en el setup; `GET /queue/stats` reporta su total como
+  `delayed`.
+- **Lo que no sobrevive:** el dead-lettering de un nivel al siguiente no está
+  cubierto por publisher confirms, así que un broker que se cae durante el
+  salto puede perder ese mensaje.
+
+La unidad y el número de niveles son topología del broker: una cola declarada
+con un TTL se niega a redeclararse con otro. Cambiar cualquiera de los dos
+requiere otro nombre de cola.
 
 ### Reintentos
 
@@ -289,9 +324,14 @@ jobs, el drenado del worker al apagarse, y que un worker ocioso ceda en vez de
 hacer busy-waiting — contra un backend en memoria que implementa el mismo
 protocolo.
 
-**Sin probar:** los backends de PostgreSQL, Redis, RabbitMQ y Kafka contra
-servidores reales. El SQL y las llamadas a los clientes están escritos contra
-el comportamiento documentado pero no se han probado de ida y vuelta en CI. Una
-suite de integración con contenedores reales es la fase 6 de PLAN.md; hasta
-entonces, trata tu primer despliegue de un backend que no sea el default como
-la prueba.
+**Contra un RabbitMQ 3.13 real** (`tests/test_rabbitmq_queue.py`, que CI no
+deja saltar): un job diferido espera su hora, un retraso largo no detiene a uno
+corto detrás de él, los jobs diferidos llegan en el orden en que vencen, un
+reintento espera su backoff en el broker, un job agotado va a dead-letter, un
+retraso más largo que la cascada da otra vuelta, y un worker reintenta un
+handler que falla a través de todo eso.
+
+**Sin probar:** los backends de Redis y Kafka contra servidores reales. La cola
+de PostgreSQL solo toca un servidor real en la suite del outbox, que encola a
+través de la sesión de un request y reclama lo que escribió. RabbitMQ no se ha probado en clúster, con un
+reinicio del broker ni con quorum queues.

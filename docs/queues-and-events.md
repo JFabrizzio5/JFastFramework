@@ -146,9 +146,42 @@ the claim predicate, so accumulating dead jobs do not slow the queue down.
 leaves its job visible for recovery; a naive `BRPOP` queue drops it. On startup
 and shutdown the worker returns anything left in its own processing list.
 
-**RabbitMQ** retries through a dead-letter exchange with a TTL: a rejected job
-goes to a delay queue whose messages expire back onto the main queue. Sleeping
-in the worker instead would hold a connection and lose the delay on restart.
+**RabbitMQ** holds delayed jobs and retry backoff in the broker, with no
+plugin; see [Delays on RabbitMQ](#delays-on-rabbitmq). Sleeping in the worker
+instead would hold a connection and lose the delay on restart.
+
+### Delays on RabbitMQ
+
+`Job(available_at=...)` and every retry go through the same path. The obvious
+design -- one delay queue, a TTL on each message -- is wrong: RabbitMQ only
+expires the message at the **head** of a queue, so a job delayed ten minutes
+holds up a job delayed one second that was published after it. A periodic task
+that re-enqueues itself with a delay stops being periodic.
+
+The backend declares a cascade instead. Level `n` is a queue whose TTL is
+`2**n` × 100 ms *for every message in it*, so messages expire in the order they
+arrived and nothing waits behind a longer one. The delay is written in binary
+into the routing key and published to the top level; each level's topic
+exchange puts the message in its queue when its bit is 1 and passes it down
+when it is 0, and an expired message is dead-lettered to the level below. The
+time spent in the cascade is the sum of the levels whose bit is set.
+
+- **Precision:** rounded up to 100 ms. A job can start up to 100 ms late and
+  never early.
+- **Range:** 25 levels hold about 38 days. A longer delay passes through at
+  the maximum carrying its due time in a header, and the worker that receives
+  it early sends it round again -- the only step that compares clocks.
+- **Topology:** for a queue named `jfast.jobs` the broker holds
+  `jfast.jobs.delay.0` to `jfast.jobs.delay.24`, each an exchange and a queue.
+  They are declared at setup; `GET /queue/stats` reports their total as
+  `delayed`.
+- **What it does not survive:** dead-lettering from one level to the next is
+  not covered by publisher confirms, so a broker that crashes during the hop
+  can lose that message.
+
+The unit and the level count are broker topology: a queue declared with one
+TTL refuses to be redeclared with another. Changing either needs a new queue
+name.
 
 ### Retries
 
@@ -291,8 +324,14 @@ dead-lettering, unknown-task handling, job timeouts, worker draining on
 shutdown, and that an idle worker yields instead of busy-waiting — against an
 in-memory backend implementing the same protocol.
 
-**Not tested:** the PostgreSQL, Redis, RabbitMQ and Kafka backends against real
-servers. The SQL and the client calls are written against documented behaviour
-but have not been round-tripped in CI. An integration suite with real
-containers is PLAN.md phase 6; until then, treat your first deployment of a
-non-default backend as the test.
+**Against a real RabbitMQ 3.13** (`tests/test_rabbitmq_queue.py`, which CI
+refuses to let skip): a delayed job waits for its time, a long delay does not
+hold up a short one behind it, delayed jobs arrive in due order, a retry waits
+out its backoff in the broker, an exhausted job is dead-lettered, a delay
+longer than the cascade goes round again, and a worker retries a failing
+handler through all of it.
+
+**Not tested:** the Redis and Kafka backends against real servers. The
+PostgreSQL queue meets a real server only in the outbox suite, which enqueues
+through a request's session and claims what it wrote. RabbitMQ has not been tested in a cluster, under a broker
+restart, or with quorum queues.
