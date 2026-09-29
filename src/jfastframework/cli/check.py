@@ -361,9 +361,9 @@ def _plugins_check(root: Path, state: _State) -> CheckResult:
     declared: dict[str, str] = state.config.raw.get("plugins", {}).get("paths", {}) or {}
     available = registry.discover(extra_paths=declared, search_path=root)
     broken: dict[str, str] = getattr(registry.discover, "broken", {})
-    # `cli/main.py::_known_plugins` to the letter, because `analyze` is handed
-    # this set and has to answer here exactly what it answers on its own. A
-    # dotted path that does not import is a name nothing provides, however
+    # `cli/commands/project.py::_known_plugins` to the letter, because `analyze`
+    # is handed this set and has to answer here exactly what it answers on its
+    # own. A dotted path that does not import is a name nothing provides, however
     # confidently jfast.toml names it; only an installed distribution earns the
     # "broken, not missing" reading.
     state.known_plugins = frozenset(available) | frozenset(

@@ -208,7 +208,9 @@ ignore = ["ASYNC109"]
 "src/jfastframework/cli/ui.py" = ["RUF001"]
 # glyphs.py is nothing but those characters: it is the table of them.
 "src/jfastframework/cli/glyphs.py" = ["RUF001"]
-"src/jfastframework/cli/main.py" = ["B008", "RUF001"]
+# Typer declares options as call-in-default; the command modules are written
+# in that style rather than binding every option to a module constant.
+"src/jfastframework/cli/commands/*" = ["B008"]
 # FastAPI dependencies are declared as call-in-default; that is the API.
 "src/jfastframework/plugins/builtin/*" = ["B008"]
 "tests/*" = ["B008"]
