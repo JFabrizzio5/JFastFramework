@@ -24,17 +24,35 @@ that needs it, and the check tells you the day a second one wants it.
 
 ### The rule
 
-**Modules do not import each other.** Two modules that reach into each other
-are one module with a folder between them — neither can be extracted into a
-service later, and a change to one breaks the other in a way no test covers.
+**`shared/` is vocabulary, not behaviour.** An enum, a type or a pure function
+that two modules both speak moves here, and the check names the file when a
+module imports one from another:
 
 ```
-modules/payment/service.py:41: cross-module: module 'payment' imports module 'invoice'
-  (two modules that need the same thing should share it: move it to shared/enums.py)
+modules/payment/service.py:41: cross-module: module 'payment' imports modules.invoice.enums, private to module 'invoice'
+  (an enum or type two modules both speak is vocabulary: move it to shared/enums.py and import it from both)
 ```
 
 Moving it to `shared/` clears the finding. The message names the file, so the
 fix does not need a design discussion.
+
+**Data and behaviour do not come here.** When `payment` needs rows `invoice`
+owns, the answer is not to move `InvoiceRepository` into `shared/` — that is
+two modules sharing a table, and the checker cannot tell it from the coupling
+it was meant to remove. It is a function in `modules/invoice/public.py` that
+takes the caller's session and a `tenant_id` and returns DTOs, plus
+`depends_on = ["invoice"]` under `[modules.payment]` in `contracts.toml`. For
+anything else of another module the message says exactly that:
+
+```
+modules/payment/service.py:12: cross-module: module 'payment' imports modules.invoice.service; import modules.invoice.public instead
+  (only public.py is another module's API -- call a function in modules/invoice/public.py that returns DTOs (add one if it is missing), and add "invoice" to depends_on under [modules.payment] in contracts.toml)
+```
+
+And raw SQL against `invoices` from inside `payment` is reported as
+`cross-module-sql`: it is the same coupling with nothing to see it.
+[Services, modules and layouts](modules.md#communication-between-modules) has
+the full example and the reasons.
 
 **The direction is one-way**, and that is checked too:
 
@@ -46,6 +64,25 @@ shared/enums.py:43: shared-direction: shared/ imports modules.invoice
 
 Without that second rule `shared/` becomes the place everything ends up, which
 is the failure mode of every `utils` package ever written.
+
+### Queries through a facade, effects through events
+
+The three ways across a module boundary, and which one to use:
+
+| You need to… | Use | Not |
+| --- | --- | --- |
+| read data another module owns | a function in its `public.py`, returning DTOs | its repository, its entity, SQL against its tables |
+| react to something another module did | an event it publishes through the outbox | a call back into it |
+| speak the same enum or type | `shared/` | a copy in each module |
+
+The second row is where events and channels come in. A module that has to know
+when a receipt was categorised does not ask the receipts module to call it; the
+receipts module publishes `receipt.categorized` in the transaction that did the
+categorising — `outbox.publish(session, topic, Event(...))`, see
+[Queues and events](queues-and-events.md) — and whoever cares subscribes. The
+publisher never names its subscribers, so the dependency points one way and the
+module graph stays free of cycles. A [channel](#channels) below does the same
+job inside one process when the event does not have to survive a crash.
 
 ### What belongs in shared/
 
@@ -70,7 +107,8 @@ And **the value is the wire format**. It is stored in a column, serialised into
 an API response and read by a frontend. Renaming a member is free; changing its
 value is a data migration.
 
-Turn the whole thing off if you disagree:
+Turn the whole thing off if you disagree — one switch for every module rule,
+facade and SQL checks included:
 
 ```toml
 [rules.placement]

@@ -20,6 +20,7 @@ declaration.
 | `infrastructure/orm.py` | The SQLAlchemy table and the row → entity mapping | SQLAlchemy, `domain/` |
 | `infrastructure/repository.py` | The adapter implementing the port | SQLAlchemy, `domain/` |
 | `adapters/http.py` | The FastAPI router and its wire schemas | FastAPI, `application/`, `infrastructure/` |
+| `public.py` | The only file other modules may import. Takes a session and `tenant_id`, returns DTOs | `application/`, `infrastructure/`, `domain/` |
 
 The arrow points inward and never turns around. `adapters` knows
 `application`, `application` knows the port, and the domain knows nothing.

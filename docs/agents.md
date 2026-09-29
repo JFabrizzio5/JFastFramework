@@ -77,8 +77,8 @@ exact commands, how to verify, and the mistakes people actually make.
 These are not advice. `jfast contracts check` fails the build:
 
 ```
-modules/payment/<file>:41: cross-module: module 'payment' imports module 'invoice'
-  (two modules that need the same thing should share it: move it to shared/enums.py)
+modules/payment/<file>:41: cross-module: module 'payment' imports modules.invoice.service; import modules.invoice.public instead
+  (only public.py is another module's API -- call a function in modules/invoice/public.py that returns DTOs (add one if it is missing), and add "invoice" to depends_on under [modules.payment] in contracts.toml)
 ```
 
 `file:line`, the rule, what happened, and **what to do about it**. That second
@@ -93,7 +93,8 @@ generated code:
 | Rule | Why an agent trips it |
 | --- | --- |
 | The HTTP layer may not import `sqlalchemy` | Querying from the handler is the shortest path to a working endpoint |
-| Modules may not import each other | Reusing the neighbour's model is easier than moving it |
+| A module imports another only through its `public.py`, declared in `depends_on` | Reusing the neighbour's model is easier than asking its facade |
+| No raw SQL against another module's tables | A `text("SELECT ...")` looks like it avoids the import rule |
 | `shared/` may not import a module | Fixing the above by importing backwards |
 | No blocking calls in `async def` | `time.sleep` and `requests` are what most examples use |
 
@@ -137,15 +138,16 @@ service, so it scales with your service. Measured on generated services —
 
 | modules | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 8,298 | 2,789 |
-| 3 | 9,896 | 4,073 |
-| 5 | 11,508 | 5,369 |
+| 1 | 8,909 | 2,910 |
+| 3 | 10,613 | 4,196 |
+| 5 | 12,333 | 5,494 |
 
 A generated service is the floor, because nothing is wrong with it yet. The
 same five-module service after some work in it — two modules `main.py` never
 picked up, a file outside any module, two contract violations — measures
-**14,837 bytes (~3,700 tokens) full and 6,149 (~1,500) with `--brief`**. Roughly
-+800 bytes per module, and the rest is `next` and `checks` growing with what is
+about **3.3 KB more than the floor above in full, and 0.8 KB more with
+`--brief`** (measured on 0.1.0a9, when the floors were 11.5 KB and 5.4 KB). Roughly +800
+bytes per module, and the rest is `next` and `checks` growing with what is
 actually outstanding.
 
 Where the full payload goes on that five-module service, in bytes:

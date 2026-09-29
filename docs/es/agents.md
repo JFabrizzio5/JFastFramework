@@ -79,8 +79,8 @@ verdad.
 No son consejos. `jfast contracts check` rompe el build:
 
 ```
-modules/payment/<file>:41: cross-module: module 'payment' imports module 'invoice'
-  (two modules that need the same thing should share it: move it to shared/enums.py)
+modules/payment/<file>:41: cross-module: module 'payment' imports modules.invoice.service; import modules.invoice.public instead
+  (only public.py is another module's API -- call a function in modules/invoice/public.py that returns DTOs (add one if it is missing), and add "invoice" to depends_on under [modules.payment] in contracts.toml)
 ```
 
 `archivo:línea`, la regla, qué pasó, y **qué hacer al respecto**. Esa segunda
@@ -95,7 +95,8 @@ atrapan código generado:
 | Regla | Por qué la pisa un agente |
 | --- | --- |
 | La capa HTTP no puede importar `sqlalchemy` | Consultar desde el handler es el camino más corto a un endpoint que anda |
-| Los módulos no se importan entre sí | Reusar el modelo del vecino es más fácil que moverlo |
+| Un módulo importa a otro solo a través de su `public.py`, declarado en `depends_on` | Reusar el modelo del vecino es más fácil que pedírselo a su fachada |
+| Nada de SQL crudo contra tablas de otro módulo | Un `text("SELECT ...")` parece esquivar la regla de imports |
 | `shared/` no puede importar un módulo | Arreglar lo anterior importando al revés |
 | Nada bloqueante en `async def` | `time.sleep` y `requests` es lo que usan casi todos los ejemplos |
 
@@ -139,15 +140,16 @@ servicio, así que escala con tu servicio. Medido sobre servicios generados —
 
 | módulos | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 8,298 | 2,789 |
-| 3 | 9,896 | 4,073 |
-| 5 | 11,508 | 5,369 |
+| 1 | 8,909 | 2,910 |
+| 3 | 10,613 | 4,196 |
+| 5 | 12,333 | 5,494 |
 
 Un servicio recién generado es el piso, porque todavía no hay nada mal en él. El
 mismo servicio de cinco módulos después de trabajarlo un rato — dos módulos que
 `main.py` nunca levantó, un archivo fuera de todo módulo, dos violaciones de
-contrato — mide **14,837 bytes (~3,700 tokens) completo y 6,149 (~1,500) con
-`--brief`**. Aproximadamente +800 bytes por módulo; el resto es `next` y `checks`
+contrato — mide unos **3.3 KB más que el piso de arriba completo, y 0.8 KB más
+con `--brief`** (medido en 0.1.0a9, cuando los pisos eran 11.5 KB y 5.4 KB).
+Aproximadamente +800 bytes por módulo; el resto es `next` y `checks`
 creciendo con lo que realmente está pendiente.
 
 Dónde se va el payload completo en ese servicio de cinco módulos, en bytes:

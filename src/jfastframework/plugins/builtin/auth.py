@@ -42,8 +42,8 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import SettingsConfigDict
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from jfastframework.auth.jwks import JWKSClient, JWKSError
 from jfastframework.auth.principal import Grant, Principal, principal_var
@@ -409,7 +409,7 @@ class TokenIssuer:
         return resolved
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
+class AuthMiddleware:
     """Verify a bearer token when one is present, and never reject here.
 
     Rejection is the dependency's job: a public endpoint must keep working
@@ -418,14 +418,25 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     Verifying anyway means the access log and every log line inside the
     request carry the caller's identity, including on public routes.
+
+    Plain ASGI rather than ``BaseHTTPMiddleware``: same work, without a task
+    group and a memory stream per request.
     """
 
-    def __init__(self, app: Any, *, plugin: AuthPlugin) -> None:
-        super().__init__(app)
+    def __init__(self, app: ASGIApp, *, plugin: AuthPlugin) -> None:
+        self.app = app
         self._plugin = plugin
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
-        header = request.headers.get("Authorization", "")
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        header = ""
+        for key, value in scope["headers"]:
+            if key == b"authorization":
+                header = value.decode("latin-1")
+                break
         principal: Principal | None = None
 
         if header.lower().startswith("bearer "):
@@ -448,21 +459,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 # reconnaissance.
                 logger.info("token rejected", extra={"reason": str(exc)})
 
+        state = scope.setdefault("state", {})
+        state["principal"] = principal
         token = principal_var.set(principal)
-        request.state.principal = principal
+        tenant_token = None
         if principal is not None and principal.tenant_id:
             # A signed claim beats the X-Tenant-ID header the observability
             # plugin would otherwise trust. Anyone can send that header.
-            request.state.tenant_id = principal.tenant_id
+            state["tenant_id"] = principal.tenant_id
             from jfastframework.plugins.builtin.observability import tenant_id_var
 
             tenant_token = tenant_id_var.set(principal.tenant_id)
-        else:
-            tenant_token = None
 
         try:
-            response: Response = await call_next(request)
-            return response
+            await self.app(scope, receive, send)
         finally:
             principal_var.reset(token)
             if tenant_token is not None:
@@ -474,21 +484,34 @@ class AuthMiddleware(BaseHTTPMiddleware):
 # -- dependencies -------------------------------------------------------
 
 
-def optional_auth(request: Request) -> Principal | None:
-    """The caller, or None. For routes that behave differently when signed in."""
-    principal: Principal | None = getattr(request.state, "principal", None)
-    return principal
+# Every dependency below is ``async def`` on purpose. FastAPI runs a plain
+# ``def`` dependency in the threadpool, and that hop cost 75-85 us per request
+# in the 0.1.0a10 benchmark -- more than every middleware in the stack put
+# together -- for a function that only reads request.state. Call them through
+# Depends; in plain code read ``request.state.principal`` or use
+# ``principal_of``.
 
 
-def require_auth(request: Request) -> Principal:
-    """A verified caller, or 401."""
+def principal_of(request: Request) -> Principal:
+    """The verified caller, or UnauthorizedError. Synchronous, for plain code."""
     principal: Principal | None = getattr(request.state, "principal", None)
     if principal is None:
         raise UnauthorizedError("authentication required")
     return principal
 
 
-def require_scopes(*scopes: str) -> Callable[[Request], Principal]:
+async def optional_auth(request: Request) -> Principal | None:
+    """The caller, or None. For routes that behave differently when signed in."""
+    principal: Principal | None = getattr(request.state, "principal", None)
+    return principal
+
+
+async def require_auth(request: Request) -> Principal:
+    """A verified caller, or 401."""
+    return principal_of(request)
+
+
+def require_scopes(*scopes: str) -> Callable[[Request], Awaitable[Principal]]:
     """Require every listed scope, or 403.
 
     401 means "I do not know who you are"; 403 means "I do, and you may not".
@@ -496,8 +519,8 @@ def require_scopes(*scopes: str) -> Callable[[Request], Principal]:
     guesswork.
     """
 
-    def dependency(request: Request) -> Principal:
-        principal = require_auth(request)
+    async def dependency(request: Request) -> Principal:
+        principal = principal_of(request)
         if not principal.has_scope(*scopes):
             missing = sorted(set(scopes) - principal.scopes)
             raise ForbiddenError(f"missing scope(s): {', '.join(missing)}")
@@ -506,11 +529,11 @@ def require_scopes(*scopes: str) -> Callable[[Request], Principal]:
     return dependency
 
 
-def require_roles(*roles: str) -> Callable[[Request], Principal]:
+def require_roles(*roles: str) -> Callable[[Request], Awaitable[Principal]]:
     """Require any one of these roles, or 403."""
 
-    def dependency(request: Request) -> Principal:
-        principal = require_auth(request)
+    async def dependency(request: Request) -> Principal:
+        principal = principal_of(request)
         if not principal.has_any_role(*roles):
             raise ForbiddenError(f"requires one of: {', '.join(sorted(roles))}")
         return principal

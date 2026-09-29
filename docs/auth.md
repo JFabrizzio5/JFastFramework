@@ -121,6 +121,12 @@ require_roles("admin", "owner")    # any one of these roles
 optional_auth                      # Principal | None, for mixed routes
 ```
 
+They are `async def` and meant for `Depends(...)`. That is not style: FastAPI
+runs a plain `def` dependency in its threadpool, and the hop cost 75-85 us per
+request -- more than the whole middleware stack ([Performance](deploy.md#performance)).
+In plain code, outside a dependency, use the synchronous `principal_of(request)`,
+which raises the same 401, or read `request.state.principal`.
+
 ---
 
 ## Revocation

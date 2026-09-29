@@ -141,6 +141,89 @@ sí misma `sqlalchemy` y `fastapi`. Nada llega a una base de datos ni a un
 router a través de un enum, y la dirección sigue siendo de una sola vía — lo
 que `[rules.placement]` verifica desde el otro lado.
 
+#### `public` es la puerta de cada módulo
+
+Todo contrato generado declara además una capa `public` para
+`modules/*/public.py`: la fachada que llaman los otros módulos. Puede importar
+las capas de su propio módulo — una lectura puede ir directo a storage, una
+escritura pasa por el servicio — y nada dentro del módulo puede importarla de
+vuelta.
+
+Desde qué capa de *otro* módulo se llama a una fachada no es una pregunta de
+capas. Un import de `modules.<otro>.public` desde un módulo distinto se salta el
+check de capas y lo gobiernan `[modules.*]` y `[rules.placement]`, abajo: las
+reglas de capa describen el interior de un módulo, y la fachada es el borde de
+otro. En el layout screaming, `public` es más específica que el comodín del
+dominio `modules/*/[!_]*.py`, así que a la fachada no se le aplican las reglas
+del dominio.
+
+### Entre módulos
+
+Consultas por una fachada, efectos por eventos, nada por `shared/`.
+[Servicios, módulos y layouts](modules.md#comunicacion-entre-modulos) recorre un
+ejemplo completo; esto es lo que el checker te exige.
+
+```toml
+[modules.asesor]
+depends_on = ["comprobante"]    # asesor puede llamar a modules/comprobante/public.py
+```
+
+```python
+# modules/comprobante/public.py
+@dataclass(frozen=True, slots=True)
+class GastoPorCategoria:
+    categoria: str
+    total_centavos: int
+
+async def gasto_por_categoria(session, *, tenant_id: str, desde: date) -> list[GastoPorCategoria]: ...
+
+# modules/asesor/services/asesor_service.py
+from modules.comprobante.public import gasto_por_categoria
+```
+
+Un módulo sin bloque `[modules.<nombre>]` no depende de nada. `jfast new
+module` agrega uno vacío por cada módulo que genera.
+
+| Regla | Se reporta cuando | Qué dice |
+| --- | --- | --- |
+| `cross-module` | un módulo importa cualquier cosa de otro módulo que no sea su `public.py` | `module 'asesor' imports modules.comprobante.services; import modules.comprobante.public instead` — y, si ese archivo no existe, que lo crees con una función que devuelva DTOs |
+| `undeclared-dependency` | importa `modules.<otro>.public` sin `<otro>` en `depends_on` | `module 'asesor' calls modules.comprobante.public but does not declare 'comprobante' in depends_on` |
+| `module-cycle` | el grafo de `depends_on` declarados más los imports reales de fachadas tiene un ciclo | `module dependency cycle: asesor -> comprobante -> asesor`, una vez por ciclo |
+| `public-leak` | `public.py` importa o reexporta una entidad del ORM (cualquier clase de ese módulo cuyo cuerpo asigna `__tablename__`), o importa `fastapi`/`starlette` | `modules/comprobante/public.py imports the ORM entity Comprobante` |
+| `cross-module-sql` | un string en `modules/<aquí>/` tiene SQL que nombra una tabla de otro módulo | `module 'asesor' queries 'comprobantes' (module 'comprobante') with raw SQL` |
+| `unknown-dependency` | un bloque `[modules.x]` o una entrada de `depends_on` nombra algo que no es un módulo en `modules/` -- casi siempre un typo | `[modules.asesor] depends_on names 'comprobantes', which is not a module under modules/` |
+| `shared-direction` | `shared/` importa un módulo | `shared/ imports modules.invoice` |
+
+Dos casos conservan el consejo de antes. Un módulo de **enums o tipos**
+importado (`modules.x.enums`, `modules.x.domain.enums`, `modules.x.types`) es
+vocabulario, así que `cross-module` sigue nombrando el archivo de `shared/` al
+que moverlo. Cualquier otra cosa — un servicio, un repositorio, una entidad —
+es comportamiento, y `shared/` es la respuesta equivocada: el mensaje apunta al
+`public.py` del dueño.
+
+Por qué existe cada regla:
+
+- **La fachada, no `shared/`.** `shared/` es vocabulario: enums, tipos,
+  funciones puras. El comportamiento que se muda ahí para esquivar
+  `cross-module` es un repositorio que comparten dos módulos, o sea dos módulos
+  compartiendo una tabla.
+- **Nada de SQL crudo.** `text("SELECT ... FROM comprobantes")` dentro de
+  `asesor` es el acoplamiento que habría sido un import, menos cualquier cosa
+  que lo vea. La propiedad sale de `__tablename__`: una tabla declarada bajo
+  `modules/comprobante/` es de `comprobante`, y solo se reportan las tablas de
+  un módulo *distinto*. Se buscan en literales de string, incluidas las partes
+  constantes de los f-strings; los docstrings se saltan.
+- **`depends_on` se declara.** Así el grafo es una decisión revisada y no lo
+  que sumen los imports, y un ciclo se ve en `contracts.toml` antes de
+  construirse. Se rompe convirtiendo una dirección en evento — el módulo de
+  abajo se suscribe en vez de que lo llamen de vuelta.
+- **DTOs y nada de HTTP en `public.py`.** A la fachada la llaman workers y
+  otros módulos, no solo un request; una entidad arrastra su sesión y todas sus
+  columnas a través de la frontera.
+
+Todas respetan la exención inline, y `[rules.placement] enabled = false` apaga
+las seis juntas. El nombre del archivo de la fachada es fijo: `public.py`.
+
 ### Llamadas prohibidas
 
 ```toml
@@ -312,19 +395,29 @@ jfast contracts explain                            # every rule that can fire he
 ```
 
 ```
-may module 'invoice' import module 'customer'?  [FORBIDDEN]
+may module 'asesor' import module 'comprobante'?  [FORBIDDEN]
 
-  rule     cross-module  -- one module imported another module
-  what     modules may not import each other: 'invoice' and 'customer' would become one module
-           with a folder between them
-  declared contracts.toml:110
+  rule     cross-module  -- one module imported something of another module other than its
+           public.py
+  what     'asesor' does not declare 'comprobante' in depends_on, so it may not import it -- and
+           even when it does, only through modules/comprobante/public.py
+  declared contracts.toml:148
            [rules.placement]
-  why      Two modules that import each other are one module with a folder between them. Neither
-           can be extracted into a service later, and a change to one breaks the other in a way
-           no test covers. So when a second module needs the same enum, type or pure function,
-           it moves to shared/ -- and the check names the file.
-  instead  - move what both modules need into shared/models.py, then import it from both
-           - if only 'invoice' needs it, it belongs in 'invoice'
+  declared contracts.toml:219
+           depends_on = []
+  why      Placement: how modules talk to each other.
+           Queries through a facade, effects through events, nothing through shared/.
+           A module that needs another's data imports modules/<other>/public.py and nothing else
+           of it: a few functions that take the caller's session and an explicit tenant_id and
+           return DTOs. [...]
+  instead  - to read data 'comprobante' owns: call a function in modules/comprobante/public.py
+           that returns DTOs, and add 'comprobante' to depends_on under [modules.asesor] in
+           contracts.toml
+           - to react to something 'comprobante' did: subscribe to the event it publishes
+           through the outbox, and depend on nothing
+           - if it is an enum or a type both modules speak: move it to shared/enums.py and
+           import it from both
+           - if only 'asesor' needs it, it belongs in 'asesor'
            - waive this one line with # contracts: allow <reason> while the move is in flight
 
   waiver   # contracts: allow <reason> -- one line, and only the rule that fired on it
@@ -344,8 +437,8 @@ Cuatro cosas, y la segunda es la que no daba nada más:
   de esa declaración. Los contratos generados llevan una justificación arriba
   de cada regla; esto la lee en vez de inventar prosa. Donde no hay comentario,
   usa el `description` de la capa y el `why` de la regla.
-* **Qué hacer en su lugar**, nombrando un destino — `shared/models.py`, no "no
-  hagas eso" — y **qué cuesta una exención**, sus dos mitades: la exención
+* **Qué hacer en su lugar**, nombrando un destino —
+  `modules/comprobante/public.py`, no "no hagas eso" — y **qué cuesta una exención**, sus dos mitades: la exención
   inline ocupa una línea y queda listada por `jfast contracts waivers`,
   mientras que editar `contracts.toml` saca la regla para todos, en silencio.
 
@@ -376,16 +469,18 @@ jfast contracts diff --json
 ```
 
 ```
-Architecture changes  (billing)
+Architecture changes  (cuadra)
 
-  + invoice -> customer           cross-module  modules/invoice/enums.py:33
-                                  modules may not import each other
-  - http -> shared                permitted, and no import uses it  declared at contracts.toml:32
-  - storage -> schemas            permitted, and no import uses it  declared at contracts.toml:47
+  + asesor -> comprobante         cross-module  modules/asesor/services/asesor_service.py:1
+                                  reaches past modules/comprobante/public.py, the only file another module may import
+  + reporte -> cartera            undeclared-dependency  modules/reporte/services/reporte_service.py:3
+                                  calls modules/cartera/public.py without 'cartera' in depends_on
+  - asesor -> cartera             declared in depends_on, and no import uses it  declared at contracts.toml:219
+  - http -> shared                permitted, and no import uses it  declared at contracts.toml:37
 
 Potential breaking change:
-  invoice loses access to customer.Customer when that import goes -- move it to shared/models.py
-    and import it from both
+  asesor loses direct access to comprobante.ComprobanteService when that import goes -- expose
+    what it needs from modules/comprobante/public.py as a function returning DTOs
 ```
 
 **No es un diff de git, y el límite vale decirlo claro.** Nada de esto lee una
@@ -396,11 +491,13 @@ que `contracts.toml` *permite* contra los imports que el código *hace*:
   hallazgo que reporta `contracts check`, dicho como cambio de arquitectura,
   con los símbolos que cruzan la arista.
 * `-` es una arista que el contrato permite y ningún import usa: un permiso que
-  se podría ajustar, no algo que se haya quitado.
+  se podría ajustar, no algo que se haya quitado. Entre módulos es una entrada
+  de `depends_on` que ningún import de fachada usa.
 * `~` es un permiso sobre una capa que no gobierna ningún archivo. No es un `-`
   más débil; mira abajo.
 * **Potential breaking change** lista lo que cuesta hacer cumplir el contrato:
-  qué nombre pierde el importador si esa arista se va, y a dónde moverlo. Esa
+  qué nombre pierde el importador si esa arista se va, y de dónde sacarlo en su
+  lugar — el `public.py` del dueño, o `shared/` si es un enum. Esa
   es la diferencia entre mover el código y borrar el import.
 
 Solo cuentan los imports estáticos, y solo entre capas declaradas y directorios
@@ -470,6 +567,12 @@ un archivo de ignore en una semana, y ahí el contrato vuelve a ser decoración.
 - **Solo se inspeccionan imports estáticos y llamadas directas.** `importlib`
   y las cadenas de `getattr` quedan fuera de alcance. Esto es una barandilla
   de diseño, no un sandbox.
+- **`cross-module-sql` lee literales de string, no consultas.** Encuentra un
+  nombre de tabla después de `FROM`, `JOIN`, `INTO`, `UPDATE` o `TABLE` en un
+  string o en la parte constante de un f-string. Un nombre de tabla armado en
+  tiempo de ejecución desde una variable no se ve, y tampoco una consulta de
+  SQLAlchemy construida sobre el modelo de otro módulo — aunque importar ese
+  modelo ya es `cross-module`.
 - **El contrato se valida primero.** Dos capas reclamando un mismo path, o un
   `may_import` que nombra una capa que no existe, se reportan como errores del
   contrato — porque si no, los hallazgos son respuestas seguras a la pregunta

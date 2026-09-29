@@ -97,22 +97,56 @@ async def test_a_streamed_body_over_the_limit_is_refused() -> None:
     assert response.status_code == 413
 
 
+async def _post_streaming_body(spec_version: str | None) -> BaseException | None:
+    """POST a 2 KB body to /answer-then-read with a 1 KB limit; return what failed."""
+    import httpx
+
+    app = _app(max_body_bytes=1024)
+
+    async def declaring(scope, receive, send):  # type: ignore[no-untyped-def]
+        if spec_version is not None and scope["type"] == "http":
+            scope = {**scope, "asgi": {"version": "3.0", "spec_version": spec_version}}
+        await app(scope, receive, send)
+
+    async def chunks():  # type: ignore[no-untyped-def]
+        for _ in range(4):
+            yield b"x" * 512
+
+    transport = httpx.ASGITransport(app=declaring)
+    async with (
+        httpx.AsyncClient(transport=transport, base_url="http://test") as client,
+        app.router.lifespan_context(app),
+    ):
+        try:
+            response = await client.post("/answer-then-read", content=chunks())
+        except Exception as exc:  # noqa: BLE001 - what failed is the result
+            return exc
+    raise AssertionError(f"the response completed: {response.status_code} {response.text!r}")
+
+
 async def test_a_response_already_started_fails_rather_than_truncating() -> None:
     """The one case where 413 is no longer available.
 
     Dropping the remaining chunks was the previous behaviour, and it produced
     a 200 that looked complete and was computed from a truncated request --
     the outcome the limit exists to prevent, wearing a success code. There is
-    nothing honest left but to fail the connection.
+    nothing honest left but to fail the connection. ASGI 2.4, so the body is
+    read only by the handler.
     """
+    failed = await _post_streaming_body("2.4")
+    assert isinstance(failed, BodyTooLarge), failed
 
-    async def chunks():  # type: ignore[no-untyped-def]
-        for _ in range(4):
-            yield b"x" * 512
 
-    with pytest.raises(BodyTooLarge):
-        async with client_for(_app(max_body_bytes=1024)) as client:
-            await client.post("/answer-then-read", content=chunks())
+async def test_under_asgi_2_3_the_response_still_never_completes() -> None:
+    """What uvicorn declares today (2.3), and httpx's test transport too.
+
+    Below 2.4 StreamingResponse runs a disconnect listener that reads the
+    body alongside the handler, so which exception surfaces first is a race
+    -- ClientDisconnect or BodyTooLarge. Through 0.1.0a9 BaseHTTPMiddleware
+    held those reads back and hid the race. What must hold either way: no
+    complete response computed from half a body.
+    """
+    assert await _post_streaming_body(None) is not None
 
 
 # -- request timeout ---------------------------------------------------

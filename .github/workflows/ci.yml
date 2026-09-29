@@ -20,8 +20,10 @@ jobs:
       # The read/write split's whole correctness claim is that a read
       # following a write does not land on a lagging replica. That cannot
       # be shown against SQLite, and the suite skips without a server.
+      # pgvector's image is postgres:16 plus the `vector` extension: the rag
+      # suite (HNSW, hybrid search, RLS on the chunks table) skips without it.
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: jfast
           POSTGRES_PASSWORD: jfast

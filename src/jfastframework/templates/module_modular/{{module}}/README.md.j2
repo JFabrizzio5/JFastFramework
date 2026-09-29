@@ -17,6 +17,7 @@ Modular layout: one package per concern, each re-exporting its public names.
 | `repositories/` | Data access. Extends `BaseRepository`. | SQLAlchemy, the entity |
 | `models/` | `{{ module }}_entity.py` = SQLAlchemy, `{{ module }}_models.py` = Pydantic. | SQLAlchemy, Pydantic |
 | `enums.py` | Values only this module speaks. | nothing |
+| `public.py` | The only file other modules may import. Takes a session and `tenant_id`, returns DTOs. | repositories, services, models |
 
 Import from the package, never from the file inside it: `from ..services
 import {{ Module }}Service`, not `from ..services.{{ module }}_service import

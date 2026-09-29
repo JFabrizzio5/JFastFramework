@@ -55,6 +55,17 @@ paths = ["modules/*/schemas.py"]
 # that cannot name one forces the enum to be duplicated as a bare string.
 may_import = ["shared"]
 
+[layers.public]
+description = "The module's facade: the one file other modules may import. Returns DTOs, never entities."
+paths = ["modules/*/public.py"]
+# Other modules call this file and nothing else here. It delegates to the
+# module's own layers and returns DTOs built from what they give back: a read
+# with no rule to enforce may go straight to storage, a write goes through the
+# service so its rules hold for every caller. Nothing inside the module imports
+# it back -- it is the way out, not a shortcut in. Which layer of *another*
+# module calls it is not a layer question: [modules.*] governs that edge.
+may_import = ["service", "storage", "schemas", "shared"]
+
 # ---------------------------------------------------------------------------
 # Rules
 # ---------------------------------------------------------------------------
@@ -95,16 +106,28 @@ why = "One paragraph on what the module owns. If it takes two, split it."
 # via_env = "API_CATALOG_URL"
 
 # ---------------------------------------------------------------------------
-# Placement: where a shared thing lives.
+# Placement: how modules talk to each other.
 #
-# Two modules that import each other are one module with a folder between them.
-# Neither can be extracted into a service later, and a change to one breaks the
-# other in a way no test covers. So when a second module needs the same enum,
-# type or pure function, it moves to shared/ -- and the check names the file.
+# Queries through a facade, effects through events, nothing through shared/.
 #
-# The direction is one-way: modules import shared/, shared/ imports no module.
+# A module that needs another's data imports modules/<other>/public.py and
+# nothing else of it: a few functions that take the caller's session and an
+# explicit tenant_id and return DTOs. Reaching into another module's services,
+# repositories or entities makes the two one module with a folder between
+# them -- neither can be extracted into a service later, and a change to one
+# breaks the other in a way no test covers. Raw SQL against a table another
+# module owns is the same coupling with nothing to see it, so it is reported
+# too. To react to something another module did, subscribe to its event
+# through the outbox instead of being called.
+#
+# shared/ is vocabulary only: the enum, type or pure function two modules both
+# speak -- and the check names the file when that is what was imported. The
+# direction is one-way: modules import shared/, shared/ imports no module.
 # Without that, shared/ becomes where everything ends up and the graph is a
 # circle.
+#
+# One switch for every rule here: cross-module, undeclared-dependency,
+# module-cycle, public-leak, cross-module-sql and shared-direction.
 # ---------------------------------------------------------------------------
 
 [rules.placement]
@@ -166,3 +189,20 @@ rules = [
   "A job handler is idempotent: delivery is at-least-once.",
   "TODO: replace these with the rules that actually matter here.",
 ]
+
+# ---------------------------------------------------------------------------
+# Modules: whose public.py each module may call.
+#
+# One block per module. depends_on lists the modules whose
+# modules/<name>/public.py this one may import; a module with no block depends
+# on nothing. `jfast new module` appends an empty block for every module it
+# generates, so adding an edge is always a line a reviewer sees change.
+#
+# The blocks together are the module graph. `jfast contracts check` rejects a
+# call to a facade that is not listed here (undeclared-dependency) and any
+# cycle (module-cycle): two modules that call each other cannot be extracted
+# apart. Break a cycle by turning one direction into an event.
+#
+#     [modules.advisor]
+#     depends_on = ["receipt", "wallet"]
+# ---------------------------------------------------------------------------

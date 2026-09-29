@@ -26,6 +26,139 @@ before depending on any single part of this.
 ## [Unreleased]
 
 
+## [0.1.0a10] - 2026-09-29
+
+Three things a project outgrows in its first month of real use: retrieval that
+mixed tenants, modules that talked to each other through raw SQL because the
+contracts forbade every other way, and a tenant model with no place for "each
+account is its own".
+
+### Breaking
+
+- **The rag store refuses to work without a tenant.** A chunk's identity was
+  `(document_id, chunk_index)`: two tenants with a `contract-1` overwrote each
+  other, and `search(tenant_id=None)` searched every tenant. Identity is
+  `(tenant_id, document_id, chunk_index)` now, every statement filters by
+  tenant, and a tenant-scoped store -- the default -- raises
+  `TenantRequiredError` (403). `tenant_scoped = false` for a single-tenant
+  service. `ensure_schema` upgrades a 0.1.0a9 pgvector table in place and
+  keeps its rows.
+- **The rag router is off by default and authenticated when on.** It checked
+  no token and took the tenant from the request body. Now `mount_router =
+  true` requires the `auth` plugin, a signed-in caller, optional
+  `read_scopes`/`write_scopes`, and takes the tenant from the tenancy plugin or
+  the token.
+- **Qdrant point ids include the tenant.** Collections written by 0.1.0a9 must
+  be re-ingested.
+- **Modules talk through `modules/<name>/public.py`, declared in
+  `[modules.<name>] depends_on`.** A module could not import another, and the
+  advice was to move the thing to `shared/` -- right for an enum, wrong for
+  behaviour -- so in practice modules read each other's tables with raw SQL no
+  check could see. The facade returns DTOs and takes the caller's session and
+  an explicit `tenant_id`. `contracts check` gains `undeclared-dependency`,
+  `module-cycle`, `public-leak` (an ORM entity or FastAPI crossing the
+  facade), `cross-module-sql` (a string holding SQL against another module's
+  table) and `unknown-dependency`; `cross-module` now also catches relative
+  imports across modules and every name in `import a, b`, and only suggests
+  `shared/` for enums and types. `jfast upgrade --check` lists the lines each
+  rule reports in a project. A screaming contract from 0.1.0a9 needs the new
+  `[layers.public]` block.
+- **`require_auth`, `optional_auth`, `current_tenant` and `tenant_zone` are
+  `async def`**, and so are the dependencies `require_scopes`/`require_roles`
+  return. Through `Depends(...)` nothing changes; a direct call now returns a
+  coroutine. `principal_of(request)` is the synchronous way to read the
+  caller. `jfast upgrade --check` lists every direct call.
+- **Metrics are labelled by route template.** The middleware read the route
+  before routing had run, found none, and labelled by raw path: one series per
+  id (`/users/41`, `/users/42`...), a registry that grew without bound under a
+  scanner. `endpoint` is now `/users/{user_id}` (prefix of included routers
+  and mounts kept), `<unmatched>` when no route matched, and
+  `http_requests_in_progress` is labelled by `method` only.
+- **`VectorStore` protocol:** `delete_document` and `search` take `tenant_id`;
+  new `existing_hashes`, `sync_document` and `supports_hybrid`. A custom store
+  needs those methods.
+
+### Performance
+
+Measured with `ab` on one uvicorn worker (table in `docs/deploy.md#performance`):
+a service with auth, tenancy, metrics and logs went from **2,411 to 8,581
+requests a second** on the same endpoint; FastAPI with JWT and tenant written
+by hand does 9,494. JFast with its default plugins went from 4,228 to 12,443.
+
+- **Every middleware is plain ASGI.** Observability, metrics, auth, tenancy
+  and the read/write pin were `BaseHTTPMiddleware`, which runs the app in a
+  task group and streams the response through a memory channel: about 75 us
+  of CPU per request each. Same behaviour, a wrapped `send` instead.
+- **Framework dependencies and generated `get_service` factories are `async
+  def`.** FastAPI runs a `def` dependency in its threadpool; that hop cost
+  75-85 us per request, more than every middleware together.
+- `tests/test_performance_guards.py` fails if a `BaseHTTPMiddleware` or a sync
+  framework dependency comes back.
+- `docs/deploy.md` gains a Performance section with the numbers, what the rest
+  costs, and the rules that keep your own code fast.
+
+### Added
+
+- **`public.py` in every generated module**, for all four layouts, with a
+  DTO and a `get_<name>(session, *, tenant_id, <name>_id)` wired through that
+  layout's repository; `jfast new module` also appends `[modules.<name>]
+  depends_on = []` to `contracts.toml`. `contracts show --json`,
+  `CONTRACTS.md`, `contracts explain` and `contracts diff` know about modules
+  and their dependencies. `AGENTS.md` and the `respect-contracts` skill tell an
+  agent: another module's data through its facade, reactions through the
+  outbox, never raw SQL on its tables, `shared/` for vocabulary only.
+- **`rag` service** (`ctx.require("rag")`, `jfastframework.rag.RagService`):
+  `ingest`, `search`, `delete`, all tenant-scoped, and `format_context` for
+  numbered, citable excerpts. No FastAPI dependency, so a queue worker ingests
+  exactly as a route does.
+- **Re-ingest embeds only what changed.** Each chunk carries a hash of its text
+  and its embedder; unchanged chunks keep their vectors, a shortened document
+  loses its tail, all in one transaction. A model change re-embeds instead of
+  mixing vector spaces.
+- **HNSW instead of IVFFlat** on pgvector. IVFFlat built on an empty table
+  learnt nothing and, with `probes = 1`, returned one or two hits where eight
+  were relevant. `hnsw.iterative_scan` on pgvector 0.8+, so a selective filter
+  does not starve the result.
+- **Hybrid search** on pgvector: a generated `tsvector` column with a GIN index
+  and reciprocal rank fusion with the vector ranking. `text_search_config`
+  picks the dictionary (`spanish` stems "entregará" to match "entrega").
+- **Filters:** `document_ids`, `where` (exact match on metadata, GIN-indexed),
+  `min_score`.
+- **Structure-aware chunking** (`chunk_strategy = "recursive"`, the default):
+  headings, paragraphs, lines, sentences, words; a heading always opens a
+  chunk. `fixed` keeps the 0.1.0a9 windows.
+- **Row-level security on the chunks table**: every store transaction sets
+  `jfast.tenant_id`, so `enable_tenant_rls(op, "rag_chunks")` works. Verified
+  with a non-superuser role.
+- **`schema_sql()`** in `jfastframework.vectors.pgvector`: the statements
+  `ensure_schema` runs, for an Alembic migration with `auto_migrate = false`.
+- **`llm` plugin and `jfastframework.llm.LLMClient`**: chat, strict JSON
+  schemas, images and embeddings over any OpenAI-compatible API (OpenAI,
+  Azure, Ollama, vLLM, LiteLLM). A spending cap per service and per tenant,
+  per month, day or in total, **reserved atomically before a call and settled
+  to the real cost** -- concurrent calls cannot all see "under budget" and
+  overshoot together. The ledger in Redis records purpose, model, tokens, cost
+  and latency, never the prompt. Retries on 408/409/429/5xx honouring
+  `Retry-After`. Prices in one table, overridable in `[plugin.llm.prices]`;
+  unknown models are priced high. `[plugin.rag] embedder = "llm"` makes
+  indexing spend from the same budget.
+- **Tenancy source `user`**: the signed-in user's id is the tenant, for the SaaS
+  where each account owns its data. After `token`, so joining an organisation
+  moves a user to it without a code change.
+- **`current_tenant`** route dependency: the resolved tenant; 401 with no
+  session (so an expired token gets refreshed), 403 when signed in but not
+  scoped. Never a header or a body field.
+- **Docs:** `modules.md`, `contracts.md` and `shared-and-events.md` explain
+  communication between modules with a worked example. `docs/rag.md` and
+  `docs/llm.md`, new, in English and Spanish;
+  `multitenancy.md` gains the `user` source, `current_tenant` and a table of
+  every isolation layer and what it catches.
+- The CI's PostgreSQL is `pgvector/pgvector:pg16`, so the rag suite runs there.
+
+### Changed
+
+- `rag` is `alpha` in STATUS.md, `llm` enters at `alpha`.
+
 ## [0.1.0a9] - 2026-09-28
 
 A 201 has to mean the row exists.

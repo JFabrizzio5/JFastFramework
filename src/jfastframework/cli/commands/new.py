@@ -48,6 +48,7 @@ from jfastframework.cli.scaffold import (
     view_context,
     view_trees,
 )
+from jfastframework.contracts.model import CONTRACTS_FILE, append_module_block
 from jfastframework.workspace import Workspace
 
 new_app = typer.Typer(help="Generate services and modules.", no_args_is_help=True)
@@ -173,6 +174,11 @@ def new_module(
         # module keeps that kind of file in, rather than asking again.
         if module_registry.record(root, module, layout=layout, ui=ui):
             cli_ui.created(module_registry.CONFIG_FILE, f"{module} is {layout}")
+        # An empty dependency list, written down now: the first time this module
+        # calls another one's public.py, the edge is a line added under it that
+        # a reviewer sees, not an import that quietly became architecture.
+        if append_module_block(root / CONTRACTS_FILE, module):
+            cli_ui.created(CONTRACTS_FILE, f"[modules.{module}] depends_on = []")
 
     steps = [
         (f"pytest {target}/{module}/tests", "the generated test"),

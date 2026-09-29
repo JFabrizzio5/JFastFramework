@@ -23,6 +23,7 @@ The list is tried in order and the first hit wins. That order is the design:
 | Source | Controlled by | Trust |
 | --- | --- | --- |
 | `token` | your identity provider, cryptographically | high |
+| `user` | the same signed token: the user *is* the tenant | high |
 | `subdomain` | your DNS and TLS | medium |
 | `path` | the URL | low |
 | `header` | whoever sent the request | **none** |
@@ -34,6 +35,59 @@ because `X-Tenant-ID: acme` is one `curl` away from another tenant's data.
 A signed claim always outranks the hostname. Someone who points `acme.` at your
 IP has not become Acme; someone holding a token your identity provider signed
 for Acme has.
+
+## Every account is its own tenant: the `user` source
+
+Most SaaS products start without organisations: a person signs up, and what
+they upload is theirs. There is no `tenant_id` claim to read, and inventing a
+tenant table to hold one row per user is ceremony. The `user` source makes the
+signed-in user's id -- the token's `sub` -- the tenant:
+
+```toml
+[plugins]
+enabled = ["observability", "database", "auth", "accounts", "tenancy"]
+
+[plugin.tenancy]
+sources = ["token", "user"]
+```
+
+Everything downstream works unchanged: `BaseRepository` filters by it, it is in
+every log line, [row-level security](#isolation-the-database-enforces-row-level-security)
+reads it, the [`rag` store](rag.md) scopes by it, and the [`llm` budget](llm.md)
+charges it.
+
+Put `user` **after** `token`. The day a user joins an organisation and their
+token starts carrying a `tenant_id` claim, the claim wins and they move to the
+organisation's data without a code change. The reverse order would keep them in
+their personal space forever.
+
+A user id is chosen by the identity provider, not by you -- a UUID, a hex id,
+`auth0|abc123` -- so it is validated more loosely than a subdomain slug, but
+still refuses anything that could be read as a path or SQL. Before sign-in
+there is no user, so login, registration and the health checks resolve no
+tenant, which is what they should do.
+
+## Reading the tenant in a route
+
+```python
+from fastapi import Depends
+from jfastframework.plugins.builtin.tenancy import current_tenant
+
+@router.get("/invoices")
+async def invoices(tenant: str = Depends(current_tenant), session: DbSession = ...):
+    return await InvoiceService(InvoiceRepository(session, tenant_id=tenant)).list()
+```
+
+`current_tenant` returns what the plugin resolved. With nobody signed in it
+answers **401** -- an expired token must make the client refresh, and clients
+refresh on a 401, not on a 403 -- and with a signed-in caller the sources could
+not scope, **403**. It reads nothing else -- not a header, not a body field. In a
+service without the tenancy plugin it falls back to the token's `tenant_id`
+claim, so a service that only uses `auth` still works.
+
+Prefer it to `getattr(request.state, "tenant_id", None)`: a `None` that reaches
+a repository means "no tenant filter", and the dependency makes that a 403
+before it gets there.
 
 ## Subdomains
 
@@ -329,7 +383,35 @@ This is what a service that opened its own session only to set a second value
 can use instead -- see [`@transactional`](transactions.md) for the ones that
 still need their own.
 
+## The layers, and what each one catches
+
+Isolation is not one feature. It is a stack, and each layer is there for the
+bug that got past the one above it:
+
+| Layer | What does it | What it catches |
+| --- | --- | --- |
+| Resolution | this plugin, from signed sources first | a tenant chosen by whoever sent the request |
+| The route | `Depends(current_tenant)` | a handler running with no tenant at all |
+| The repository | `BaseRepository(tenant_id=...)` | a query that forgot `WHERE tenant_id` |
+| The database | row-level security, `rls = true` | raw SQL, a bad join, a repository bug |
+| Between modules | each module's `public.py` takes `tenant_id` explicitly ([modules](modules.md)) | a module reading another's tables with its own idea of the tenant |
+| Background work | jobs carry the tenant; the worker restores it | a job that runs as "nobody" and sees everything |
+| Retrieval | the `rag` store refuses a call without a tenant ([RAG](rag.md)) | a search across every customer's documents |
+| Spending | `tenant_budget_usd` in the [`llm` plugin](llm.md) | one tenant spending everyone's AI budget |
+
+Turn them on from the top. The first three cost nothing and come with the
+framework; row-level security is one setting, one migration and one database
+role; the rest are on as soon as the plugin is.
+
+What none of them catches: **a tenant id that is wrong but well-formed.** If
+your own code maps a user to the wrong organisation, every layer will
+faithfully enforce the wrong answer. That mapping -- where it lives, who can
+change it -- deserves the most careful review in the service.
+
 ## See also
 
 - [Authentication](auth.md) — the `tenant_id` claim
+- [Accounts](accounts.md) — users and sign-up, with the `user` source
+- [RAG and vector search](rag.md) — tenant-scoped retrieval
+- [Language models](llm.md) — per-tenant budgets
 - [Deployment](deploy.md) — Caddy as the edge

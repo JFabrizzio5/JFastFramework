@@ -90,7 +90,8 @@ propia línea:
     module-cycle: import cycle: invoice -> order -> invoice
       Modules in a cycle are one module with folders between them: neither can
       be extracted into a service, and a change to one breaks the other in a
-      way no test covers. Move what they share into shared/.
+      way no test covers. Keep the query in one direction, through the other
+      module's public.py, and turn the other direction into an event.
 
   HIGH
     modules/ghost/  module-unregistered: module 'ghost' declares routes but
@@ -110,7 +111,7 @@ propia línea:
 | `plugin-unknown` | high | Un plugin habilitado en `jfast.toml` que nada provee. La app se niega a arrancar. |
 | `contract-governs-nothing` | high | Una capa de `contracts.toml` cuyos `paths` no matchean ningún archivo acá. Sus reglas no aplican a nada, y `contracts check` pasa sin hacer cumplir nada. |
 | `module-no-migration` | medium | Un módulo cuya tabla ninguna revisión crea. Falla en la primera consulta y en ningún lado antes. |
-| `cross-module-import` | medium | Un módulo importando a otro. |
+| `cross-module-import` | medium | Un módulo importando a otro por fuera de su `public.py`. Importar `modules/<otro>/public.py` es como los módulos deben hablarse y no se reporta acá; `contracts check` decide si está declarado. |
 | `code-outside-module` | low | Un `.py` en la raíz que no pertenece a nada. |
 
 ### Por qué la lista es corta

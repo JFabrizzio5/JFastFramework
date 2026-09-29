@@ -100,6 +100,7 @@ modules/invoice/
 ├── models.py       SQLAlchemy
 ├── schemas.py      Pydantic
 ├── enums.py
+├── public.py       lo que otros módulos pueden llamar
 ├── README.md
 └── tests/
 ```
@@ -121,6 +122,7 @@ modules/invoice/
 ├── services/invoice_service.py
 ├── validations/invoice_validation.py
 ├── enums.py
+├── public.py                   lo que otros módulos pueden llamar
 ├── README.md
 └── tests/
 ```
@@ -155,6 +157,7 @@ modules/invoice/
 │   └── delete_invoice.py
 ├── storage.py           SQLAlchemy model + repository, with to_domain()
 ├── http.py              router + wire schemas
+├── public.py            lo que otros módulos pueden llamar
 ├── README.md
 └── tests/
     ├── test_invoice_domain.py      no database, no fakes, no event loop
@@ -177,6 +180,7 @@ modules/invoice/
 │   ├── orm.py           SQLAlchemy model
 │   └── repository.py    implements the port
 ├── adapters/http.py     the FastAPI router
+├── public.py            lo que otros módulos pueden llamar
 ├── README.md
 └── tests/
     ├── test_invoice_domain.py      no database, no FastAPI, milliseconds
@@ -226,6 +230,158 @@ demás siga siendo agnóstico del layout:
 | `router` | `main.py`, insertado por el generador |
 | `build_service(session, tenant_id)` | el overlay de HTMX, los workers, lo que sea |
 | `CreatePayload` | el handler del formulario HTMX, que tiene que construir uno sin conocer el layout |
+
+Esos son para la app. Lo que ven *los otros módulos* es un cuarto archivo,
+`public.py`, y nada más — siguiente sección.
+
+---
+
+## Comunicación entre módulos
+
+**Consultas por una fachada, efectos por eventos, nada por `shared/`.**
+
+Tarde o temprano el módulo B necesita datos que son del módulo A. Hay cuatro
+formas de conseguirlos, y solo una sobrevive al día en que A cambia:
+
+| Forma | Lo que cuesta | `contracts check` |
+| --- | --- | --- |
+| Importar el servicio, el repositorio o la entidad de A | B depende de las tripas de A. Renombras un método en A y B se rompe; ninguno se puede volver servicio sin el otro. | `cross-module` |
+| SQL crudo contra las tablas de A desde B | El mismo acoplamiento, sin nada que lo vea. No hay import que buscar; A renombra una columna y B falla en producción. | `cross-module-sql` |
+| Mover el código a `shared/` | `shared/` se vuelve un segundo hogar para comportamiento. Un repositorio ahí son dos módulos compartiendo una tabla. | — (por eso la regla es explícita) |
+| **Llamar una función del `public.py` de A** | A promete una función y un DTO; todo lo que está detrás sigue siendo de A para cambiarlo. | pasa, una vez declarado |
+
+### La fachada
+
+Todo módulo generado tiene `modules/<nombre>/public.py`, y es el único archivo
+que otro módulo le puede importar. Digamos que el módulo `asesor` — un asesor
+que responde preguntas sobre gastos — necesita el gasto por categoría de
+`comprobante`.
+
+El dueño expone una función y un DTO:
+
+```python
+# modules/comprobante/public.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+from typing import TYPE_CHECKING
+
+from .repositories import ComprobanteRepository
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@dataclass(frozen=True, slots=True)
+class GastoPorCategoria:
+    categoria: str
+    total_centavos: int
+    comprobantes: int
+
+
+async def gasto_por_categoria(
+    session: AsyncSession, *, tenant_id: str, desde: date, hasta: date
+) -> list[GastoPorCategoria]:
+    repositorio = ComprobanteRepository(session, tenant_id=tenant_id)
+    filas = await repositorio.gasto_por_categoria(desde=desde, hasta=hasta)
+    return [GastoPorCategoria(categoria=c, total_centavos=t, comprobantes=n) for c, t, n in filas]
+```
+
+La consulta en sí vive en el repositorio de `comprobante`, junto a la tabla que
+lee. Quien llama importa la fachada y nada más:
+
+```python
+# modules/asesor/services/asesor_service.py
+from modules.comprobante.public import gasto_por_categoria
+
+gastos = await gasto_por_categoria(session, tenant_id=tenant_id, desde=inicio, hasta=fin)
+```
+
+Y lo dice en `contracts.toml`:
+
+```toml
+[modules.asesor]
+depends_on = ["comprobante"]
+```
+
+`jfast new module` agrega un `[modules.<nombre>] depends_on = []` vacío por cada
+módulo que genera, así que agregar una arista siempre es una línea que un
+revisor ve cambiar. El `public.py` generado trae un ejemplo —
+`get_<nombre>(session, *, tenant_id, <nombre>_id) -> <Nombre>Summary | None` —
+cableado a través del repositorio propio de ese layout.
+
+### Por qué recibe la sesión y un tenant_id
+
+- **La sesión de quien llama** mete la lectura en su transacción: ve las filas
+  que quien llama escribió antes en el mismo request, y un request nunca tiene
+  dos conexiones. Una fachada que abriera su propia sesión leería otro snapshot
+  y, con carga, duplicaría el pool.
+- **Un `tenant_id` explícito** porque a la fachada la llaman desde lugares sin
+  request del cual inferirlo — un worker, una tarea programada, el servicio de
+  otro módulo. Un tenant implícito es justo como un job termina leyendo las
+  filas de todos los tenants ([Colas y eventos](queues-and-events.md) tiene la
+  historia).
+- **DTOs, no entidades.** Una entidad del ORM arrastra su sesión y sus
+  relaciones lazy a través de la frontera, y cada columna se vuelve parte de la
+  API el día en que alguien la lee. Un DTO es una promesa que elegiste hacer.
+  `public.py` tampoco puede importar FastAPI: tiene que funcionar donde no hay
+  request.
+
+### Los efectos van por eventos
+
+Una fachada responde preguntas. Cuando `asesor` necesita *reaccionar* a algo
+que hizo `comprobante` — se categorizó un comprobante, así que el consejo quedó
+viejo — no lo llaman de vuelta. `comprobante` publica un evento en la misma
+transacción que la escritura, por el outbox, y `asesor` se suscribe:
+
+```python
+# en comprobante, junto a la escritura
+outbox = request.app.state.jfast.require("outbox")
+await outbox.publish(
+    session, "comprobantes", Event(type="comprobante.categorized", data={"id": c.id}, key=str(c.id))
+)
+
+# en asesor
+from jfastframework.plugins.builtin.events import Event, on
+
+@on("comprobantes")
+async def refrescar_consejo(event: Event) -> None:
+    if event.type == "comprobante.categorized":
+        ...
+```
+
+El evento se confirma junto con las filas que lo causaron, y `comprobante` nunca
+se entera de que `asesor` existe — así que no hay arista de él hacia `asesor`, y
+no hay ciclo. Transportes, idempotencia y garantías de entrega están en
+[Colas y eventos](queues-and-events.md).
+
+### La recompensa: extraer un módulo
+
+El día en que `comprobante` se muda a su propio servicio
+(`jfast new service comprobante`), el cambio de este lado es un archivo:
+`public.py` conserva sus firmas y sus DTOs, y su cuerpo se vuelve una llamada
+al nuevo servicio con el [plugin `http`](http-client.md). El argumento
+`session` simplemente deja de usarse. La línea de import de `asesor` no cambia,
+porque nunca supo de dónde venía la respuesta.
+
+Eso solo funciona si `public.py` era la única entrada. Un módulo que además se
+metía en el repositorio de `comprobante`, o consultaba sus tablas, hay que
+encontrarlo y reescribirlo primero — que es justo lo que los checks de abajo
+existen para evitar.
+
+### Qué se verifica
+
+| Regla | Salta cuando |
+| --- | --- |
+| `cross-module` | un módulo importa cualquier cosa de otro módulo que no sea `modules/<otro>/public.py` |
+| `undeclared-dependency` | importa `modules.<otro>.public` sin `<otro>` en su `depends_on` |
+| `module-cycle` | el grafo de `depends_on` declarados más los imports reales de fachadas tiene un ciclo |
+| `public-leak` | `public.py` importa o reexporta una entidad del ORM, o importa `fastapi`/`starlette` |
+| `cross-module-sql` | un string en un módulo tiene SQL que nombra una tabla de otro módulo |
+
+Los mensajes, las exenciones y el único switch que las apaga están en
+[Contratos](contracts.md#entre-modulos).
 
 ---
 

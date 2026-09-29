@@ -12,13 +12,14 @@ doing rather than reading all of them.
 ```
 {{ service_title }}/
 ├── main.py            entry point; routers are registered here
-├── contracts.toml     the layer rules, machine-checked; written with the first module
+├── contracts.toml     the layer and module rules, machine-checked; written with the first module
 ├── jfast.toml         config, and the layout each module was generated with
 ├── modules/           one folder per business capability
 │   └── <name>/
+│       ├── public.py  the only file other modules may import; returns DTOs
 │       ├── README.md  this module's file map, and what each file may import
 │       └── tests/     required: a module with no tests fails the check
-└── shared/            code two or more modules both need
+└── shared/            vocabulary two or more modules speak: enums, types, pure functions
     └── enums.py
 ```
 
@@ -60,20 +61,27 @@ the mixed case, because the first layout's layers still match their own modules.
 So if you add a module in a second layout, add its paths to `contracts.toml`
 yourself and say so in the pull request. Nothing else will.
 
-## Five rules that are actually checked
+## Six rules that are actually checked
 
 1. **The layer that answers HTTP does not touch the database.** It parses,
    calls the layer below it, and returns. Every layout's contract sets
    `forbid_packages = ["sqlalchemy"]` on that layer, whatever its files are
    called, so the import fails the check rather than the review.
-2. **A module never imports another module.** Two modules that import each
-   other are one module with a folder between them. What both need goes in
-   `shared/`, and the checker names the file to move it to.
-3. **`shared/` never imports a module.** The direction is one-way, or the
+2. **A module talks to another only through its `public.py`.** Need data
+   another module owns: call a function in `modules/<other>/public.py` (add it
+   there if it is missing: it takes the session and `tenant_id`, returns a DTO)
+   and list `<other>` in `depends_on` under `[modules.<yours>]` in
+   `contracts.toml`. Need to react to something it did: subscribe to its event
+   through the outbox. Anything else of another module is private, and two
+   modules that call each other are a cycle the check rejects.
+3. **No raw SQL against another module's tables.** It is the same coupling as
+   an import with nothing to see it; the check matches table names.
+4. **`shared/` never imports a module.** The direction is one-way, or the
    dependency graph becomes a circle and nothing can be extracted later.
-4. **Nothing in `shared/` touches the database.** Two modules sharing a
-   repository is two modules sharing a table.
-5. **Enums inherit `str`.** A plain `Enum` serialises as `Status.DRAFT` down
+5. **`shared/` is vocabulary: nothing in it touches the database.** Two
+   modules sharing a repository is two modules sharing a table; behaviour goes
+   in the owner's `public.py`, not here.
+6. **Enums inherit `str`.** A plain `Enum` serialises as `Status.DRAFT` down
    some paths and `"DRAFT"` down others.
 
 `jfast contracts show --json` lists every layer with the paths it covers. That

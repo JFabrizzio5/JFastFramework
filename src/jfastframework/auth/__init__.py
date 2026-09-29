@@ -37,6 +37,7 @@ __all__ = [
     "current_principal",
     "issue",
     "optional_auth",
+    "principal_of",
     "require_auth",
     "require_roles",
     "require_scopes",
@@ -51,7 +52,7 @@ def __getattr__(name: str) -> object:
     FastAPI app — a worker, a script, a test of the token functions alone.
     The dependencies live in the plugin because they read ``request.state``.
     """
-    if name in ("require_auth", "require_scopes", "require_roles", "optional_auth"):
+    if name in ("require_auth", "require_scopes", "require_roles", "optional_auth", "principal_of"):
         from jfastframework.plugins.builtin import auth as plugin
 
         return getattr(plugin, name)

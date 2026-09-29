@@ -14,6 +14,7 @@
 | `repository.py` | Data access. Extends `BaseRepository`. No business rules. |
 | `models.py` | SQLAlchemy tables. |
 | `schemas.py` | Pydantic wire contracts. |
+| `public.py` | The only file other modules may import. Takes a session and `tenant_id`, returns DTOs. |
 
 ## Endpoints
 

@@ -35,9 +35,9 @@ from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 from fastapi import Depends
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from pydantic_settings import SettingsConfigDict
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from jfastframework.errors import PluginError, ServiceUnavailableError
 from jfastframework.plugins.base import (
@@ -701,36 +701,58 @@ def _claimed_deadline(request: Request, settings: DatabaseSettings) -> float:
     return min(claimed, time.time() + settings.pin_window)
 
 
-class ReadWritePinMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: Any, *, settings: DatabaseSettings, secure: bool = False) -> None:
-        super().__init__(app)
+class ReadWritePinMiddleware:
+    """Pin a client to the primary for a window after it writes.
+
+    Plain ASGI: the cookie and header go onto ``http.response.start`` as it
+    passes, instead of buffering the response through ``BaseHTTPMiddleware``.
+    """
+
+    def __init__(self, app: ASGIApp, *, settings: DatabaseSettings, secure: bool = False) -> None:
+        self.app = app
         self._settings = settings
         self._secure = secure
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
-        request.state.jfast_db_pinned_until = _claimed_deadline(request, self._settings)
-        request.state.jfast_db_wrote = False
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        response: Response = await call_next(request)
+        request = Request(scope, receive)
+        state = scope.setdefault("state", {})
+        state["jfast_db_pinned_until"] = _claimed_deadline(request, self._settings)
+        state["jfast_db_wrote"] = False
 
-        if self._wrote(request, response):
-            until = time.time() + self._settings.pin_window
-            response.headers[PIN_HEADER] = f"{until:.3f}"
-            response.set_cookie(
-                self._settings.pin_cookie,
-                f"{until:.3f}",
-                max_age=int(self._settings.pin_window) + 1,
-                httponly=True,
-                # Off outside production, where `jfast start` serves plain HTTP
-                # and a secure cookie would never come back.
-                secure=self._secure,
-                samesite="lax",
-                path="/",
-            )
-        return response
+        async def send_with_pin(message: Message) -> None:
+            if message["type"] == "http.response.start" and self._wrote(
+                scope["method"], message["status"], state
+            ):
+                until = time.time() + self._settings.pin_window
+                # A throwaway Response renders the Set-Cookie exactly as
+                # starlette would, attributes and quoting included.
+                carrier = Response()
+                carrier.set_cookie(
+                    self._settings.pin_cookie,
+                    f"{until:.3f}",
+                    max_age=int(self._settings.pin_window) + 1,
+                    httponly=True,
+                    # Off outside production, where `jfast start` serves plain
+                    # HTTP and a secure cookie would never come back.
+                    secure=self._secure,
+                    samesite="lax",
+                    path="/",
+                )
+                message["headers"] = [
+                    *message.get("headers", []),
+                    (PIN_HEADER.lower().encode("latin-1"), f"{until:.3f}".encode("latin-1")),
+                    *[(k, v) for k, v in carrier.raw_headers if k == b"set-cookie"],
+                ]
+            await send(message)
 
-    def _wrote(self, request: Request, response: Response) -> bool:
-        if getattr(request.state, "jfast_db_wrote", False):
+        await self.app(scope, receive, send_with_pin)
+
+    def _wrote(self, method: str, status: int, state: dict[str, Any]) -> bool:
+        if state.get("jfast_db_wrote", False):
             return True
         if not self._settings.pin_on_unsafe_methods:
             return False
@@ -739,7 +761,7 @@ class ReadWritePinMiddleware(BaseHTTPMiddleware):
         # covers every write a REST API makes. The cost of the approximation
         # is a POST that read nothing pinning its client for one window, which
         # is load, not incorrectness.
-        return request.method in UNSAFE_METHODS and response.status_code < 400
+        return method in UNSAFE_METHODS and status < 400
 
 
 class DatabasePlugin(Plugin):

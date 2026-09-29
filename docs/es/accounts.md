@@ -119,6 +119,12 @@ subdominio o de ruta del plugin `tenancy`; la del token no puede, porque todaví
 no hay token. El mismo email en dos tenants son dos personas, y un
 administrador ve y cambia solo los usuarios y roles de su propio tenant.
 
+**Un SaaS donde cada cuenta es su propio tenant** no necesita tabla de
+tenants: agrega el plugin tenancy con `sources = ["token", "user"]` y el id del
+usuario con sesión se vuelve el tenant de todo lo que crea. Los usuarios en sí
+no pertenecen a ningún tenant, y es lo correcto: la cuenta es la frontera. Ver
+[la fuente `user`](multitenancy.md#cada-cuenta-es-su-propio-tenant-la-fuente-user).
+
 ---
 
 ## Configuración

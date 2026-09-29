@@ -132,10 +132,10 @@ STAGE_OF_CODE: dict[str, str] = {
 REMEDY: dict[str, str] = {
     "plugin-unknown": "install its extra, or drop the name from [plugins].enabled",
     "module-unregistered": "edit main.py between the [jfast:imports] and [jfast:routers] markers",
-    "module-cycle": "move what they share into shared/",
+    "module-cycle": "query one way through public.py, turn the other way into an event",
     "route-conflict": "give each router its own prefix",
     "shared-imports-module": "move the shared piece into shared/, or invert the import",
-    "cross-module-import": "move the shared piece into shared/  (jfast contracts check names it)",
+    "cross-module-import": "go through modules/<other>/public.py  (jfast contracts check names it)",
     "code-outside-module": "move it into a module, or into shared/",
     "module-no-migration": "alembic revision --autogenerate",
     # The contract describes a tree this project does not have, so editing its

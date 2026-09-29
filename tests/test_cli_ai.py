@@ -32,6 +32,7 @@ from jfastframework.cli.scaffold import (
     service_context,
     service_trees,
 )
+from jfastframework.contracts.model import CONTRACTS_FILE, append_module_block
 
 runner = CliRunner()
 
@@ -80,6 +81,8 @@ def generate(root: Path, *, module: str = "invoice") -> Path:
         indent="    ",
     )
     module_registry.record(root, module, layout="layered", ui="api")
+    # `jfast new module` also declares the module's (empty) dependencies.
+    append_module_block(root / CONTRACTS_FILE, module)
     return root
 
 
@@ -112,6 +115,7 @@ def three_modules(tmp_path: Path) -> Path:
             indent="    ",
         )
         module_registry.record(root, name, layout="layered", ui="api")
+        append_module_block(root / CONTRACTS_FILE, name)
     return root
 
 
@@ -575,6 +579,7 @@ def five_modules(tmp_path: Path) -> Path:
             indent="    ",
         )
         module_registry.record(root, name, layout="layered", ui="api")
+        append_module_block(root / CONTRACTS_FILE, name)
     return root
 
 
