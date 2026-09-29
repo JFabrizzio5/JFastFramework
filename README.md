@@ -193,6 +193,9 @@ from the plugin graph, so it cannot drift from what the app actually loads.
 | `web` | Jinja2 + HTMX partial rendering | `web` |
 | `gateway` | Prefix-based reverse proxy | `gateway` |
 | `auth` | JWT verification, scopes, revocation, social login | `auth` |
+| `accounts` | Users, password login, lockout, roles and permissions | `accounts` |
+| `outbox` | Jobs and events that commit with the request's rows | `db` |
+| `idempotency` | `Idempotency-Key`: a retried POST gets the first answer | `db` |
 | `ratelimit` | Token bucket per tenant and per subject, in Redis | `cache` |
 | `channels` | Declared pub/sub channels over memory, Redis or Kafka | — |
 | `websocket` | Authenticated connections, fan-out through Redis | `server` |
@@ -248,8 +251,8 @@ async def send_invoice_email(payload: dict) -> None: ...
 await queue.enqueue(Job(task="send_invoice_email", payload={"id": 7}))
 ```
 
-Start with PostgreSQL: enqueueing shares the transaction that produced the
-work, so a rollback takes the job with it. Redis buys latency, RabbitMQ buys
+Start with PostgreSQL: enqueued through the `outbox` plugin, a job shares the
+transaction that produced the work, so a rollback takes the job with it. Redis buys latency, RabbitMQ buys
 routing. [Which to pick, and why](docs/queues-and-events.md).
 
 Delivery is at-least-once — handlers must be idempotent. Retries are bounded
@@ -351,9 +354,10 @@ gets a plain 401.
 `X-Tenant-ID` header — settable by anyone with curl. With it, from a signed
 claim.
 
-There is no `/auth/login`: checking a password against your user table is your
-application's job. `auth.issuer` is provided for your own route.
-[docs/auth.md](docs/auth.md).
+`auth` has no user store of its own. The `accounts` plugin is one -- users,
+`/auth/login`, lockout, roles and permissions -- and a service with its own
+user table calls `auth.issuer` from its own route instead.
+[docs/auth.md](docs/auth.md), [docs/accounts.md](docs/accounts.md).
 
 ## Kubernetes
 
@@ -448,11 +452,13 @@ The site is built from these same files: **<https://jfabrizzio5.github.io/JFastF
 | [docs/agents.md](docs/agents.md) | Working with AI agents: what is enforced, and what is not |
 | [docs/contracts.md](docs/contracts.md) | Per-project rules, enforced |
 | [docs/auth.md](docs/auth.md) | JWT: modes, the attacks refused, revocation, Google login |
+| [docs/accounts.md](docs/accounts.md) | Users, password login, lockout, roles and permissions |
+| [docs/transactions.md](docs/transactions.md) | Commit timing, conflicts, locks, retries, the outbox and idempotency keys |
 | [docs/ratelimit.md](docs/ratelimit.md) | A token bucket that does not leak under load |
 | [docs/websockets.md](docs/websockets.md) | Sockets across workers, and what is not delivered |
 | [docs/upgrading.md](docs/upgrading.md) | What breaks on a version bump, filtered to what applies to your project |
 | [docs/storage.md](docs/storage.md) | Disks, signed URLs, S3 and MinIO |
-| [docs/multitenancy.md](docs/multitenancy.md) | Subdomains, trust order, what it is not |
+| [docs/multitenancy.md](docs/multitenancy.md) | Subdomains, trust order, row-level security |
 | [docs/cloud.md](docs/cloud.md) | Secret managers, serverless functions, push |
 | [docs/kubernetes.md](docs/kubernetes.md) | Manifests, probes, what is not generated |
 | [docs/service-contract.md](docs/service-contract.md) | What every service must do, in any language |
@@ -494,8 +500,9 @@ one that admits the gap:
 
 - **RabbitMQ and Kafka** are written against documented APIs but never
   round-tripped against real brokers in CI.
-- **Multi-tenancy** is a convention enforced by `BaseRepository`, not an
-  isolation guarantee. Row-level security is phase 2.
+- **Multi-tenancy** is enforced by PostgreSQL row-level security only with
+  `[plugin.database] rls = true`, a policy per table and a role that is not a
+  superuser. Without the three it is the repository's filter: a convention.
 - **RAG** chunks at fixed width with no reranking.
 - **Angular, React Native, Laravel, .NET** are not generated at all.
 

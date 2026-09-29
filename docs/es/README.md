@@ -199,6 +199,9 @@ grafo de plugins, así que no puede desviarse de lo que la app realmente carga.
 | `web` | Renderizado parcial con Jinja2 + HTMX | `web` |
 | `gateway` | Reverse proxy basado en prefijos | `gateway` |
 | `auth` | Verificación JWT, scopes, revocación, login social | `auth` |
+| `accounts` | Usuarios, login con contraseña, bloqueo, roles y permisos | `accounts` |
+| `outbox` | Jobs y eventos que se confirman con las filas de la request | `db` |
+| `idempotency` | `Idempotency-Key`: un POST reintentado recibe la primera respuesta | `db` |
 | `ratelimit` | Token bucket en Redis, por subject, tenant o IP | `cache` |
 | `websocket` | WebSockets autenticados con backplane Redis y registro de conexiones | `server` |
 | `storage` | Archivos en discos locales, S3 o MinIO | `storage` |
@@ -253,8 +256,8 @@ async def send_invoice_email(payload: dict) -> None: ...
 await queue.enqueue(Job(task="send_invoice_email", payload={"id": 7}))
 ```
 
-Empieza con PostgreSQL: encolar comparte la transacción que produjo el trabajo,
-así que un rollback se lleva el job con él. Redis compra latencia, RabbitMQ
+Empieza con PostgreSQL: encolado a través del plugin `outbox`, un job comparte la
+transacción que produjo el trabajo, así que un rollback se lleva el job con él. Redis compra latencia, RabbitMQ
 compra ruteo. [Cuál elegir, y por qué](docs/queues-and-events.md).
 
 La entrega es at-least-once — los handlers tienen que ser idempotentes. Los
@@ -359,9 +362,10 @@ cliente recibe un 401 pelado.
 `X-Tenant-ID` — que puede poner cualquiera con curl. Con auth, viene de un
 claim firmado.
 
-No hay `/auth/login`: verificar una contraseña contra tu tabla de usuarios es
-trabajo de tu aplicación. `auth.issuer` se provee para tu propia ruta.
-[docs/auth.md](docs/auth.md).
+`auth` no tiene store de usuarios propio. El plugin `accounts` lo es --
+usuarios, `/auth/login`, bloqueo, roles y permisos -- y un servicio con su propia
+tabla de usuarios llama a `auth.issuer` desde su propia ruta.
+[docs/auth.md](docs/auth.md), [docs/accounts.md](docs/accounts.md).
 
 ## Kubernetes
 
@@ -456,11 +460,13 @@ El sitio se construye desde estos mismos archivos: **<https://jfabrizzio5.github
 | [docs/agents.md](docs/agents.md) | Trabajar con agentes de IA: qué se hace cumplir, y qué no |
 | [docs/contracts.md](docs/contracts.md) | Reglas por proyecto, verificadas |
 | [docs/auth.md](docs/auth.md) | JWT: modos, los ataques rechazados, revocación, login con Google |
+| [docs/accounts.md](docs/accounts.md) | Usuarios, login con contraseña, bloqueo, roles y permisos |
+| [docs/transactions.md](docs/transactions.md) | Cuándo se confirma, conflictos, bloqueos, reintentos, el outbox y las idempotency keys |
 | [docs/ratelimit.md](docs/ratelimit.md) | Un token bucket que no se filtra bajo carga |
 | [docs/websockets.md](docs/websockets.md) | Sockets entre workers, y qué no se entrega |
 | [docs/upgrading.md](docs/upgrading.md) | Qué rompe al subir de versión, filtrado a lo que aplica a tu proyecto |
 | [docs/storage.md](docs/storage.md) | Discos, URLs firmadas, S3 y MinIO |
-| [docs/multitenancy.md](docs/multitenancy.md) | Subdominios, orden de confianza, qué no es |
+| [docs/multitenancy.md](docs/multitenancy.md) | Subdominios, orden de confianza, row-level security |
 | [docs/cloud.md](docs/cloud.md) | Gestores de secretos, funciones serverless, push |
 | [docs/kubernetes.md](docs/kubernetes.md) | Manifiestos, probes, qué no se genera |
 | [docs/service-contract.md](docs/service-contract.md) | Qué tiene que hacer todo servicio, en cualquier lenguaje |
@@ -502,8 +508,9 @@ que admite el hueco:
 
 - **RabbitMQ y Kafka** están escritos contra APIs documentadas pero nunca se
   probaron de ida y vuelta contra brokers reales en CI.
-- **Multi-tenancy** es una convención que hace cumplir `BaseRepository`, no una
-  garantía de aislamiento. Row-level security es fase 2.
+- **Multi-tenancy** lo impone el row-level security de PostgreSQL solo con
+  `[plugin.database] rls = true`, una política por tabla y un rol que no sea
+  superusuario. Sin las tres es el filtro del repositorio: una convención.
 - **RAG** trocea a ancho fijo y sin reranking.
 - **Angular, React Native, Laravel, .NET** no se generan en absoluto.
 

@@ -41,8 +41,7 @@ def serve(
     about it. The symptom is a service that runs and is missing everything.
 
     This changes into the service directory before importing, and refuses to
-    start when there is no ``jfast.toml`` there, which is the case that used to
-    boot silently wrong.
+    start when there is no ``jfast.toml`` there rather than boot on defaults.
 
     The default host is loopback rather than ``0.0.0.0``: a development server
     should not be reachable from the rest of the network unless you say so.
@@ -140,8 +139,7 @@ def dev(
     have nothing to do with it.
 
     Both servers can be moved: `--port` for the API, `--web-port` for the
-    frontend. Without the second one, a machine already using 5173 left
-    `--no-web` as the only way through, which gives up half the command.
+    frontend, so a machine already using 5173 still gets both halves.
     """
     service_dir = path.resolve()
     config_file = service_dir / DEFAULT_CONFIG_FILE

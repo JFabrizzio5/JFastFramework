@@ -248,7 +248,7 @@ def workspace_resource(
     """Add a datastore instance the workspace owns.
 
     It is attached to nothing until something is linked to it, which is the
-    point: a second database is now a thing you can name.
+    point: a second database is a thing you can name and link.
     """
     workspace = _require_workspace()
 
