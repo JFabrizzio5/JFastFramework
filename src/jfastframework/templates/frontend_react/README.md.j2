@@ -37,6 +37,8 @@ and a WebGL liquid ribbon behind everything.
 | `src/nexora/accent.js` | The accent: presets, deriving the palette from one colour, remembering the viewer's pick |
 | `src/nexora/brand.js` | The product name shown on the wordmark |
 | `src/nexora/background.js` | Whether the ribbon runs at all: reduced motion, WebGL, lazy loading |
+| `src/nexora/backdrop.js` | The background the viewer picked: 3D ribbon, 2D still frame, or none |
+| `src/nexora/sidebar.js` | Whether the sidebar is folded away on a wide screen |
 | `src/nexora/liquid.js` | The ribbon itself, on three.js, loaded as its own chunk |
 | `src/style.css` | Tailwind, plus the Nexora tokens as utilities: `bg-panel`, `text-ink`, `brand-500` |
 
@@ -57,6 +59,15 @@ one wins:
 3. the `--c-*` triplets at the top of `src/nexora/nexora.css`, Nexora's ruby.
 
 Buttons, glows, badges, every `brand-*` utility and the ribbon follow it.
+
+**The background** is the viewer's too, in the same popover: **3D** (the
+ribbon), **2D** (the still frame, no three.js download) or **Off** (the plain
+page colour). `VITE_BACKGROUND=liquid|still|none` in `.env` /
+`.env.production` sets the project's default; empty is `liquid`.
+
+**The menu button** opens the drawer on a phone and, on a wide screen, folds
+the sidebar away so the page takes the full width. Folded stays folded across
+pages and reloads.
 
 **The ribbon costs nothing when it cannot help.** It is never loaded under
 `prefers-reduced-motion`, falls back to a still frame without WebGL 2, and

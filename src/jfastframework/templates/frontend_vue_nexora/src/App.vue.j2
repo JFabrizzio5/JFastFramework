@@ -10,10 +10,12 @@ import { RouterView } from 'vue-router'
 import LiquidBackground from '@/components/LiquidBackground.vue'
 import ToastHost from '@/components/ToastHost.vue'
 import { restoreAccent } from '@/nexora/accent.js'
+import { restoreBackdrop } from '@/nexora/backdrop.js'
 
 // Before the first render, so nothing accent-coloured is ever painted in the
 // default and then repainted in the saved or configured one.
 restoreAccent()
+restoreBackdrop()
 
 // Both mounted here and nowhere else.
 //

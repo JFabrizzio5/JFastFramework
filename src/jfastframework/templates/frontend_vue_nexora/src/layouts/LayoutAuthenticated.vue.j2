@@ -42,8 +42,8 @@
     <div class="nx-main">
       <header class="nx-topbar">
         <div class="nx-topbar-group">
-          <button type="button" class="nx-round-btn nx-menu-toggle" :aria-expanded="open"
-            aria-label="Toggle navigation" @click="open = !open">
+          <button type="button" class="nx-round-btn nx-menu-toggle" :aria-expanded="menuShown"
+            aria-label="Toggle navigation" @click="toggleMenu">
             <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" aria-hidden="true">
               <path d="M4 7h16M4 12h16M4 17h10" />
@@ -75,6 +75,7 @@ import BaseIcon from '@/components/BaseIcon.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import menu from '@/menuAside.js'
 import { APP_NAME as appName } from '@/nexora/brand.js'
+import { DESKTOP_QUERY, isCollapsed, setCollapsed } from '@/nexora/sidebar.js'
 import { LOGIN_ROUTE, useAuthStore } from '@/stores/auth.store.js'
 
 // Which backend this build calls: the first thing to check when a panel is
@@ -120,11 +121,27 @@ watch(open, (isOpen) => {
   }
 })
 
+// One button, two jobs. Past 960px it folds the sidebar away and back, and
+// sidebar.js remembers it; below, it opens and closes the drawer.
+const desktop = window.matchMedia(DESKTOP_QUERY)
+const isDesktop = ref(desktop.matches)
+const collapsed = ref(isCollapsed())
+const menuShown = computed(() => (isDesktop.value ? !collapsed.value : open.value))
+
+function toggleMenu() {
+  if (isDesktop.value) {
+    collapsed.value = !collapsed.value
+    setCollapsed(collapsed.value)
+  } else {
+    open.value = !open.value
+  }
+}
+
 // `open` outlives the breakpoint that made it a drawer. Past 960px there is
 // nothing to close, so the lock would be invisible and the page simply would
 // not scroll. The width is the one in nexora.css's drawer media query.
-const desktop = window.matchMedia('(min-width: 961px)')
 const closeOnDesktop = (event) => {
+  isDesktop.value = event.matches
   if (event.matches) {
     open.value = false
   }

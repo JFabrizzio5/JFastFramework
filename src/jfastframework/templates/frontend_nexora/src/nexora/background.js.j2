@@ -11,7 +11,12 @@
 //   on while the app is open stops it;
 // * no WebGL 2 -- an old GPU, a locked-down browser, a remote desktop -- leaves
 //   the still CSS frame (`.nx-ambient`) that is already on screen;
-// * a hidden tab renders nothing: liquid.js cancels its frame loop.
+// * a hidden tab renders nothing: liquid.js cancels its frame loop;
+// * the viewer, or VITE_BACKGROUND, chose the still 2D frame or no background
+//   (backdrop.js): the chunk is never downloaded, and switching away from the
+//   ribbon while it runs destroys it.
+
+import { currentBackdrop } from './backdrop.js'
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 
@@ -41,12 +46,14 @@ export function createLiquidBackground(canvas, { mode = 'dark' } = {}) {
   let current = mode
 
   async function start() {
-    if (engine || loading || destroyed || reducedMotion.matches || !webglAvailable()) return
+    if (engine || loading || destroyed || reducedMotion.matches) return
+    if (currentBackdrop() !== 'liquid' || !webglAvailable()) return
     loading = import('./liquid.js')
     try {
       const { mountLiquid } = await loading
       // The component can unmount while the chunk is on the wire.
-      if (destroyed || reducedMotion.matches) return
+      // Or the viewer switched to 2D or off while it was on the wire.
+      if (destroyed || reducedMotion.matches || currentBackdrop() !== 'liquid') return
       engine = mountLiquid(canvas, { mode: current })
       canvas.classList.add('is-live')
     } catch {
@@ -69,6 +76,9 @@ export function createLiquidBackground(canvas, { mode = 'dark' } = {}) {
   // Fired by accent.js whenever the palette on <html> changes.
   const onAccent = () => engine?.refresh()
   document.addEventListener('nexora:accent', onAccent)
+  // Fired by backdrop.js when the viewer picks 3D, 2D or off.
+  const onBackdrop = (event) => (event.detail === 'liquid' ? start() : stop())
+  document.addEventListener('nexora:backdrop', onBackdrop)
   start()
 
   return {
@@ -80,6 +90,7 @@ export function createLiquidBackground(canvas, { mode = 'dark' } = {}) {
       destroyed = true
       reducedMotion.removeEventListener('change', onMotionChange)
       document.removeEventListener('nexora:accent', onAccent)
+      document.removeEventListener('nexora:backdrop', onBackdrop)
       stop()
     },
   }

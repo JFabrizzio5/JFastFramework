@@ -1,11 +1,11 @@
 <template>
   <div ref="root" class="nx-accent" @keydown.esc="close(true)">
     <button ref="trigger" type="button" class="nx-round-btn" aria-haspopup="dialog" :aria-expanded="open"
-      :aria-controls="panelId" aria-label="Accent colour" title="Accent colour" @click="open ? close() : show()">
+      :aria-controls="panelId" aria-label="Colour and background" title="Colour and background" @click="open ? close() : show()">
       <span class="nx-accent-swatch" aria-hidden="true" />
     </button>
 
-    <div v-if="open" :id="panelId" ref="panel" class="nx-accent-popover" role="dialog" aria-label="Accent colour">
+    <div v-if="open" :id="panelId" ref="panel" class="nx-accent-popover" role="dialog" aria-label="Colour and background">
       <p class="nx-accent-title">Accent</p>
 
       <div class="nx-accent-grid">
@@ -21,6 +21,16 @@
         <input type="color" :value="current.toLowerCase()" @input="choose($event.target.value)" />
       </label>
 
+      <div class="nx-accent-section">
+        <p class="nx-accent-title">Background</p>
+        <div class="nx-backdrop-grid">
+          <button v-for="option in BACKDROPS" :key="option.value" type="button" class="nx-accent-option"
+            :aria-pressed="backdrop === option.value" @click="chooseBackdrop(option.value)">
+            {{ option.label }}
+          </button>
+        </div>
+      </div>
+
       <button type="button" class="btn-modern btn-ghost btn-sm nx-accent-reset" @click="reset">
         Back to the default
       </button>
@@ -32,6 +42,7 @@
 import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 
 import { PRESETS, currentAccent, resetAccent, setAccent } from '@/nexora/accent.js'
+import { BACKDROPS, currentBackdrop, resetBackdrop, setBackdrop } from '@/nexora/backdrop.js'
 
 // A non-modal popover: it does not trap focus, it closes on Escape, on a click
 // outside, and returns focus to the button that opened it. The colour itself
@@ -42,6 +53,7 @@ const panel = ref(null)
 const panelId = useId()
 const open = ref(false)
 const current = ref(currentAccent())
+const backdrop = ref(currentBackdrop())
 
 function orb(preset) {
   return `radial-gradient(circle at 32% 28%, ${preset.glow ?? preset.accent} 0%, ${preset.accent} 45%, #000 100%)`
@@ -52,9 +64,17 @@ function choose(hex) {
   current.value = currentAccent()
 }
 
+// 3D, 2D or off. background.js hears it and loads or drops the ribbon.
+function chooseBackdrop(value) {
+  setBackdrop(value)
+  backdrop.value = currentBackdrop()
+}
+
 function reset() {
   resetAccent()
+  resetBackdrop()
   current.value = currentAccent()
+  backdrop.value = currentBackdrop()
 }
 
 async function show() {

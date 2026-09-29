@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 
 import { PRESETS, currentAccent, resetAccent, setAccent } from '@/nexora/accent.js'
+import { BACKDROPS, currentBackdrop, resetBackdrop, setBackdrop } from '@/nexora/backdrop.js'
 
 function orb(preset) {
   return `radial-gradient(circle at 32% 28%, ${preset.glow ?? preset.accent} 0%, ${preset.accent} 45%, #000 100%)`
@@ -16,15 +17,24 @@ export default function AccentPicker() {
   const panelId = useId()
   const [open, setOpen] = useState(false)
   const [current, setCurrent] = useState(currentAccent)
+  const [backdrop, setBackdropState] = useState(currentBackdrop)
 
   function choose(hex) {
     setAccent(hex)
     setCurrent(currentAccent())
   }
 
+  // 3D, 2D or off. background.js hears it and loads or drops the ribbon.
+  function chooseBackdrop(value) {
+    setBackdrop(value)
+    setBackdropState(currentBackdrop())
+  }
+
   function reset() {
     resetAccent()
+    resetBackdrop()
     setCurrent(currentAccent())
+    setBackdropState(currentBackdrop())
   }
 
   function close(returnFocus = false) {
@@ -60,15 +70,15 @@ export default function AccentPicker() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={panelId}
-        aria-label="Accent colour"
-        title="Accent colour"
+        aria-label="Colour and background"
+        title="Colour and background"
         onClick={() => setOpen((value) => !value)}
       >
         <span className="nx-accent-swatch" aria-hidden="true" />
       </button>
 
       {open ? (
-        <div id={panelId} ref={panel} className="nx-accent-popover" role="dialog" aria-label="Accent colour">
+        <div id={panelId} ref={panel} className="nx-accent-popover" role="dialog" aria-label="Colour and background">
           <p className="nx-accent-title">Accent</p>
 
           <div className="nx-accent-grid">
@@ -90,6 +100,23 @@ export default function AccentPicker() {
             <span>Custom colour</span>
             <input type="color" value={current.toLowerCase()} onChange={(event) => choose(event.target.value)} />
           </label>
+
+          <div className="nx-accent-section">
+            <p className="nx-accent-title">Background</p>
+            <div className="nx-backdrop-grid">
+              {BACKDROPS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className="nx-accent-option"
+                  aria-pressed={backdrop === option.value}
+                  onClick={() => chooseBackdrop(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <button type="button" className="btn-modern btn-ghost btn-sm nx-accent-reset" onClick={reset}>
             Back to the default

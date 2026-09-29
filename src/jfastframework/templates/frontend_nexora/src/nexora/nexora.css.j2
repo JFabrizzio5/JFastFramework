@@ -301,6 +301,13 @@ code, pre, kbd { font-family: var(--font-mono); }
 
 .nx-liquid-canvas.is-live { opacity: var(--liquid-opacity, 1); }
 
+/* The viewer's background choice (src/nexora/backdrop.js): "still" keeps the
+   2D frame and drops the ribbon, "none" drops both and leaves the plain page
+   colour. */
+html[data-backdrop="still"] .nx-liquid-canvas,
+html[data-backdrop="none"] .nx-liquid-canvas,
+html[data-backdrop="none"] .nx-ambient { display: none; }
+
 /* ==========================================================================
    Brand type
    ========================================================================== */
@@ -521,6 +528,15 @@ code, pre, kbd { font-family: var(--font-mono); }
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    transition: margin-left 0.3s var(--ease-out);
+}
+
+/* Folded away on a wide screen (src/nexora/sidebar.js): the sidebar slides
+   out and the page takes the full width. Below 960px the drawer rules below
+   apply instead. */
+@media (min-width: 961px) {
+    html[data-sidebar="collapsed"] .nx-sidebar { transform: translateX(-100%); visibility: hidden; transition: transform 0.3s var(--ease-out), visibility 0s 0.3s; }
+    html[data-sidebar="collapsed"] .nx-main { margin-left: 0; }
 }
 
 /* The island: a floating pill of glass, sticky a little below the edge. */
@@ -558,8 +574,6 @@ code, pre, kbd { font-family: var(--font-mono); }
     min-width: 0;
     padding: 30px 28px 48px;
 }
-
-.nx-menu-toggle { display: none; }
 
 /* Round glass buttons in the top bar: theme, menu, sign out. */
 .nx-round-btn {
@@ -686,6 +700,21 @@ code, pre, kbd { font-family: var(--font-mono); }
 }
 
 .nx-accent-reset { width: 100%; margin-top: 12px; }
+
+/* The background row: 3D, 2D, off. */
+.nx-accent-section {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--card-border);
+}
+
+.nx-backdrop-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.nx-backdrop-grid .nx-accent-option { padding: 9px 2px; font-size: 0.7rem; font-weight: 700; }
 
 /* ==========================================================================
    Buttons
@@ -1299,7 +1328,6 @@ code, pre, kbd { font-family: var(--font-mono); }
     .nx-sidebar { transform: translateX(-100%); }
     .nx-sidebar.is-open { transform: none; }
     .nx-main { margin-left: 0; }
-    .nx-menu-toggle { display: inline-flex; }
     .nx-auth { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 88px; }
 }
 

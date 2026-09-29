@@ -5,12 +5,14 @@ import { RouterProvider } from 'react-router-dom'
 import LiquidBackground from '@/components/LiquidBackground.jsx'
 import ToastHost from '@/components/ToastHost.jsx'
 import { restoreAccent } from '@/nexora/accent.js'
+import { restoreBackdrop } from '@/nexora/backdrop.js'
 import router from '@/router'
 import '@/style.css'
 
 // Before the first render, so nothing accent-coloured is ever painted in the
 // default and then repainted in the saved or configured one.
 restoreAccent()
+restoreBackdrop()
 
 // ToastHost sits outside the router on purpose: a toast raised during a route
 // transition has to survive it, and a host inside the routed tree unmounts

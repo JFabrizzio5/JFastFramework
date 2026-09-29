@@ -7,6 +7,7 @@ import BaseIcon from '@/components/BaseIcon.jsx'
 import ThemeToggle from '@/components/ThemeToggle.jsx'
 import menu from '@/menuAside.js'
 import { APP_NAME as appName } from '@/nexora/brand.js'
+import { DESKTOP_QUERY, isCollapsed, setCollapsed } from '@/nexora/sidebar.js'
 import { logout } from '@/services/auth.service.js'
 import { LOGIN_ROUTE, useAuthStore, useIsAuthenticated } from '@/stores/auth.store.js'
 
@@ -59,12 +60,28 @@ export default function LayoutAuthenticated({ children }) {
     }
   }, [open])
 
+  // One button, two jobs. Past 960px it folds the sidebar away and back, and
+  // sidebar.js remembers it; below, it opens and closes the drawer.
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia(DESKTOP_QUERY).matches)
+  const [collapsed, setCollapsedState] = useState(isCollapsed)
+  const menuShown = isDesktop ? !collapsed : open
+
+  function toggleMenu() {
+    if (isDesktop) {
+      setCollapsed(!collapsed)
+      setCollapsedState(!collapsed)
+    } else {
+      setOpen((value) => !value)
+    }
+  }
+
   // `open` outlives the breakpoint that made it a drawer. Past 960px there is
   // nothing to close, so the lock would be invisible and the page simply would
   // not scroll. The width is the one in nexora.css's drawer media query.
   useEffect(() => {
-    const desktop = window.matchMedia('(min-width: 961px)')
+    const desktop = window.matchMedia(DESKTOP_QUERY)
     const closeOnDesktop = (event) => {
+      setIsDesktop(event.matches)
       if (event.matches) setOpen(false)
     }
     desktop.addEventListener('change', closeOnDesktop)
@@ -133,9 +150,9 @@ export default function LayoutAuthenticated({ children }) {
             <button
               type="button"
               className="nx-round-btn nx-menu-toggle"
-              aria-expanded={open}
+              aria-expanded={menuShown}
               aria-label="Toggle navigation"
-              onClick={() => setOpen((value) => !value)}
+              onClick={toggleMenu}
             >
               <svg
                 className="size-4"

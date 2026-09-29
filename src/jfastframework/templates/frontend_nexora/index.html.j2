@@ -38,6 +38,25 @@
           }
         }
       } catch (e) {}
+      // The background: the viewer's choice, else VITE_BACKGROUND, which
+      // Vite writes into this file at build time. backdrop.js has the rules;
+      // this only avoids painting the ribbon's still frame before "off".
+      var backdrops = ['liquid', 'still', 'none']
+      var backdrop = '%VITE_BACKGROUND%'.trim().toLowerCase()
+      try {
+        var chosen = localStorage.getItem('[[ service_slug ]]:backdrop')
+        if (backdrops.indexOf(chosen) !== -1) backdrop = chosen
+      } catch (e) {}
+      document.documentElement.setAttribute(
+        'data-backdrop',
+        backdrops.indexOf(backdrop) !== -1 ? backdrop : 'liquid'
+      )
+      // A sidebar folded away on a wide screen stays folded across reloads.
+      try {
+        if (localStorage.getItem('[[ service_slug ]]:sidebar') === 'collapsed') {
+          document.documentElement.setAttribute('data-sidebar', 'collapsed')
+        }
+      } catch (e) {}
     </script>
   </head>
   <body>
