@@ -172,6 +172,33 @@ these it had written itself, and each one it got wrong in the same place.
 - **Spanish table names.** `[scaffold] language = "es"` in `jfast.toml`, or
   `--language es`: `camion` → `camiones`, `orden_compra` → `ordenes_compra`.
 
+### Added -- recurring tasks, delays on RabbitMQ, calling other services
+
+- **Recurring tasks.** `@tasks.task(name, every=... | cron=..., timezone=...)`
+  and `tasks.schedule(...)`, run by a scheduler loop inside the service when
+  `[plugin.queue] scheduler = true`. It is safe in every replica and worker
+  because each tick is claimed first -- in `jfast_schedule_ticks` (PostgreSQL,
+  in the same transaction as the job on the PostgreSQL queue) or with Redis
+  `SET NX` -- and each tick's job has a deterministic id. After downtime the
+  most recent missed tick fires once, never a burst. Cron is a built-in
+  five-field parser with Vixie day semantics and explicit DST rules.
+- **The RabbitMQ queue honours `Job(available_at=...)` and retry backoff**,
+  through a binary cascade of fixed-TTL queues with no broker plugin, so a long
+  delay no longer blocks a short one behind it. It published every job at
+  once before.
+- **`jfastframework.http` and the `http` plugin.** A client for sibling services
+  with mandatory timeouts and a total deadline; retries only for idempotent or
+  `Idempotency-Key` requests, with full-jitter backoff, `Retry-After` and a
+  retry budget; a per-upstream circuit breaker and bulkhead that fail fast with
+  a 503 problem; `X-Request-ID` and opt-in bearer-token propagation. `http`
+  extra.
+
+### Fixed -- RabbitMQ
+
+- **`stats()` always reported zero.** aio-pika's robust channel hands back the
+  queue object cached at declaration, with its original message count; it asks
+  the raw channel now.
+
 ### Changed -- modular by default
 
 - **`jfast new module` without `--layout` generates a `modular` module**, and
@@ -205,9 +232,8 @@ these it had written itself, and each one it got wrong in the same place.
 
 ### Not done, and named
 
-A service-to-service HTTP client with timeouts, retries and a circuit breaker;
-distributed tracing; recurring jobs; and, in `accounts`, email verification,
-password reset and MFA. All in `PLAN-NEXT.md`.
+Distributed tracing, and, in `accounts`, email verification, password reset
+and MFA. Both in `PLAN-NEXT.md`.
 
 
 ## [0.1.0a8] - 2026-09-03

@@ -235,6 +235,34 @@ el mismo lugar.
   `jfast.toml`, o `--language es`: `camion` → `camiones`, `orden_compra` →
   `ordenes_compra`.
 
+### Agregado -- tareas recurrentes, retrasos en RabbitMQ, llamar a otros servicios
+
+- **Tareas recurrentes.** `@tasks.task(name, every=... | cron=..., timezone=...)`
+  y `tasks.schedule(...)`, que corre un loop de scheduler dentro del servicio
+  con `[plugin.queue] scheduler = true`. Es seguro en cada réplica y worker
+  porque cada tick se reclama primero -- en `jfast_schedule_ticks`
+  (PostgreSQL, en la misma transacción que el job con la cola de PostgreSQL) o
+  con `SET NX` de Redis -- y el job de cada tick tiene un id determinista.
+  Después de una caída se dispara una vez el tick perdido más reciente, nunca
+  una ráfaga. El cron es un parser propio de cinco campos con la semántica de
+  días de Vixie y reglas explícitas para el horario de verano.
+- **La cola de RabbitMQ respeta `Job(available_at=...)` y el backoff de
+  reintentos**, con una cascada binaria de colas de TTL fijo y sin plugin del
+  broker, así que un retraso largo ya no bloquea uno corto detrás. Antes
+  publicaba todos los jobs de inmediato.
+- **`jfastframework.http` y el plugin `http`.** Un cliente para servicios
+  hermanos con timeouts obligatorios y un deadline total; reintentos solo para
+  peticiones idempotentes o con `Idempotency-Key`, con backoff full-jitter,
+  `Retry-After` y presupuesto de reintentos; circuit breaker y bulkhead por
+  upstream que fallan rápido con un problem 503; propagación de `X-Request-ID`
+  y, si se activa, del token bearer. Extra `http`.
+
+### Corregido -- RabbitMQ
+
+- **`stats()` siempre reportaba cero.** El canal robusto de aio-pika devuelve
+  el objeto de cola que guardó al declararla, con su conteo original; ahora se
+  pregunta al canal crudo.
+
 ### Cambiado -- modular por defecto
 
 - **`jfast new module` sin `--layout` genera un módulo `modular`**, y el prompt
@@ -271,9 +299,8 @@ el mismo lugar.
 
 ### Sin hacer, y nombrado
 
-Un cliente HTTP entre servicios con timeouts, reintentos y circuit breaker;
-tracing distribuido; jobs recurrentes; y, en `accounts`, verificación de email,
-recuperación de contraseña y MFA. Todo en `PLAN-NEXT.md`.
+Tracing distribuido, y, en `accounts`, verificación de email, recuperación de
+contraseña y MFA. Los dos en `PLAN-NEXT.md`.
 
 ## [0.1.0a5] - 2026-08-30
 

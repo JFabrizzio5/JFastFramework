@@ -258,7 +258,10 @@ the exact failure the README argues against. Two scopes, two mechanisms.
       you lose independent deployability of the shared code. That is the
       monorepo bargain, and it is the right one at this size. Publishing shared
       packages to a private index is deliberately out of scope.
-- [ ] **`internal_client`.** A microservice framework without a
+- [ ] **`internal_client`.** *Partly done in 0.1.0a9:* `jfastframework.http`
+      has the timeouts, idempotent-only retries, breaker and `X-Request-ID`
+      propagation; tenant and trace context, resolution from the graph and
+      typed clients are still open. A microservice framework without a
       service-to-service client. Mandatory timeouts, retry with backoff and
       jitter on idempotent methods only, a circuit breaker, propagation of
       `X-Request-ID`, tenant and trace context — and destination resolution
@@ -521,10 +524,9 @@ packages tested together. Two of those are covered above; this is the CLI.
       already provides.
 - [ ] **`jfast worker run` and `jfast schedule run`** — the queue and scheduler
       need entry points, not a hand-written `__main__`.
-- [ ] **`scheduler`** — periodic tasks with leader election through a Redis or
-      PostgreSQL lock, so N replicas do not each fire the same cron. Reuses
-      `TaskRegistry`. Delayed jobs exist; recurring ones do not, and every SaaS
-      needs "charge subscriptions daily".
+- [x] **`scheduler`** (0.1.0a9) — periodic tasks on `TaskRegistry`. No leader:
+      every replica claims each tick in PostgreSQL or Redis before enqueueing,
+      so N replicas fire a cron once. See `docs/queues-and-events.md`.
 - [ ] **`jfast monitor`** — the dev inspector: the graph rendered, health,
       recent requests, slow queries, job outcomes. Telescope, scoped to
       development.

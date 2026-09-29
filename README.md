@@ -186,13 +186,14 @@ from the plugin graph, so it cannot drift from what the app actually loads.
 | `metrics` | Prometheus RED metrics, `/metrics` | `metrics` |
 | `database` | Async SQLAlchemy, sessions, Alembic wiring | `db` |
 | `cache` | Redis cache, pub/sub | `cache` |
-| `queue` | Background jobs on PostgreSQL, Redis or RabbitMQ | `queue` |
+| `queue` | Background jobs on PostgreSQL, Redis or RabbitMQ, and recurring tasks | `queue` |
 | `events` | Kafka publish/subscribe | `kafka` |
 | `mongo` | MongoDB via Motor | `mongo` |
 | `qdrant` | Qdrant vector database | `qdrant` |
 | `rag` | Retrieval over pgvector or Qdrant | `rag` |
 | `web` | Jinja2 + HTMX partial rendering | `web` |
 | `gateway` | Prefix-based reverse proxy | `gateway` |
+| `http` | Calls to sibling services: deadlines, retries, circuit breaker | `http` |
 | `auth` | JWT verification, scopes, revocation, social login | `auth` |
 | `accounts` | Users, password login, lockout, roles and permissions | `accounts` |
 | `outbox` | Jobs and events that commit with the request's rows | `db` |

@@ -191,7 +191,7 @@ grafo de plugins, así que no puede desviarse de lo que la app realmente carga.
 | `metrics` | Métricas RED de Prometheus, `/metrics` | `metrics` |
 | `database` | SQLAlchemy async, sesiones, cableado de Alembic | `db` |
 | `cache` | Caché Redis, pub/sub | `cache` |
-| `queue` | Jobs en segundo plano sobre PostgreSQL, Redis o RabbitMQ | `queue` |
+| `queue` | Jobs en segundo plano sobre PostgreSQL, Redis o RabbitMQ, y tareas recurrentes | `queue` |
 | `events` | Publicación/suscripción con Kafka | `kafka` |
 | `channels` | Canales pub/sub declarados sobre memoria, Redis o Kafka | — |
 | `mongo` | MongoDB vía Motor | `mongo` |
@@ -199,6 +199,7 @@ grafo de plugins, así que no puede desviarse de lo que la app realmente carga.
 | `rag` | Recuperación sobre pgvector o Qdrant | `rag` |
 | `web` | Renderizado parcial con Jinja2 + HTMX | `web` |
 | `gateway` | Reverse proxy basado en prefijos | `gateway` |
+| `http` | Llamadas a servicios hermanos: deadlines, reintentos, circuit breaker | `http` |
 | `auth` | Verificación JWT, scopes, revocación, login social | `auth` |
 | `accounts` | Usuarios, login con contraseña, bloqueo, roles y permisos | `accounts` |
 | `outbox` | Jobs y eventos que se confirman con las filas de la request | `db` |
