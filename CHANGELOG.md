@@ -71,6 +71,29 @@ generated frontend in a browser, an upload.
 - **The generated API client turned uploads into JSON.** It forced
   `Content-Type: application/json`, and axios then serialised a `FormData` as
   `{"archivo":{}}`. Removed; axios sends objects as JSON by itself.
+- **A `@task` or `@subscribe` handler could not reach `llm`, `storage` or the
+  outbox.** It received the payload and a `TaskSession`, nothing else, and the
+  docs only showed `request.app.state.jfast.require(...)` -- which a worker does
+  not have -- so every project kept its own global copy of the context. A
+  parameter annotated `TaskContext` (from `jfastframework.tasks`; it is
+  `AppContext`, and that annotation works too) now receives the running app's
+  context, in `jfast worker` and in the API alike. Verified with a real `jfast
+  worker` process running a task and a subscriber that ask it for providers.
+- **`jfast dev` announced the frontend on :5173 while Vite ran on 8610.** The
+  generated dev script pins the workspace port and `jfast dev` printed Vite's
+  default; `--web-port 8610` then ran `vite --port 8610 --port 8610`. The
+  announced URL is now read from the frontend (its dev script, then
+  `vite.config`, then 5173), and `--port` is passed only when it changes
+  something.
+- **Only `jfast dev` could use a workspace's `.env` on the host.** It names the
+  database by its compose name and leaves the password for compose to fill in,
+  so `alembic revision --autogenerate` -- the step `jfast new module` prints --
+  `jfast serve`, `jfast worker` and `pytest` failed with a DNS error. `jfast
+  serve` and `jfast worker` now translate it as `jfast dev` does when they find
+  the compose file, `jfast exec -- <command>` runs anything else with it, and
+  every printed `alembic` step goes through `jfast exec --`. A variable set in
+  the shell wins; inside a container, and in the production image (which has
+  no compose file to find), nothing changes.
 
 ## [0.1.0a11] - 2026-09-30
 

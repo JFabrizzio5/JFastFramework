@@ -157,7 +157,7 @@ def _manual_steps(plan: SwitchPlan, report: Readiness) -> list[str]:
     """What the command cannot do, in the order it has to be done."""
     steps = [
         f"Review {plan.migration_path.name}, then apply it as the tables' owner: "
-        "`alembic upgrade head`.",
+        "`jfast exec -- alembic upgrade head`.",
         "Run the service as a role the policies bind -- not a superuser, not BYPASSRLS. "
         "The generated compose file connects as the superuser, so create one:",
     ]

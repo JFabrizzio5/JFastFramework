@@ -53,6 +53,11 @@ storage.disk("private").url("invoices/1042.pdf")      # StorageError
 await storage.disk("private").temporary_url("invoices/1042.pdf", expires_in=300)
 ```
 
+Eso es desde una ruta. Un handler de `@task` o `@subscribe` no tiene request:
+anota un parámetro `TaskContext` y se lo pide a él -- `ctx.require("storage")`,
+el mismo objeto
+([Colas y eventos](queues-and-events.md#los-providers-de-la-app-llm-storage-el-outbox)).
+
 ## URLs absolutas
 
 `url()` es relativa a la raíz por defecto —`/storage/public/logos/acme.png`—, lo

@@ -49,7 +49,10 @@ resultado.text, resultado.usage.usd, resultado.usage.input_tokens
 ```
 
 `jfastframework.llm` no depende de FastAPI: un worker de la cola, un script y un
-test usan el mismo cliente.
+test usan el mismo cliente. Un handler de `@task` o `@subscribe` no tiene
+request sobre la cual llamar `get_context`: anota un parámetro `TaskContext` y
+llama `ctx.require("llm")` sobre él
+([Colas y eventos](queues-and-events.md#los-providers-de-la-app-llm-storage-el-outbox)).
 
 ### Salida estructurada
 

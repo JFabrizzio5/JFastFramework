@@ -72,6 +72,30 @@ imagen de producción, el frontend generado en un navegador, una subida.
 - **El cliente de API generado convertía las subidas en JSON.** Forzaba
   `Content-Type: application/json` y axios serializaba un `FormData` como
   `{"archivo":{}}`. Se quitó; axios manda los objetos como JSON por sí solo.
+- **Un handler de `@task` o `@subscribe` no podía llegar a `llm`, `storage` ni
+  al outbox.** Recibía el payload y una `TaskSession`, nada más, y los docs solo
+  mostraban `request.app.state.jfast.require(...)` -- que un worker no tiene --,
+  así que cada proyecto guardaba su propia copia global del contexto. Un
+  parámetro anotado `TaskContext` (de `jfastframework.tasks`; es `AppContext`, y
+  esa anotación también sirve) ahora recibe el contexto de la app que está
+  corriendo, igual en `jfast worker` que en la API. Verificado con un proceso
+  real de `jfast worker` que corre una task y un suscriptor que le piden
+  providers.
+- **`jfast dev` anunciaba el frontend en :5173 mientras Vite corría en 8610.**
+  El script `dev` generado fija el puerto del workspace y `jfast dev` imprimía el
+  default de Vite; `--web-port 8610` además corría `vite --port 8610 --port
+  8610`. La URL anunciada ahora se lee del frontend (su script `dev`, luego
+  `vite.config`, luego 5173), y `--port` solo se pasa cuando cambia algo.
+- **Solo `jfast dev` podía usar el `.env` de un workspace en el host.** Nombra
+  la base por su nombre de compose y deja la contraseña para que compose la
+  rellene, así que `alembic revision --autogenerate` -- el paso que imprime
+  `jfast new module` --, `jfast serve`, `jfast worker` y `pytest` fallaban con
+  un error de DNS. `jfast serve` y `jfast worker` ahora lo traducen como `jfast
+  dev` cuando encuentran el archivo de compose, `jfast exec -- <comando>` corre
+  cualquier otra cosa con él, y cada paso de `alembic` impreso pasa por `jfast
+  exec --`. Una variable puesta en el shell gana; dentro de un contenedor, y en
+  la imagen de producción (que no tiene un compose que encontrar), no cambia
+  nada.
 
 ## [0.1.0a11] - 2026-09-30
 

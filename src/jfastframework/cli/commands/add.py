@@ -182,7 +182,9 @@ _ENABLED = re.compile(r"^(?P<indent>[ \t]*)enabled\s*=\s*\[(?P<names>[^\]]*)\]",
 
 #: Only the ones whose next step is not "set the variables it reads".
 _PLUGIN_NOTES: dict[str, str] = {
-    "database": "Then `alembic upgrade head`; module tables come from your migrations.",
+    "database": (
+        "Then `jfast exec -- alembic upgrade head`; module tables come from your migrations."
+    ),
     "accounts": "Its tables (users, roles, sessions) are created at startup, not by a migration.",
     "outbox": "Its table is created at startup. Queue work with outbox.enqueue(session, Job(...)).",
     "queue": "Run the worker next to the API: `jfast worker` (`jfast dev` starts it).",

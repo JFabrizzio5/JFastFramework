@@ -163,9 +163,17 @@ corriendo:
 
 ```bash
 docker compose up -d shop-database
-alembic revision --autogenerate -m "initial"
-alembic upgrade head
+jfast exec -- alembic revision --autogenerate -m "initial"
+jfast exec -- alembic upgrade head
 ```
+
+`jfast exec --` corre un comando con el `.env` del servicio traducido para tu
+máquina. En un workspace ese `.env` está escrito para compose -- la base es
+`shop-database:5432` y la contraseña es `${SHOP_DATABASE_PASSWORD}`, que solo
+compose rellena --, así que un `alembic` o un `pytest` a secas en el host falla
+con un error de DNS. `jfast serve`, `jfast worker` y `jfast dev` lo traducen
+solos; todo lo demás pasa por `jfast exec --`. Sin un `docker-compose.yml` junto
+al servicio o un nivel arriba no cambia nada.
 
 ### Correr el frontend
 
@@ -261,9 +269,9 @@ habilitado lo usa y deja el bloque `[plugin.<nombre>]` para el día que vuelva.
 ```bash
 jfast dev                         # containers, migrations, API and frontend
 jfast new module invoice          # asks which architecture; registers itself
-pytest modules/invoice/tests
+jfast exec -- pytest modules/invoice/tests
 jfast contracts check             # layer boundaries, forbidden calls
-alembic revision --autogenerate -m "add invoices"
+jfast exec -- alembic revision --autogenerate -m "add invoices"
 ```
 
 El módulo se monta solo: el generador inserta el import y el router en
@@ -363,7 +371,10 @@ elegir a mano.
 
 **Alembic no puede llegar a la base de datos** — `migrations/env.py` lee
 `JFAST_DB_DSN` del `.env`, deliberadamente el mismo valor que usa la app.
-Levanta primero el contenedor: `docker compose up -d <service>-database`.
+Levanta primero el contenedor: `docker compose up -d <service>-database`. Si el
+error es `nodename nor servname provided` o `Name or service not known` y nombra
+`<workspace>-database`, el `.env` es el de compose: córrelo como `jfast exec --
+alembic ...`.
 
 **Windows** — corre todo esto dentro de WSL. Los Dockerfiles generados, los
 archivos de compose y los shell scripts asumen una shell POSIX.

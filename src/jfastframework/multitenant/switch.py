@@ -568,7 +568,8 @@ def plan_switch(
     if directory is None:
         raise SwitchError(
             f"no migrations/versions under {root}. The switch is a revision on top of the "
-            "one that created the tables: create that first (alembic revision --autogenerate)."
+            "one that created the tables: create that first "
+            "(jfast exec -- alembic revision --autogenerate)."
         )
     found_heads, switched = heads(directory)
     if switched:
@@ -580,13 +581,13 @@ def plan_switch(
     if not found_heads:
         raise SwitchError(
             f"no revision under {directory.relative_to(root)} yet, so nothing has created the "
-            "tables this would backfill. Create them first (alembic revision --autogenerate, "
-            "alembic upgrade head), then run this again."
+            "tables this would backfill. Create them first (jfast exec -- alembic revision "
+            "--autogenerate, then jfast exec -- alembic upgrade head), then run this again."
         )
     if len(found_heads) > 1:
         raise SwitchError(
             f"the revisions have {len(found_heads)} heads ({', '.join(found_heads)}). Merge "
-            "them first -- `alembic merge heads` -- so the switch has one parent."
+            "them first -- `jfast exec -- alembic merge heads` -- so the switch has one parent."
         )
 
     tables = tuple(tenant_tables(source_files(root)))

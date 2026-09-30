@@ -76,8 +76,8 @@ app = create_app(routers=[{{ module }}_router])
 This module ships a table. Generate the migration before first run:
 
 ```bash
-alembic revision --autogenerate -m "add {{ table }}"
-alembic upgrade head
+jfast exec -- alembic revision --autogenerate -m "add {{ table }}"
+jfast exec -- alembic upgrade head
 ```
 
 {% if uniques %}

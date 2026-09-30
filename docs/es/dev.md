@@ -98,7 +98,19 @@ corre primero — poner la traducción solo en el servidor hace que la migració
 falle con un error de DNS nombrando un host que nunca iba a resolver ahí.
 
 Lo que no puede resolver lo deja tal cual. Una suposición equivocada sería más
-difícil de depurar que el valor original.
+difícil de depurar que el valor original. Una variable que ya está puesta en tu
+shell también se respeta, igual que pydantic-settings la prefiere sobre el
+`.env`.
+
+La traducción no es solo de `jfast dev`. `jfast serve` y `jfast worker` la
+aplican cuando encuentran el archivo de compose de la misma forma (en el
+directorio del servicio o un nivel arriba), y `jfast exec -- <comando>` corre
+cualquier otra cosa con ella -- `jfast exec -- alembic revision --autogenerate
+-m "add invoices"`, `jfast exec -- pytest`. Dentro de un contenedor no se
+traduce nada: ahí los nombres de compose resuelven y `localhost` es el propio
+contenedor. La imagen de producción de todos modos no tiene un compose que
+encontrar (`.dockerignore` lo excluye, y el del workspace queda fuera del
+contexto de build).
 
 ---
 
@@ -129,7 +141,7 @@ quedó.
 | Migraciones | no | las aplica |
 | Worker de la cola | no (`jfast worker`) | lo arranca |
 | Frontend | no | lo arranca |
-| `.env` traducido para el host | no | sí |
+| `.env` traducido para el host | sí | sí |
 
 `serve` es la herramienta chica y se queda así: un proceso, sin efectos
 secundarios, nada arrancado que después tengas que acordarte de bajar. Úsalo
