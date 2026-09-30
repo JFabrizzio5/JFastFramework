@@ -117,22 +117,31 @@ jobs:
       - name: Tests
         # The URL is what un-skips the two suites above. A test that skips
         # in CI and passes locally is a test nobody is running.
+        #
+        # `python -m pytest`, not `pytest`: `tests/` is not a package, and a
+        # few suites name a stub by import path (`tests.test_scheduler:_Stub`).
+        # Only `-m` puts the checkout on sys.path; plain `pytest` fails four
+        # scheduler tests with "No module named tests" when that file runs
+        # without the rest of the suite -- which the step below does.
         env:
           JFAST_TEST_REDIS_URL: redis://localhost:6379/0
           JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
           JFAST_TEST_RABBITMQ_URL: amqp://jfast:jfast@localhost:5672/
-        run: pytest -q
+        run: python -m pytest -q
 
       # Named, because a skip is silent and these are the only evidence that
-      # the atomicity, the fan-out, the pinning, the transaction races and the
-      # broker-held delays are real.
+      # the atomicity, the fan-out, the pinning, the transaction races, the
+      # broker-held delays, local events, the worker's shutdown, dead letters,
+      # SQL spans and the tenancy switch are real.
       - name: Prove the tests needing a real server actually ran
         env:
           JFAST_TEST_REDIS_URL: redis://localhost:6379/0
           JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
           JFAST_TEST_RABBITMQ_URL: amqp://jfast:jfast@localhost:5672/
+        # `shell: bash` adds pipefail: without it the `| tee` hides a failure.
+        shell: bash
         run: |
-          pytest -q -rs --no-header \
+          python -m pytest -q -rs --no-header \
             tests/test_ratelimit.py::test_lua_script_against_real_redis \
             tests/test_websocket.py::test_a_message_published_on_one_worker_reaches_a_socket_on_the_other \
             tests/test_database_postgres.py \
@@ -141,8 +150,14 @@ jobs:
             tests/test_idempotency.py \
             tests/test_rls.py \
             tests/test_accounts.py \
+            tests/test_accounts_flows.py \
             tests/test_rabbitmq_queue.py \
             tests/test_scheduler.py \
+            tests/test_local_events.py \
+            tests/test_worker_cli.py \
+            tests/test_dead_letters.py \
+            tests/test_telemetry.py \
+            tests/test_tenancy_enable_pg.py \
             | tee /tmp/server-tests.log
           if grep -qE '^SKIPPED|no tests ran' /tmp/server-tests.log; then
             echo '::error::a test needing a real server skipped; a service container is not reachable'
@@ -198,6 +213,28 @@ jobs:
           python docs-site/build.py --version ci --output site/ci
           python docs-site/check.py site/ci
 
+      # Last, because it pauses the job's own PostgreSQL and Redis: anything
+      # after it would run against containers that were frozen a moment ago.
+      # `docker pause` keeps the socket open and stops answering, the hard
+      # case a refused connection never shows. Each drill checks the status
+      # inside its deadline, what /ready names, and recovery with no restart
+      # (docs/resilience.md). The service keys below must match `services:`.
+      # The identity-provider drill needs no container and also runs above.
+      - name: Failure drills (pauses the services, so it runs last)
+        env:
+          JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
+          JFAST_TEST_REDIS_URL: redis://localhost:6379/0
+          JFAST_DRILL_PG_CONTAINER: ${{ job.services.postgres.id }}
+          JFAST_DRILL_REDIS_CONTAINER: ${{ job.services.redis.id }}
+        shell: bash
+        run: |
+          python -m pytest -q -s -rs --no-header tests/test_failure_drills.py \
+            | tee /tmp/drills.log
+          if grep -qE '^SKIPPED|no tests ran' /tmp/drills.log; then
+            echo '::error::a failure drill skipped; it was not told which container to pause'
+            exit 1
+          fi
+
   # The CLI is a developer tool, and a good share of the developers who would
   # try this framework are on Windows. Everything above runs on Linux only,
   # which is how three Windows-only defects shipped: no system zone database
@@ -225,7 +262,7 @@ jobs:
         run: mypy src
 
       - name: Tests
-        run: pytest -q
+        run: python -m pytest -q
 
       # The CLI writes em dashes and box drawing; a Windows console that is
       # not UTF-8 renders them as `?`. The framework has a fallback for this
@@ -307,3 +344,232 @@ jobs:
       - run: pip install -e ".[all,dev]"
       - name: Generate, install and build the Vue and React frontends
         run: bash scripts/smoke_frontend.sh
+
+  # `jfast check` tells a user to run ruff, ruff format, mypy and pytest, and
+  # 0.1.0a10's generated projects failed three of the four on a tree nobody
+  # had touched. This generates every shape -- `jfast start` single- and
+  # multitenant, `jfast new service` with every plugin that needs no server of
+  # its own; each layout in example, `--fields` and `--bare` form -- and gates
+  # each project on its own tools, `mypy --strict` included.
+  generated-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e ".[all,dev]"
+      - name: Generated projects pass ruff, format, mypy --strict and pytest
+        run: JFAST=jfast PY=python bash scripts/smoke_generated_quality.sh
+
+  # The claim `jfast upgrade --check` makes is that it names everything a
+  # project has to change. This installs the previous release from PyPI,
+  # generates a project with it, installs this checkout's wheel over it, and
+  # requires exactly the change codes in scripts/smoke_upgrade.expected --
+  # then applies each remedy and runs the project's own tests. A break the
+  # manifest does not name fails the project's tests with nothing listed.
+  upgrade-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip setuptools wheel
+      - name: Previous release from PyPI, upgraded to this checkout
+        run: PY=python bash scripts/smoke_upgrade.sh
+
+  # Windows' monotonic clock moves in ~15.6 ms steps. That is how the JWKS
+  # single-flight bug hid until 0.1.0a10: two readings in one tick looked like
+  # no time had passed. The `windows` job runs on the real thing but without
+  # PostgreSQL or Redis, so the concurrency suites skip there. This runs them
+  # against real servers on Linux with the clock floored to 1/64 s
+  # (tests/windows_clock.py), five rounds, because a timing bug that shows up
+  # half the time needs more than one draw.
+  windows-clock:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: jfast
+          POSTGRES_PASSWORD: jfast
+          POSTGRES_DB: jfast
+        ports:
+          - 5499:5432
+        options: >-
+          --health-cmd "pg_isready -U jfast"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e ".[all,dev]"
+      - name: Databases the split and tenancy suites expect
+        env:
+          PGPASSWORD: jfast
+        run: |
+          for db in primarydb replicadb tenant_a tenant_b; do
+            psql -h localhost -p 5499 -U jfast -d jfast -c "CREATE DATABASE $db"
+          done
+      - name: Concurrency suites on a Windows-grained clock (5 rounds)
+        env:
+          JFAST_TEST_WINDOWS_CLOCK: "1"
+          JFAST_TEST_REDIS_URL: redis://localhost:6379/0
+          JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
+        run: |
+          for i in 1 2 3 4 5; do
+            echo "::group::round ${i}"
+            python -m pytest -q tests/test_auth.py tests/test_cache.py tests/test_ratelimit.py \
+              tests/test_queue.py tests/test_redis_queue.py tests/test_scheduler.py \
+              tests/test_http_client.py tests/test_outbox.py tests/test_idempotency.py || exit 1
+            echo "::endgroup::"
+          done
+
+  # Row-level security sets the tenant with a transaction-local set_config.
+  # Behind PgBouncer in transaction mode one server connection serves many
+  # clients in turn, so "transaction-local" is the whole claim: anything a
+  # client leaves on the connection, the next one inherits. This runs
+  # tests/test_rls_pgbouncer.py through a real PgBouncer with one server
+  # connection (two tenants alternating on the same backend), and through a
+  # second one with several connections and no prepared-statement tracking,
+  # where asyncpg's defaults fail and `[plugin.database] pgbouncer = true`
+  # fixes them. See docs/multitenancy.md, "Behind PgBouncer".
+  #
+  # The image is pinned: 1.25.2 is the PgBouncer the docs were verified
+  # against, and `latest` moved to 1.26 on the day this job was written.
+  pgbouncer:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: jfast
+          POSTGRES_PASSWORD: jfast
+          POSTGRES_DB: jfast
+        ports:
+          - 5499:5432
+        options: >-
+          --health-cmd "pg_isready -U jfast"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      # PgBouncer connects to PostgreSQL when the first client logs in, which
+      # is after the step below has created the role, so no ordering is
+      # needed between the services.
+      pgbouncer:
+        image: edoburu/pgbouncer:v1.25.2-p0
+        env:
+          DB_HOST: postgres
+          DB_PORT: "5432"
+          DB_NAME: jfast
+          DB_USER: jfast_bouncer
+          DB_PASSWORD: jfast_bouncer
+          AUTH_TYPE: scram-sha-256
+          POOL_MODE: transaction
+          DEFAULT_POOL_SIZE: "1"
+          MAX_PREPARED_STATEMENTS: "0"
+        ports:
+          - 6435:5432
+      pgbouncer-multi:
+        image: edoburu/pgbouncer:v1.25.2-p0
+        env:
+          DB_HOST: postgres
+          DB_PORT: "5432"
+          DB_NAME: jfast
+          DB_USER: jfast_bouncer
+          DB_PASSWORD: jfast_bouncer
+          AUTH_TYPE: scram-sha-256
+          POOL_MODE: transaction
+          DEFAULT_POOL_SIZE: "4"
+          MAX_PREPARED_STATEMENTS: "0"
+        ports:
+          - 6436:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e ".[all,dev]"
+      # The test creates this role too, but only in the fixture of the tests
+      # that use it; creating it here first means no test depends on the order
+      # the others ran in. NOSUPERUSER NOBYPASSRLS: the only kind a policy binds.
+      - name: The role PgBouncer logs in as
+        env:
+          PGPASSWORD: jfast
+        run: >-
+          psql -h localhost -p 5499 -U jfast -d jfast -c
+          "CREATE ROLE jfast_bouncer LOGIN PASSWORD 'jfast_bouncer' NOSUPERUSER NOBYPASSRLS"
+      - name: RLS behind PgBouncer in transaction mode
+        env:
+          JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
+          JFAST_TEST_PGBOUNCER_URL: postgresql+asyncpg://jfast_bouncer:jfast_bouncer@localhost:6435/jfast
+          JFAST_TEST_PGBOUNCER_MULTI_URL: postgresql+asyncpg://jfast_bouncer:jfast_bouncer@localhost:6436/jfast
+        shell: bash
+        run: |
+          python -m pytest -q -rs --no-header tests/test_rls_pgbouncer.py | tee /tmp/pgbouncer.log
+          if grep -qE '^SKIPPED|no tests ran' /tmp/pgbouncer.log; then
+            echo '::error::a PgBouncer test skipped; a PgBouncer service is not reachable'
+            exit 1
+          fi
+
+  # tests/test_telemetry.py checks every span against the in-memory exporter,
+  # which never serialises a span or sends it anywhere. This exports over
+  # OTLP/HTTP to a real Jaeger and reads the trace back from its query API,
+  # installing only the `telemetry` extra so a missing dependency of the
+  # exporter shows up here and not in a user's deployment. The image is the
+  # one `include_infra = true` generates.
+  telemetry:
+    runs-on: ubuntu-latest
+    services:
+      jaeger:
+        image: jaegertracing/jaeger:2.10.0
+        ports:
+          - 4318:4318
+          - 16686:16686
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e ".[telemetry,dev]"
+      # The image has no shell for a health command, so wait from outside:
+      # spans sent before the OTLP receiver is up are dropped, not queued.
+      - name: Wait for Jaeger
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://localhost:16686/ && exit 0
+            sleep 2
+          done
+          echo '::error::Jaeger did not answer on 16686'
+          exit 1
+      - name: Spans exported over OTLP and read back from Jaeger
+        env:
+          JAEGER_URL: http://localhost:16686
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4318
+        run: bash scripts/smoke_telemetry.sh
