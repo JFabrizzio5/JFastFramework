@@ -9,6 +9,7 @@ none of the plugins added since. These tests hold it to the catalog.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -279,6 +280,60 @@ def test_add_refuses_a_plugin_this_install_lacks(
     result = runner.invoke(app, ["add", "telemetry", "--no-install"])
     assert result.exit_code == 1
     assert "telemetry" not in _toml(service / "jfast.toml")["plugins"]["enabled"]
+
+
+def _record_pip(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return calls
+
+
+def test_add_never_installs_an_older_pin_over_the_running_framework(
+    service: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The Cuadra migration: requirements.txt still pinned 0.1.0a10, and
+    # `jfast add telemetry` reinstalled a10 over the a11 that was running.
+    monkeypatch.setattr(add_command, "_editable_location", lambda: None)
+    requirements = service / "requirements.txt"
+    body = requirements.read_text(encoding="utf-8")
+    requirements.write_text(
+        re.sub(r"(jfastframework\[[^\]]*\])==\S+", r"\1==0.0.1", body), encoding="utf-8"
+    )
+    calls = _record_pip(monkeypatch)
+    result = runner.invoke(app, ["add", "telemetry"])
+    assert result.exit_code == 0, result.output
+    assert calls == []
+    assert "pins jfastframework==0.0.1" in " ".join(result.output.split())
+    assert "telemetry" in requirements.read_text(encoding="utf-8"), "the pin is still edited"
+
+
+def test_add_never_replaces_an_editable_checkout(
+    service: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(add_command, "_editable_location", lambda: "/src/jfast")
+    calls = _record_pip(monkeypatch)
+    result = runner.invoke(app, ["add", "telemetry"])
+    assert result.exit_code == 0, result.output
+    assert calls == []
+    assert 'pip install -e "/src/jfast[' in " ".join(result.output.split())
+
+
+def test_add_installs_when_the_pin_is_this_version(
+    service: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jfastframework import __version__
+
+    monkeypatch.setattr(add_command, "_editable_location", lambda: None)
+    assert f"=={__version__}" in (service / "requirements.txt").read_text(encoding="utf-8")
+    calls = _record_pip(monkeypatch)
+    result = runner.invoke(app, ["add", "telemetry"])
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1 and calls[0][-2:] == ["-r", str(service / "requirements.txt")]
 
 
 def test_remove_refuses_while_another_plugin_needs_it(service: Path) -> None:
