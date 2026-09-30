@@ -13,6 +13,9 @@ JSON_COLUMN = JSON().with_variant(JSONB(), "postgresql")
 {% endif %}
 
 
+{% if "VersionedMixin" in entity_bases %}
+# VersionedMixin before TimestampMixin: it carries both mixins' mapper settings.
+{% endif %}
 class {{ entity_class }}({{ entity_bases }}):
     __tablename__ = "{{ table }}"
 {% if uniques %}

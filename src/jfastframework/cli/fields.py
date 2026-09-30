@@ -417,6 +417,24 @@ class ModuleFields:
             names.add("sqlalchemy.UniqueConstraint")
         return sorted(names)
 
+    def pydantic(self, *, versioned: bool = False) -> list[str]:
+        """Dotted pydantic names the Create/Update/Read classes need."""
+        names = {"pydantic.BaseModel", "pydantic.ConfigDict"}
+        if self.needs_pydantic_field or versioned:
+            names.add("pydantic.Field")
+        if self.needs_aware_datetime:
+            names.add("pydantic.AwareDatetime")
+        if self.non_nullable:
+            names.add("pydantic.model_validator")
+        return sorted(names)
+
+    def model_stdlib(self) -> list[str]:
+        """Standard-library names the Create/Update/Read classes need."""
+        names = {*self.stdlib(), "datetime.datetime"}
+        if self.non_nullable:
+            names.add("typing.Self")
+        return sorted(names)
+
     def key_stdlib(self) -> list[str]:
         """Standard-library names the unique keys' parameters need."""
         keyed = ModuleFields(tuple(f for u in self.uniques for f in u.fields))

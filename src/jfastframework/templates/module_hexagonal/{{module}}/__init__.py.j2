@@ -22,12 +22,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from .adapters.http import {{ Module }}Create as CreatePayload
+    from .adapters.http import router
     from .application.use_cases import {{ Module }}UseCases
-
-# The payload type is part of the module's public surface, not an
-# implementation detail: the HTMX overlay is layout-agnostic and has to
-# build one without knowing which layout it is talking to.
-from .adapters.http import {{ Module }}Create as CreatePayload
 
 __all__ = ["CreatePayload", "build_service", "router"]
 
@@ -49,14 +46,20 @@ def build_service(session: Any, tenant_id: str | None = None) -> {{ Module }}Use
 
 
 def __getattr__(name: str) -> Any:
-    """Resolve ``router`` on first access instead of at import time.
+    """Resolve ``router`` and ``CreatePayload`` on first access, not at import.
 
     ``from modules.{{ module }} import router`` still works -- that is the line
     the CLI splices into ``main.py`` -- but the FastAPI import now happens when
     something asks for the router, not when something imports the domain.
+    ``CreatePayload`` (the HTMX overlay's way in) is a Pydantic model, so it is
+    deferred for the same reason.
     """
     if name == "router":
         from .adapters.http import router
 
         return router
+    if name == "CreatePayload":
+        from .adapters.http import {{ Module }}Create
+
+        return {{ Module }}Create
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -12,10 +12,11 @@ overlay drive a hexagonal module and a layered one with the same file.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+{% for line in import_lines(["collections.abc.Mapping", "typing.Any"] + spec.key_stdlib()) %}
+{{ line }}
+{% endfor %}
 
-from jfastframework.errors import ConflictError, NotFoundError, ValidationError
+from jfastframework.errors import {{ (["NotFoundError", "ValidationError"] + (["ConflictError"] if uniques else []))|sort|join(", ") }}
 
 from ..domain.entities import {{ Module }}, {{ Module }}RuleViolation
 from ..domain.ports import {{ Module }}Page, {{ Module }}Repository
@@ -69,9 +70,12 @@ class {{ Module }}UseCases:
         except TypeError as exc:
             raise ValidationError(f"unexpected field: {exc}") from exc
 
-        if await self.repository.find_by_name(entity.name) is not None:
-            raise ConflictError(f"{{ Module }} named {entity.name!r} already exists")
+{% for unique in uniques %}
+        {{ fit("await self._" ~ unique.rule ~ "(", unique.prefixed("entity.") + ["exclude_id=None"], ")", indent=8) }}
+{% endfor %}
+{% if uniques %}
 
+{% endif %}
         return await self.repository.add(entity)
 
     async def update(self, item_id: int, payload: Any) -> {{ Module }}:
@@ -83,16 +87,33 @@ class {{ Module }}UseCases:
         except {{ Module }}RuleViolation as exc:
             raise ValidationError(str(exc)) from exc
 
-        # Only when the name actually moved, and only against a different row:
+{% for unique in uniques %}
+{% if loop.first %}
+        # Only when the key was touched, and only against a different row:
         # re-checking on every PATCH makes an entity collide with itself.
-        if "name" in changes:
-            clash = await self.repository.find_by_name(entity.name)
-            if clash is not None and clash.id != entity.id:
-                raise ConflictError(f"{{ Module }} named {entity.name!r} already exists")
+{% endif %}
+        if changes.keys() & {{ "{" }}{% for name in unique.names %}"{{ name }}"{{ ", " if not loop.last }}{% endfor %}{{ "}" }}:
+            {{ fit("await self._" ~ unique.rule ~ "(", unique.prefixed("entity.") + ["exclude_id=entity.id"], ")", indent=12) }}
+{% endfor %}
+{% if uniques %}
 
+{% endif %}
         return await self.repository.save(entity)
 
     async def delete(self, item_id: int) -> None:
         # Read first so a missing id is a 404 rather than a silent success.
         await self.get(item_id)
         await self.repository.remove(item_id)
+{% for unique in uniques %}
+
+    {{ fit("async def _" ~ unique.rule ~ "(", ["self"] + unique.parameter_list + ["*", "exclude_id: int | None"], ") -> None:", indent=4) }}
+        """Reject a {{ unique.names|join(" + ") }} another {{ module }} already holds.
+
+        Through the port, so the rule is the same against PostgreSQL and the
+        in-memory adapter. Read-then-write: the unique constraint on the table
+        is what holds when two requests pass this at once.
+        """
+        existing = await self.repository.{{ unique.port_finder }}({{ unique.arguments }})
+        if existing is not None and existing.id != exclude_id:
+            {{ fit("raise ConflictError(", ['f"' ~ Module ~ ' with ' ~ unique.described ~ ' already exists"'], ")", indent=12) }}
+{% endfor %}

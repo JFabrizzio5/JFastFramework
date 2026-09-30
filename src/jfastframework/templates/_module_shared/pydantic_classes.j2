@@ -1,0 +1,69 @@
+{#
+  The Create, Update and Read classes alone, for a file that writes its own
+  imports (a layout that keeps its wire schemas beside its router).
+  `versioned` adds optimistic locking; `optional_timestamps` is for a Read
+  built from a domain entity, whose timestamps are None until stored.
+#}
+{% set versioned = versioned|default(false) %}
+{% set optional_timestamps = optional_timestamps|default(false) %}
+{% if spec.non_nullable %}
+#: Columns that are NOT NULL: an update may leave them out, never null them.
+_NOT_NULL = {{ tuple_source(spec.non_nullable|map(attribute="name")|list) }}
+
+
+{% endif %}
+class {{ Module }}Create(BaseModel):
+{% for f in spec.domain_order %}
+    {{ f.create_declaration() }}
+{% else %}
+    """No fields yet: add them here, on the entity, and in the update model."""
+{% endfor %}
+
+
+class {{ Module }}Update(BaseModel):
+    """A partial update: a field left out is left as it is."""
+{% if fields or versioned %}
+
+{% endif %}
+{% for f in fields %}
+    {{ f.update_declaration() }}
+{% endfor %}
+{% if versioned %}
+    # The version the client read. Sent back, a save that raced another one
+    # is refused with 412 instead of overwriting it; left out, the last write
+    # wins as before.
+    version: int | None = Field(default=None, ge=1)
+{% endif %}
+{% if spec.non_nullable %}
+
+    @model_validator(mode="after")
+    def _refuse_null_for_required(self) -> Self:
+        # `None` is the "not sent" default here, but a client can also send an
+        # explicit null. For a NOT NULL column that is a 500 at the INSERT;
+        # refused here it is a 422 naming the field.
+        for name in _NOT_NULL:
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} may be left out, but not set to null")
+        return self
+{% endif %}
+
+
+class {{ Module }}Read(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+{% for f in fields %}
+    {{ f.name }}: {{ f.annotation }}
+{% endfor %}
+{% if versioned %}
+    version: int
+{% endif %}
+{% if optional_timestamps %}
+    # Nullable on the entity, because one that has not been stored yet has no
+    # timestamps. Everything a route returns has been.
+    created_at: datetime | None
+    updated_at: datetime | None
+{% else %}
+    created_at: datetime
+    updated_at: datetime
+{% endif %}

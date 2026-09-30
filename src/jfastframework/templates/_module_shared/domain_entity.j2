@@ -1,0 +1,105 @@
+{#
+  The framework-free entity of the screaming and hexagonal layouts: a
+  dataclass with the declared fields and a validate() built from their limits.
+  `mutable_fields` (hexagonal) adds the partial-update guard and apply().
+#}
+{% set mutable_fields = mutable_fields|default(false) %}
+from __future__ import annotations
+
+{% set std = ["dataclasses.dataclass", "datetime.datetime"] + spec.stdlib() + (["collections.abc.Mapping", "typing.Any", "typing.ClassVar"] if mutable_fields else []) %}
+{% for line in import_lines(std) %}
+{{ line }}
+{% endfor %}
+
+
+class {{ Module }}RuleViolation(Exception):
+    """A {{ module }} was asked to enter a state its rules forbid.
+
+    The domain's own exception rather than ``jfastframework.errors``: importing
+    that package pulls in the app factory, and with it FastAPI. Use cases
+    translate this into the framework error the HTTP layer knows how to render.
+    """
+
+
+@dataclass
+class {{ Module }}:
+    """The {{ module_title }} entity."""
+
+{% for f in spec.domain_order %}
+{% if f.python_default is not none %}
+    {{ f.name }}: {{ f.annotation }} = {{ f.python_default }}
+{% else %}
+    {{ f.name }}: {{ f.annotation }}
+{% endif %}
+{% endfor %}
+    # Assigned by whatever stores the entity. None means "not stored yet".
+    id: int | None = None
+    tenant_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+{% if mutable_fields %}
+
+    #: Fields a partial update may touch. Anything outside this set is owned by
+    #: storage, and letting a PATCH body reach it is how `tenant_id` gets
+    #: rewritten by a caller who guessed a field name.
+{% set names = fields|map(attribute="name")|map("tojson")|list %}
+{% set one_line = fit("MUTABLE_FIELDS: ClassVar[frozenset[str]] = frozenset({", names, "})", indent=4) %}
+{% if fields and "\n" not in one_line %}
+    {{ one_line }}
+{% elif fields %}
+    MUTABLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+{% for name in names %}
+            {{ name }},
+{% endfor %}
+        }
+    )
+{% else %}
+    MUTABLE_FIELDS: ClassVar[frozenset[str]] = frozenset()
+{% endif %}
+{% endif %}
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
+        """Every rule about this object's own state, on construction and after a change.
+
+        A rule that needs another row -- "this key is already taken" -- is not
+        here: answering it needs storage, and that belongs in a use case.
+        """
+{% for f in fields %}
+{% for condition, message in f.domain_checks() %}
+        if {{ condition }}:
+            raise {{ Module }}RuleViolation("{{ message }}")
+{% endfor %}
+{% endfor %}
+{% if mutable_fields %}
+
+    def apply(self, changes: Mapping[str, Any]) -> None:
+        """Merge a partial update and re-check every rule.
+
+        Validating the merged entity rather than the patch is the point: each
+        field can be individually acceptable and the result still invalid.
+        """
+        unknown = sorted(set(changes) - self.MUTABLE_FIELDS)
+        if unknown:
+            raise {{ Module }}RuleViolation(f"cannot update: {', '.join(unknown)}")
+        for field_name, value in changes.items():
+            setattr(self, field_name, value)
+        self.validate()
+{% endif %}
+{% if example %}
+
+    def rename(self, name: str) -> None:
+        self.name = name
+        self.validate()
+
+    def deactivate(self) -> None:
+        if not self.is_active:
+            raise {{ Module }}RuleViolation("already inactive")
+        self.is_active = False
+
+    def activate(self) -> None:
+        self.is_active = True
+{% endif %}

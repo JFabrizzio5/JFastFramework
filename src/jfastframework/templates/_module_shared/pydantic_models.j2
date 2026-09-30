@@ -3,69 +3,15 @@
   the optimistic-locking field the layered layout's entity carries.
 #}
 {% set versioned = versioned|default(false) %}
-{% set pydantic = ["pydantic.BaseModel", "pydantic.ConfigDict"] + (["pydantic.Field"] if spec.needs_pydantic_field or versioned else []) + (["pydantic.AwareDatetime"] if spec.needs_aware_datetime else []) + (["pydantic.model_validator"] if spec.non_nullable else []) %}
 from __future__ import annotations
 
-{% for line in import_lines(spec.stdlib() + ["datetime.datetime"] + (["typing.Self"] if spec.non_nullable else [])) %}
+{% for line in import_lines(spec.model_stdlib()) %}
 {{ line }}
 {% endfor %}
 
-{% for line in import_lines(pydantic) %}
+{% for line in import_lines(spec.pydantic(versioned=versioned)) %}
 {{ line }}
 {% endfor %}
 
 
-class {{ Module }}Create(BaseModel):
-{% for f in spec.domain_order %}
-    {{ f.create_declaration() }}
-{% else %}
-    """No fields yet: add them here, on the entity, and in the update model."""
-{% endfor %}
-
-
-{% if spec.non_nullable %}
-#: Columns that are NOT NULL: an update may leave them out, never null them.
-_NOT_NULL = {{ tuple_source(spec.non_nullable|map(attribute="name")|list) }}
-
-
-{% endif %}
-class {{ Module }}Update(BaseModel):
-    """A partial update: a field left out is left as it is."""
-{% if fields or versioned %}
-
-{% endif %}
-{% for f in fields %}
-    {{ f.update_declaration() }}
-{% endfor %}
-{% if versioned %}
-    # The version the client read. Sent back, a save that raced another one
-    # is refused with 412 instead of overwriting it; left out, the last write
-    # wins as before.
-    version: int | None = Field(default=None, ge=1)
-{% endif %}
-{% if spec.non_nullable %}
-
-    @model_validator(mode="after")
-    def _refuse_null_for_required(self) -> Self:
-        # `None` is the "not sent" default here, but a client can also send an
-        # explicit null. For a NOT NULL column that is a 500 at the INSERT;
-        # refused here it is a 422 naming the field.
-        for name in _NOT_NULL:
-            if name in self.model_fields_set and getattr(self, name) is None:
-                raise ValueError(f"{name} may be left out, but not set to null")
-        return self
-{% endif %}
-
-
-class {{ Module }}Read(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-{% for f in fields %}
-    {{ f.name }}: {{ f.annotation }}
-{% endfor %}
-{% if versioned %}
-    version: int
-{% endif %}
-    created_at: datetime
-    updated_at: datetime
+{% include "_module_shared/pydantic_classes.j2" %}
