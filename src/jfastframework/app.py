@@ -21,10 +21,11 @@ from typing import Any
 from fastapi import APIRouter, FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.routing import BaseRoute, Match, Route
 
 from jfastframework.context import AppContext
 from jfastframework.errors import PluginError, install_error_handlers
-from jfastframework.health import build_system_router
+from jfastframework.health import add_system_routes
 from jfastframework.middleware import (
     BodySizeLimitMiddleware,
     ProxyHeadersMiddleware,
@@ -101,10 +102,16 @@ def create_app(
                 ) from exc
             raise
 
-    app.include_router(build_system_router(ctx, resolved))
+    add_system_routes(app, ctx, resolved)
+    # Everything so far is the framework's: FastAPI's docs, what the plugins
+    # registered, the system endpoints. Remembered by identity, so the
+    # lifespan can put them back behind routes added after this function.
+    app.state.jfast_framework_routes = tuple(app.router.routes)
 
     for router in routers or []:
         app.include_router(router)
+
+    order_framework_routes_last(app)
 
     logger.info(
         "%s built with plugins: %s",
@@ -172,10 +179,88 @@ def _install_edge_middleware(app: FastAPI, settings: JFastSettings) -> None:
     )
 
 
+def order_framework_routes_last(app: FastAPI) -> None:
+    """Move the framework's fixed-path routes behind the application's.
+
+    Starlette tries routes in order, and the first to match wins. Registered
+    first, ``/health``, ``/ready``, ``/info``, ``/metrics`` and the docs are
+    tried -- and fail -- on every request to every application route: about
+    8 us per request on 0.1.0a10, for probes that arrive once every few
+    seconds. Behind the application's routes they cost those requests nothing
+    and cost themselves one pass over the route table.
+
+    What must not change is who answers. Today a framework route wins over an
+    application route that would also match its path, a ``/{slug}`` catch-all
+    for instance; moved blindly, the catch-all would start answering
+    ``/health``. So each moved route is probed with its own path and method,
+    and when an application route in front would claim it -- a full match, or
+    a partial one that would turn it into a 405 -- the framework route goes
+    back directly in front of that route. The winner for every path is the
+    same as before; only requests that were never going to match it stop
+    paying for it.
+
+    Only fixed paths move. A route with parameters matches paths nobody can
+    enumerate, so there is no probe that proves moving it is harmless; those
+    stay where they were. Idempotent: the lifespan runs it again, so routes
+    included after ``create_app`` returned are covered too.
+    """
+    framework: tuple[BaseRoute, ...] = getattr(app.state, "jfast_framework_routes", ())
+    routes = app.router.routes
+    present = {id(route) for route in routes}
+    movable = [route for route in framework if id(route) in present and _fixed_path(route)]
+    if not movable:
+        return
+    moved = {id(route) for route in movable}
+    for route in movable:
+        routes.remove(route)
+    routes.extend(movable)
+
+    for route in movable:
+        assert isinstance(route, Route)
+        probe = _probe_scope(route)
+        position = routes.index(route)
+        for index, candidate in enumerate(routes[:position]):
+            if id(candidate) in moved:
+                continue
+            match, _ = candidate.matches(dict(probe))
+            if match is not Match.NONE:
+                routes.pop(position)
+                routes.insert(index, route)
+                logger.debug(
+                    "%s stays in front of %r, which would otherwise answer it",
+                    route.path,
+                    candidate,
+                )
+                break
+
+
+def _fixed_path(route: BaseRoute) -> bool:
+    return isinstance(route, Route) and not route.param_convertors
+
+
+def _probe_scope(route: Route) -> dict[str, Any]:
+    method = sorted(route.methods)[0] if route.methods else "GET"
+    return {
+        "type": "http",
+        "method": method,
+        "path": route.path,
+        "raw_path": route.path.encode(),
+        "root_path": "",
+        "query_string": b"",
+        "scheme": "http",
+        "headers": [(b"host", b"localhost")],
+        "server": ("localhost", 80),
+        "client": None,
+    }
+
+
 def _build_lifespan(plugins: list[Plugin]):  # type: ignore[no-untyped-def]
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ctx: AppContext = app.state.jfast
+        # Routers included after create_app returned -- main.py adding one by
+        # hand, a test mounting a sub-app -- landed behind the framework's.
+        order_framework_routes_last(app)
         started: list[Plugin] = []
         try:
             for plugin in plugins:
