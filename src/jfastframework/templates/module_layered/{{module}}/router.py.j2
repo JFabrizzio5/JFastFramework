@@ -1,3 +1,4 @@
+{% import "_module_shared/access.j2" as access_m with context %}
 """HTTP layer for the {{ module_title }} module.
 
 Routers do three things: validate input, call the service, shape the response.
@@ -6,28 +7,21 @@ Business logic belongs in service.py, data access in repository.py.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+{{ access_m.fastapi_import(["Response"])|trim }}
 
-from jfastframework.plugins.builtin.database import DbSession
+{{ access_m.framework_imports()|trim }}
 
 from .repository import {{ Module }}Repository
 from .schemas import {{ Module }}Create, {{ Module }}Read, {{ Module }}Update
 from .service import {{ Module }}Service
 
-router = APIRouter(prefix="/{{ table }}", tags=["{{ module }}"])
+{{ access_m.router()|trim }}
 
 # A page nobody asked for is a table dump someone can ask for.
 MAX_PAGE_SIZE = 200
 
 
-# DbSession commits when the endpoint returns, before the response is sent,
-# so a write that fails to commit is a 500 and not a 201 for a missing row.
-# `async def`, not `def`, although nothing here awaits: FastAPI runs a plain
-# `def` dependency in its threadpool, a hop that costs more per request than
-# the whole middleware stack.
-async def get_service(request: Request, session: DbSession) -> {{ Module }}Service:
-    tenant_id = getattr(request.state, "tenant_id", None)
-    return {{ Module }}Service({{ Module }}Repository(session, tenant_id=tenant_id))
+{{ access_m.dependency("get_service", Module ~ "Service", Module ~ "Service(" ~ Module ~ "Repository(session, tenant_id=tenant_id))")|trim }}
 
 
 @router.get("", response_model=list[{{ Module }}Read], summary="List {{ module }}")

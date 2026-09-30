@@ -9,37 +9,5 @@ Run from the project root::
     pytest modules/{{ module }}/tests
 """
 
-from __future__ import annotations
-
-import pytest
-
-from modules.{{ module }}.{{ module }} import {{ Module }}, {{ Module }}RuleViolation
-
-
-def test_a_valid_entity_is_accepted() -> None:
-    entity = {{ Module }}(name="valid", description="fine")
-    assert entity.is_active is True
-
-
-def test_an_empty_name_is_rejected() -> None:
-    with pytest.raises({{ Module }}RuleViolation):
-        {{ Module }}(name="   ")
-
-
-def test_an_overlong_name_is_rejected() -> None:
-    with pytest.raises({{ Module }}RuleViolation):
-        {{ Module }}(name="x" * 201)
-
-
-def test_rename_revalidates() -> None:
-    entity = {{ Module }}(name="valid")
-    with pytest.raises({{ Module }}RuleViolation):
-        entity.rename("")
-
-
-def test_deactivating_twice_is_a_rule_violation() -> None:
-    entity = {{ Module }}(name="valid")
-    entity.deactivate()
-    assert entity.is_active is False
-    with pytest.raises({{ Module }}RuleViolation):
-        entity.deactivate()
+{% set domain_module = "modules." ~ module ~ "." ~ module %}
+{% include "_module_shared/domain_tests.j2" %}

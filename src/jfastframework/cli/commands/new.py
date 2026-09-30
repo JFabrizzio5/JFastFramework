@@ -6,6 +6,7 @@ What a new service shares with `jfast init` and `jfast start` is in
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import typer
@@ -14,6 +15,7 @@ from jfastframework.cli import modules as module_registry
 from jfastframework.cli import ui
 from jfastframework.cli import ui as cli_ui
 from jfastframework.cli.common import _report
+from jfastframework.cli.fields import FieldSpecError
 from jfastframework.cli.generate import (
     _generate_gateway,
     _print_next_steps,
@@ -36,13 +38,16 @@ from jfastframework.cli.scaffold import (
     MODULE_UIS,
     PLUGIN_CATALOG,
     PLURAL_LANGUAGES,
+    ROUTE_ACCESS,
     SERVICE_KINDS,
     Scaffolder,
     check_frontend_template,
     detect_frontend,
     detect_frontend_template,
+    format_generated,
     module_context,
     module_trees,
+    route_access_for,
     to_pascal,
     to_snake,
     view_context,
@@ -82,6 +87,24 @@ def _scaffold_language(root: Path) -> str:
         return "en"
     value = data.get("scaffold", {}).get("language", "en")
     return str(value)
+
+
+def _enabled_plugins(root: Path) -> list[str]:
+    """``[plugins].enabled`` from the project's jfast.toml, or nothing."""
+    import tomllib
+
+    config = root / "jfast.toml"
+    if not config.is_file():
+        return []
+    try:
+        data = tomllib.loads(config.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    plugins = data.get("plugins", {})
+    enabled = plugins.get("enabled", []) if isinstance(plugins, dict) else []
+    disabled = set(plugins.get("disabled", [])) if isinstance(plugins, dict) else set()
+    # `disabled` wins over `enabled`, as it does when the service boots.
+    return [str(name) for name in enabled if name not in disabled]
 
 
 def _ask_layout(module: str) -> str:
@@ -130,17 +153,48 @@ def new_module(
     root: Path = typer.Option(
         Path("."), "--root", help="Project root, where the htmx overlay writes templates."
     ),
+    fields: str | None = typer.Option(
+        None,
+        "--fields",
+        help=(
+            'The real fields, e.g. "cartera_id:int, mes:str(7), leida:bool=false, nota:text?". '
+            "Types: int, bigint, str(N), text, bool, float, decimal(P,S), money, date, "
+            "datetime, json; ? = nullable; =value = default. See docs/modules.md."
+        ),
+    ),
+    unique: list[str] = typer.Option(
+        [],
+        "--unique",
+        help='Fields that are unique together per tenant, e.g. "cartera_id,mes". Repeatable.',
+    ),
+    bare: bool = typer.Option(
+        False, "--bare", help="The module's structure with no fields at all, not even examples."
+    ),
+    access: str | None = typer.Option(
+        None,
+        "--access",
+        help=(
+            "How the routes learn who is asking: open, auth (require_auth) or tenant "
+            "(current_tenant). Defaults to what jfast.toml enables."
+        ),
+    ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files."),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
     """Scaffold a domain module.
 
-    Two layouts and two UI options, composed rather than duplicated:
+    Four layouts and two UI options, composed rather than duplicated:
 
         jfast new module order
         jfast new module order --layout screaming
         jfast new module order --ui htmx
-        jfast new module order --layout screaming --ui htmx
+
+    With the real fields instead of the example ones -- nothing to delete:
+
+        jfast new module presupuesto \\
+            --fields "cartera_id:int, mes:str(7), gasto:money, leida:bool=false" \\
+            --unique "cartera_id,mes"
+        jfast new module alerta --bare
     """
     if layout is None:
         layout = _ask_layout(name)
@@ -156,16 +210,46 @@ def new_module(
             f"choose from: {', '.join(PLURAL_LANGUAGES)}", param_hint="--language"
         )
 
+    if ui == "htmx" and (fields is not None or bare):
+        # The overlay draws the example fields -- a name, a description, an
+        # active flag -- and would render pages for columns that do not exist.
+        raise typer.BadParameter(
+            "the HTMX pages are drawn for the example fields. Generate the module "
+            "with --ui api and write its pages for your fields, or drop --fields/--bare",
+            param_hint="--ui",
+        )
+    if access is None:
+        access = route_access_for(_enabled_plugins(root))
+    if access not in ROUTE_ACCESS:
+        raise typer.BadParameter(f"choose from: {', '.join(ROUTE_ACCESS)}", param_hint="--access")
+
     scaffolder = Scaffolder()
-    context = module_context(
-        name, layout=layout, ui=ui, table=table, modules_dir=target.name, language=language
-    )
+    try:
+        context = module_context(
+            name,
+            layout=layout,
+            ui=ui,
+            table=table,
+            modules_dir=target.name,
+            language=language,
+            fields=fields,
+            unique=unique,
+            bare=bare,
+            access=access,
+        )
+    except FieldSpecError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--fields") from exc
     trees = module_trees(layout, ui, target, root)
     # `ui` here is the --ui option, which shadows the ui module inside this one
     # function. The spinner is reached through the package to say which is meant.
     with cli_ui.working(f"scaffolding {name}"):
         written = scaffolder.render_trees(trees, context, force=force, dry_run=dry_run)
+        created = [file.path for file in written if file.created]
+        formatted = dry_run or format_generated(created, root)
     _report(written)
+    if not formatted:
+        cli_ui.note("ruff is not installed here: long names may leave lines past 100 characters.")
+        cli_ui.note("    pip install -r requirements-dev.txt && ruff format .")
 
     module = context["module"]
     if not dry_run:
@@ -186,7 +270,8 @@ def new_module(
     ]
     if ui == "htmx":
         steps.insert(0, ('[plugins] enabled = [..., "web"]', "HTMX pages need it"))
-    cli_ui.next_steps(f"{module} ({layout}, {ui})", steps)
+    shape = "bare" if bare else ("example fields" if fields is None else "your fields")
+    cli_ui.next_steps(f"{module} ({layout}, {ui}, {shape}, {access} routes)", steps)
 
 
 def _split_csv(value: str | None) -> list[str]:
@@ -253,6 +338,14 @@ def new_service(
             "writes the contract that matches what it generated."
         ),
     ),
+    multitenant: bool = typer.Option(
+        False,
+        "--multitenant",
+        help=(
+            "Several customers: adds tenancy (sources token, user) and auth, per-tenant RAG "
+            "and LLM budget, and routes generated here use current_tenant."
+        ),
+    ),
     port: int | None = typer.Option(
         None, "--port", "-p", help="Base port. Defaults to the next free block in the workspace."
     ),
@@ -300,6 +393,7 @@ def new_service(
             layout=layout,
             force=force,
             dry_run=dry_run,
+            multitenant=multitenant,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -321,21 +415,49 @@ ENUM_HEADER = (
     "and read by a frontend. Renaming a member is free; changing its value is a\n"
     "data migration.\n"
     "\n"
-    "`str, Enum` rather than `Enum`, so a member is a string everywhere -- in\n"
+    "`StrEnum` rather than `Enum`, so a member is its value everywhere -- in\n"
     "JSON, in SQL, and in a log line -- instead of `Status.DRAFT` in some paths\n"
     'and `"DRAFT"` in others.\n'
     '"""\n'
     "\n"
     "from __future__ import annotations\n"
     "\n"
-    "from enum import Enum\n"
+    "from enum import StrEnum\n"
     "\n"
     "\n"
 )
 
 
+def _import_str_enum(source: str) -> str:
+    """Make sure a file the new enum is appended to imports ``StrEnum``.
+
+    A file written before the generator moved to ``StrEnum`` imports ``Enum``
+    only, and appending a ``StrEnum`` class to it would be a NameError at the
+    first import. The existing import line is extended rather than a second one
+    added, which is also the form isort accepts.
+    """
+    if re.search(r"^from enum import .*\bStrEnum\b", source, flags=re.MULTILINE):
+        return source
+    extended, count = re.subn(
+        r"^from enum import (.+)$",
+        lambda match: (
+            "from enum import "
+            + ", ".join(sorted({*(n.strip() for n in match.group(1).split(",")), "StrEnum"}))
+        ),
+        source,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if count:
+        return extended
+    future = "from __future__ import annotations\n"
+    if future in source:
+        return source.replace(future, future + "\nfrom enum import StrEnum\n", 1)
+    return "from enum import StrEnum\n\n" + source
+
+
 def _render_enum(class_name: str, members: list[str]) -> str:
-    lines = [f"class {class_name}(str, Enum):", f'    """{class_name}."""', ""]
+    lines = [f"class {class_name}(StrEnum):", f'    """{class_name}."""', ""]
     for member in members:
         lines.append(f'    {to_snake(member).upper()} = "{to_snake(member)}"')
     return "\n".join(lines) + "\n"
@@ -418,6 +540,7 @@ def new_enum(
         if f"class {class_name}(" in existing:
             typer.echo(f"{class_name} is already in {target}.")
             raise typer.Exit(1)
+        existing = _import_str_enum(existing)
         target.write_text(existing.rstrip("\n") + "\n\n\n" + body, encoding="utf-8")
     else:
         target.write_text(ENUM_HEADER + body, encoding="utf-8")

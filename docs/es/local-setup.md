@@ -117,6 +117,21 @@ Caddyfile              one hostname in front of both
 jfast.workspace.toml   ports, and what the frontend should call
 ```
 
+`jfast start` no pregunta nada, así que dos decisiones son flags:
+
+- **Clientes.** `--single-tenant` (el default) o `--multitenant`. Multitenant
+  enciende `tenancy` (el tenant sale del token firmado o del usuario que inició
+  sesión), `auth` y `accounts`, genera rutas que toman el tenant de
+  `current_tenant`, y escribe en `shop/.env` un `JFAST_AUTH_SECRET` y la
+  contraseña del primer admin. Un solo cliente es el default porque un servicio
+  multitenant necesita un sistema de usuarios y alguien con sesión antes de que
+  funcione su primer `curl` -- la forma correcta para un SaaS, demasiado para
+  cualquier otra cosa. Todas las tablas conservan su columna `tenant_id` en
+  ambos casos, así que cambiar después es un backfill y no una reescritura del
+  esquema.
+- **Trazas.** `telemetry` viene encendido y no exporta nada hasta que se define
+  `OTEL_EXPORTER_OTLP_ENDPOINT`. `--no-telemetry` lo deja fuera.
+
 ### Correr el backend
 
 ```bash
@@ -178,14 +193,66 @@ docker compose up --build
 jfast init
 ```
 
-Pregunta qué estás construyendo, qué datastores quieres y en qué puerto, y
-después genera exactamente lo mismo que habrían generado los flags:
+Pregunta qué estás construyendo, qué datastores quieres, si la app atiende a
+varios clientes, qué capacidades y en qué puerto -- y después genera
+exactamente lo mismo que habrían generado los flags.
+
+**"¿Esta app atiende a varios clientes (multitenant)?"** Una respuesta fija
+todas las piezas que tienen que coincidir, así que no pueden contradecirse:
+
+| | Sí | No |
+| --- | --- | --- |
+| `tenancy` | encendido, `sources = ["token", "user"]` | apagado |
+| rutas generadas | `current_tenant` (401/403 sin tenant) | `require_auth` con auth, abiertas sin él |
+| `[plugin.rag] tenant_scoped` | `true` | `false` |
+| `[plugin.llm] tenant_budget_usd` | definido | ausente |
+| premarcados | + `auth`, `accounts` | |
+| columnas `tenant_id` | se quedan | se quedan |
+
+**Las capacidades** salen del catálogo de plugins, así que un plugin nuevo del
+framework no puede faltar en el menú. Los recomendados vienen premarcados,
+con la etiqueta *recommended* y primero en la lista -- apretar Enter los
+conserva:
+
+- `telemetry` -- las trazas no cuestan nada hasta que hay un endpoint, y son lo
+  primero que hace falta cuando algo va lento en producción, cuando encenderlas
+  ya no ayuda.
+- `queue` -- todo lo que tarda más que una petición va fuera de ella; el
+  backend es el PostgreSQL que el servicio ya tiene, y `jfast worker` la consume.
+- `auth` y `accounts`, cuando la respuesta de arriba es sí: un tenant sale de
+  alguien que inició sesión.
+
+Un plugin que el framework instalado no trae se omite con una nota en vez de
+escribirse en un `jfast.toml` que no arrancaría.
+
+Lo mismo, con flags:
 
 ```bash
 jfast new service billing --with database,cache,queue
 jfast new service edge --language go
 jfast new service admin --kind spa --frontend vue
+jfast new service saas --with database,queue,telemetry --multitenant
 ```
+
+Un frontend dibuja inicio de sesión, registro y la página de seguridad, y deja
+sus rutas privadas por defecto, solo cuando algún backend del workspace
+habilita `accounts`; si no, queda público y sin páginas de cuenta.
+
+### Agregar y quitar un plugin después
+
+```bash
+jfast add telemetry          # [plugins].enabled, el extra, su bloque de settings
+jfast add accounts           # también habilita auth (y database), que requiere
+jfast remove telemetry       # se niega mientras otro plugin habilitado lo requiera
+```
+
+`jfast add` edita `[plugins].enabled` en `jfast.toml` -- conservando todos los
+comentarios --, fija el extra del plugin en `requirements.txt`, agrega el bloque
+de settings con el que se habría generado un servicio nuevo, e imprime lo que
+falta: las variables que lee y el paso siguiente (`alembic upgrade head`,
+`jfast worker`). `jfast remove` quita el extra cuando ningún otro plugin
+habilitado lo usa y deja el bloque `[plugin.<nombre>]` para el día que vuelva.
+`jfast add` sin argumento lista plugins y capacidades juntos.
 
 ---
 

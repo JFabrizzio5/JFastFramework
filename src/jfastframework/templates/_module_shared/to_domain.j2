@@ -1,0 +1,4 @@
+{#  The row -> entity mapping, as a method on the row class just rendered. #}
+
+    def to_domain(self) -> {{ Module }}:
+        {{ fit("return " ~ Module ~ "(", spec.read_arguments("self") + ["id=self.id", "tenant_id=self.tenant_id", "created_at=self.created_at", "updated_at=self.updated_at"], ")", indent=8) }}

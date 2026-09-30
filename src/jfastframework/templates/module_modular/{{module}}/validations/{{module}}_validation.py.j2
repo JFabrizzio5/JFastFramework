@@ -1,8 +1,8 @@
 """Business rules for the {{ module_title }} module.
 
-Rules that are not shape. Pydantic already rejects an empty name and a
-description of 3000 characters; what it cannot see is the rest of the table or
-the current state of the row being changed. Those checks live here.
+Rules that are not shape. Pydantic already rejects a value of the wrong type
+or length; what it cannot see is the rest of the table or the current state of
+the row being changed. Those checks live here.
 
 Two properties make this worth a package rather than an `if` in the service:
 the rule has a name a domain expert would recognise, and a test can call it
@@ -14,22 +14,14 @@ violation reaches the client as problem+json instead of a 500.
 
 from __future__ import annotations
 
-from typing import Any
+{% if uniques or example %}
+{% for line in import_lines(spec.key_stdlib() + ["typing.Any"]) %}
+{{ line }}
+{% endfor %}
 
-from jfastframework.errors import ConflictError, ValidationError
-
-
-async def ensure_name_is_available(repository: Any, name: str) -> None:
-    """Reject a name another {{ module }} already holds.
-
-    Scoped, not global: the repository filters by tenant, so two tenants may
-    each hold the same name. Read-then-write, so two concurrent creates can
-    both pass -- this exists for the readable 409, and the unique index on
-    ``(tenant_id, name)`` is what actually enforces it. Add that index in the
-    migration; autogenerate will not infer it from this function.
-    """
-    if await repository.by_name(name) is not None:
-        raise ConflictError(f"{{ Module }} named {name!r} already exists")
+from jfastframework.errors import {{ "ConflictError, ValidationError" if example else "ConflictError" }}
+{% include "_module_shared/unique_rules.j2" %}
+{% if example %}
 
 
 def ensure_can_deactivate(item: Any) -> None:
@@ -40,3 +32,9 @@ def ensure_can_deactivate(item: Any) -> None:
     """
     if not item.is_active:
         raise ValidationError(f"{{ Module }} {item.id!r} is already inactive")
+{% endif %}
+{% else %}
+# No rules yet. The first one goes here as `ensure_<something>(...)`, raising
+# ConflictError (409) or ValidationError (422) from jfastframework.errors, and
+# is called from the service -- a rule nothing calls is worse than none.
+{% endif %}

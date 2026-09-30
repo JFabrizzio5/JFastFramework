@@ -8,16 +8,10 @@ they change for different reasons and at different speeds.
 from __future__ import annotations
 
 from .{{ module }}_entity import {{ Module }}
-from .{{ module }}_models import (
-    {{ Module }}Base,
-    {{ Module }}Create,
-    {{ Module }}Read,
-    {{ Module }}Update,
-)
+from .{{ module }}_models import {{ Module }}Create, {{ Module }}Read, {{ Module }}Update
 
 __all__ = [
     "{{ Module }}",
-    "{{ Module }}Base",
     "{{ Module }}Create",
     "{{ Module }}Read",
     "{{ Module }}Update",

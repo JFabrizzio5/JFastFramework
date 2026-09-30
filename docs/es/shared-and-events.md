@@ -109,7 +109,7 @@ que la reacción existe si y solo si la categorización hizo commit. `budget` **
 lista `receipt` en `depends_on`: el que publica nunca nombra a sus suscriptores,
 así que ninguna arista apunta en ningún sentido y el grafo de módulos queda sin
 ciclos. `jfast worker` corre al suscriptor; ver
-[Colas y eventos](queues-and-events.md#eventos-entre-módulos).
+[Colas y eventos](queues-and-events.md#eventos-entre-modulos).
 
 Dos cosas que esto reemplaza, y que pasan la revisión para fallar después:
 

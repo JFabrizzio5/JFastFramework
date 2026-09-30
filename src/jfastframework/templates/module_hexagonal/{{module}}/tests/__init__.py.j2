@@ -16,8 +16,9 @@ application layer actually needs.
 
 from __future__ import annotations
 
-from dataclasses import replace
-from itertools import count
+{% for line in import_lines(["dataclasses.replace", "itertools.count"] + spec.key_stdlib()) %}
+{{ line }}
+{% endfor %}
 
 from modules.{{ module }}.domain.entities import {{ Module }}
 from modules.{{ module }}.domain.ports import {{ Module }}Page
@@ -48,10 +49,14 @@ class InMemory{{ Module }}Repository:
         entity = self._items.get(item_id)
         return replace(entity) if entity is not None else None
 
-    async def find_by_name(self, name: str) -> {{ Module }} | None:
-        found = next((e for e in self._items.values() if e.name == name), None)
-        return replace(found) if found is not None else None
+{% for unique in uniques %}
+    {{ fit("async def " ~ unique.port_finder ~ "(", ["self"] + unique.parameter_list, ") -> " ~ Module ~ " | None:", indent=4) }}
+        for {{ unique.loop_variable }} in self._items.values():
+            if {{ unique.matches(unique.loop_variable) }}:
+                return replace({{ unique.loop_variable }})
+        return None
 
+{% endfor %}
     async def add(self, entity: {{ Module }}) -> {{ Module }}:
         item_id = next(self._ids)
         stored = replace(entity, id=item_id)

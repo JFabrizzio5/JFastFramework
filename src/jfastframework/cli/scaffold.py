@@ -75,37 +75,148 @@ class PluginSpec:
     label: str
     # Offered by `jfast init`'s datastore prompt.
     is_datastore: bool = False
+    # Pre-checked in `jfast init` and on in `jfast start`. See RECOMMENDED.
+    recommended: bool = False
+    # Pre-checked when the service serves several customers: a tenant has to
+    # come from somebody signed in.
+    multitenant: bool = False
+    # Plugins this one cannot start without -- its PluginMeta.requires, kept
+    # here so `jfast add` can enable them without importing the plugin (and
+    # its optional dependencies). A test holds the two equal.
+    requires: tuple[str, ...] = ()
+    # What `jfast add` prints after enabling it: the variables it reads.
+    env: tuple[str, ...] = ()
 
 
 # The menu the installer shows, and the source of the extras a generated
-# service pins. Keep it in step with the entry points in pyproject.toml.
+# service pins. `test_every_shipped_plugin_is_in_the_menu_a_generated_service_shows`
+# compares it with the entry points in pyproject.toml, both ways.
+#
+# Recommended, and why each one earns being on by default:
+#
+#   telemetry  free until OTEL_EXPORTER_OTLP_ENDPOINT is set (it exports
+#              nothing and its overhead is measured inside the performance
+#              budget), and traces are what is missed first when something is
+#              slow in production -- after the fact, when turning it on no
+#              longer helps.
+#   queue      anything slower than a request (a model call, a PDF, an email)
+#              belongs off the request path. The default backend is the
+#              PostgreSQL the service already has, so it costs no new server,
+#              and `jfast worker` / the generated worker service consume it.
+#
+# For a multitenant service, also auth and accounts: the tenant is read from
+# a signed token (`token`) or is the signed-in user (`user`), so something has
+# to sign people in. A service with a separate identity provider unchecks
+# accounts and points auth at the provider's JWKS.
 PLUGIN_CATALOG: dict[str, PluginSpec] = {
     "observability": PluginSpec("", "Structured JSON logging with request ids"),
     "metrics": PluginSpec("metrics", "Prometheus RED metrics at /metrics"),
-    "database": PluginSpec("db", "PostgreSQL + pgvector (SQLAlchemy, Alembic)", True),
-    "cache": PluginSpec("cache", "Redis cache, pub/sub and queue", True),
-    "mongo": PluginSpec("mongo", "MongoDB for document-shaped data", True),
-    "qdrant": PluginSpec("qdrant", "Qdrant vector database", True),
+    "telemetry": PluginSpec(
+        "telemetry",
+        "Traces (OpenTelemetry), exported once an OTLP endpoint is set",
+        recommended=True,
+        env=("OTEL_EXPORTER_OTLP_ENDPOINT (optional: nothing is exported until it is set)",),
+    ),
+    "database": PluginSpec(
+        "db", "PostgreSQL + pgvector (SQLAlchemy, Alembic)", True, env=("JFAST_DB_DSN",)
+    ),
+    "cache": PluginSpec("cache", "Redis cache, pub/sub and queue", True, env=("JFAST_CACHE_URL",)),
+    "mongo": PluginSpec(
+        "mongo", "MongoDB for document-shaped data", True, env=("JFAST_MONGO_DSN",)
+    ),
+    "qdrant": PluginSpec("qdrant", "Qdrant vector database", True, env=("JFAST_QDRANT_URL",)),
     "rag": PluginSpec("rag", "Tenant-scoped semantic and hybrid search over pgvector or Qdrant"),
-    "llm": PluginSpec("llm", "Chat, vision and embeddings with a spending cap (OpenAI-compatible)"),
-    "queue": PluginSpec("queue", "Background jobs on PostgreSQL, Redis or RabbitMQ"),
-    "outbox": PluginSpec("db", "Jobs and events that commit with the request's rows"),
-    "idempotency": PluginSpec("db", "Idempotency-Key: a retried POST gets the first answer"),
-    "auth": PluginSpec("auth", "JWT verification, scopes, rotation, revocation"),
-    "accounts": PluginSpec("accounts", "Users, password login, roles and permissions"),
-    "ratelimit": PluginSpec("cache", "Per-tenant and per-subject rate limits (Redis-backed)"),
+    "llm": PluginSpec(
+        "llm",
+        "Chat, vision and embeddings with a spending cap (OpenAI-compatible)",
+        env=("JFAST_LLM_API_KEY",),
+    ),
+    "queue": PluginSpec(
+        "queue", "Background jobs on PostgreSQL, Redis or RabbitMQ", recommended=True
+    ),
+    "outbox": PluginSpec(
+        "db", "Jobs and events that commit with the request's rows", requires=("database",)
+    ),
+    "idempotency": PluginSpec(
+        "db", "Idempotency-Key: a retried POST gets the first answer", requires=("database",)
+    ),
+    "auth": PluginSpec(
+        "auth",
+        "JWT verification, scopes, rotation, revocation",
+        multitenant=True,
+        env=("JFAST_AUTH_JWKS_URL (mode jwks) or JFAST_AUTH_SECRET (mode secret)",),
+    ),
+    "accounts": PluginSpec(
+        "accounts",
+        "Users, password login, roles and permissions",
+        multitenant=True,
+        requires=("database", "auth"),
+        env=("JFAST_AUTH_SECRET", "JFAST_ACCOUNTS_BOOTSTRAP_ADMIN_PASSWORD"),
+    ),
+    "ratelimit": PluginSpec(
+        "cache", "Per-tenant and per-subject rate limits (Redis-backed)", requires=("cache",)
+    ),
     "channels": PluginSpec("", "Declared pub/sub channels over memory, Redis or Kafka"),
-    "websocket": PluginSpec("server", "Authenticated WebSocket connections, Redis fan-out"),
+    "websocket": PluginSpec(
+        "server",
+        "Authenticated WebSocket connections, Redis fan-out",
+        requires=("auth", "cache"),
+    ),
     "events": PluginSpec("kafka", "Kafka event streaming between services"),
     "web": PluginSpec("web", "Jinja2 templates + HTMX (server-rendered pages)"),
-    "sentry": PluginSpec("sentry", "Sentry error and performance reporting"),
+    "sentry": PluginSpec(
+        "sentry", "Sentry error and performance reporting", env=("JFAST_SENTRY_DSN",)
+    ),
     "gateway": PluginSpec("gateway", "Prefix-based reverse proxy"),
     "http": PluginSpec("http", "Calls to sibling services: deadlines, retries, breakers"),
-    "storage": PluginSpec("storage", "File storage on local disks, S3 or MinIO"),
+    "storage": PluginSpec(
+        "storage",
+        "File storage on local disks, S3 or MinIO",
+        env=("JFAST_STORAGE_SIGNING_KEY (for private disks)",),
+    ),
     "tenancy": PluginSpec("", "Multi-tenancy by token claim, signed-in user, subdomain or path"),
     "notifications": PluginSpec("fcm", "Push notifications via Firebase (FCM)"),
     "mail": PluginSpec("mail", "Email with templates, queued by default"),
 }
+
+RECOMMENDED = tuple(n for n, s in PLUGIN_CATALOG.items() if s.recommended)
+MULTITENANT_RECOMMENDED = tuple(n for n, s in PLUGIN_CATALOG.items() if s.multitenant)
+
+#: Where a multitenant service reads the tenant from, in order of trust: the
+#: token's tenant claim when an organisation owns the data, the signed-in user
+#: when every account is its own tenant. Both come from a signed token, never
+#: from a header a client can set.
+MULTITENANT_SOURCES = ("token", "user")
+
+
+def plugin_importable(name: str) -> bool:
+    """Whether a catalogued plugin's module is importable in this install.
+
+    Read from the entry point rather than imported: finding the module is
+    enough to know it ships, and importing it would pull in its optional
+    dependencies. A plugin catalogued ahead of its code -- one being written on
+    another branch -- is then skipped by the installer with a note instead of
+    written into a jfast.toml that cannot boot.
+    """
+    import importlib.util
+    from importlib.metadata import entry_points
+
+    modules = [
+        entry.value.partition(":")[0]
+        for entry in entry_points(group="jfastframework.plugins")
+        if entry.name == name
+    ]
+    # An editable install keeps the entry points it was installed with, so a
+    # builtin added since is found by its module path instead.
+    modules.append(f"jfastframework.plugins.builtin.{name}")
+    for module in modules:
+        try:
+            if importlib.util.find_spec(module) is not None:
+                return True
+        except (ImportError, ValueError):
+            continue
+    return False
+
 
 DATASTORE_PLUGINS = tuple(n for n, s in PLUGIN_CATALOG.items() if s.is_datastore)
 
@@ -176,13 +287,16 @@ def _pluralize_es(word: str) -> str:
     return plural + sep + rest
 
 
-def resolve_plugins(kind: str, chosen: Sequence[str]) -> list[str]:
+def resolve_plugins(kind: str, chosen: Sequence[str], *, multitenant: bool = False) -> list[str]:
     """Full, ordered plugin list for a generated service.
 
     Unknown names are rejected here rather than at the service's first boot,
     and `web` is forced on for a `web` service because the kind is meaningless
-    without it.
+    without it. ``multitenant`` adds tenancy and the auth it reads the tenant
+    through -- the one answer sets both, so they cannot disagree.
     """
+    if multitenant:
+        chosen = [*chosen, *(n for n in ("auth", "tenancy") if n not in chosen)]
     unknown = [name for name in chosen if name not in PLUGIN_CATALOG]
     if unknown:
         raise ValueError(
@@ -197,6 +311,12 @@ def resolve_plugins(kind: str, chosen: Sequence[str]) -> list[str]:
         selected.append("gateway")
 
     for name in chosen:
+        # What a plugin cannot start without goes in ahead of it: `--with
+        # accounts` alone used to write a service that refused to boot on
+        # "accounts requires auth".
+        for required in PLUGIN_CATALOG[name].requires:
+            if required not in selected:
+                selected.append(required)
         if name not in selected:
             selected.append(name)
 
@@ -402,6 +522,39 @@ class Scaffolder:
         stamp_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
 
+def format_generated(paths: Sequence[Path], root: Path) -> bool:
+    """Sort imports and format the Python files a command just wrote, with ruff.
+
+    The templates are written in ruff's format, but a name is only known at
+    generation time, and `PresupuestoHexagonalUseCases(SqlPresupuestoHexagonal
+    Repository(session, ...))` is a line no template can wrap in advance. The
+    project's own ruff.toml is used (``cwd=root``), so the result is exactly
+    what `ruff format --check .` expects. Only the files passed in are touched:
+    a file the user already edited is never reformatted behind their back.
+
+    Returns False when ruff is not installed where `jfast` runs -- it is in
+    ``jfastframework[dev]``, which a generated requirements-dev.txt installs --
+    and the files are then left as rendered.
+    """
+    import importlib.util
+    import shutil
+    import subprocess
+    import sys
+
+    files = [str(path) for path in paths if path.suffix == ".py" and path.is_file()]
+    if not files:
+        return True
+    if importlib.util.find_spec("ruff") is not None:
+        command = [sys.executable, "-m", "ruff"]
+    elif (found := shutil.which("ruff")) is not None:
+        command = [found]
+    else:
+        return False
+    for arguments in (["check", "--fix", "--select", "I", "--quiet"], ["format", "--quiet"]):
+        subprocess.run([*command, *arguments, *files], cwd=root, check=False, capture_output=True)
+    return True
+
+
 def module_context(
     name: str,
     *,
@@ -410,19 +563,60 @@ def module_context(
     table: str | None = None,
     modules_dir: str = "modules",
     language: str = "en",
+    fields: str | None = None,
+    unique: Sequence[str] = (),
+    bare: bool = False,
+    access: str = "open",
 ) -> dict[str, Any]:
+    """The vocabulary a module template renders with.
+
+    ``fields``/``unique``/``bare`` are `jfast new module`'s flags, parsed by
+    :mod:`jfastframework.cli.fields`; with none of them the module carries the
+    example fields it always has. ``access`` is how the generated routes find
+    out who is asking -- see :data:`ROUTE_ACCESS`.
+    """
+    from jfastframework.cli.fields import module_fields
+
+    if access not in ROUTE_ACCESS:
+        raise ValueError(f"Unknown access {access!r}. Choose from: {', '.join(ROUTE_ACCESS)}")
     snake = to_snake(name)
     plural = pluralize(snake, language)
+    resolved_table = table or plural
+    declared = module_fields(fields, unique, bare=bare, table=resolved_table)
     return {
         "module": snake,
         "Module": to_pascal(name),
         "module_title": snake.replace("_", " ").title(),
         "module_plural": plural.replace("_", " "),
-        "table": table or plural,
+        "table": resolved_table,
         "layout": layout,
         "ui": ui,
         "modules_dir": modules_dir,
+        "access": access,
+        **declared.as_context(),
     }
+
+
+#: How a generated module's routes learn who is asking, in the order a service
+#: grows into them:
+#:
+#: ``open``    no auth plugin: the routes are public, and the tenant is whatever
+#:             the request resolved to -- nothing, in a service without tenancy.
+#: ``auth``    auth on, one customer: every route needs a signed-in caller
+#:             (`require_auth`), and rows are written with no tenant.
+#: ``tenant``  tenancy on: every route runs as the caller's tenant
+#:             (`current_tenant`), 401 without a session and 403 without a
+#:             tenant, so a request can never fall back to "all tenants".
+ROUTE_ACCESS = ("open", "auth", "tenant")
+
+
+def route_access_for(enabled_plugins: Collection[str]) -> str:
+    """The access a service's plugins imply for the modules generated in it."""
+    if "tenancy" in enabled_plugins:
+        return "tenant"
+    if "auth" in enabled_plugins or "accounts" in enabled_plugins:
+        return "auth"
+    return "open"
 
 
 def service_context(
@@ -442,9 +636,11 @@ def service_context(
     sample_module: str = "item",
     agent_docs: bool = False,
     grpc: bool = False,
+    multitenant: bool = False,
+    frontend_accounts: bool = True,
 ) -> dict[str, Any]:
     snake = to_snake(name)
-    enabled = resolve_plugins(kind, plugins)
+    enabled = resolve_plugins(kind, plugins, multitenant=multitenant)
     # Pick the vector store the service can actually reach. Enabling `rag` and
     # `qdrant` but writing `store = "pgvector"` produces a service that boots
     # and then fails on the first search -- the exact trap the plugin's own
@@ -486,6 +682,16 @@ def service_context(
         "queue_backend": queue_backend,
         "datastores": datastores,
         "enabled_plugins": enabled,
+        # One answer, every piece: tenancy, how routes are guarded, whether RAG
+        # and the LLM budget are per tenant. See docs/local-setup.md.
+        "multitenant": "tenancy" in enabled,
+        "tenancy_sources": list(MULTITENANT_SOURCES)
+        if multitenant
+        else (["token"] if "auth" in enabled else []) + ["subdomain"],
+        "route_access": route_access_for(enabled),
+        # Read by the frontend templates: account pages and a private-by-default
+        # router only when some backend in the workspace has `accounts`.
+        "frontend_accounts": frontend_accounts,
         "extras": extras_for(enabled),
         "framework_pin": framework_pin(),
         "available_plugins": [

@@ -18,18 +18,24 @@ from jfastframework.cli.generate import (
     _write_service_envs,
     _write_workspace_secrets,
     generate_service,
+    write_service_secrets,
 )
 from jfastframework.cli.scaffold import (
+    BASE_PLUGINS,
     DATASTORE_PLUGINS,
     DEFAULT_FRONTEND_TEMPLATE,
     DEFAULT_LAYOUT,
     FRONTEND_TEMPLATES,
     FRONTENDS,
+    MULTITENANT_RECOMMENDED,
     PLUGIN_CATALOG,
+    RECOMMENDED,
     Scaffolder,
     check_frontend_template,
+    format_generated,
     module_context,
     module_trees,
+    plugin_importable,
     to_snake,
 )
 from jfastframework.workspace import PORT_BLOCK_SIZE, WORKSPACE_FILE, Workspace
@@ -46,6 +52,19 @@ def start(
         help=f"The frontend's look: {', '.join(FRONTEND_TEMPLATES)}.",
     ),
     queue_backend: str = typer.Option("postgres", "--queue", help="postgres (default) or redis."),
+    telemetry: bool = typer.Option(
+        True,
+        "--telemetry/--no-telemetry",
+        help="OpenTelemetry traces: on by default, exporting nothing until an endpoint is set.",
+    ),
+    multitenant: bool = typer.Option(
+        False,
+        "--multitenant/--single-tenant",
+        help=(
+            "Several customers in one deployment: tenancy, auth and accounts on, routes "
+            "scoped with current_tenant. Default single-tenant; tenant_id columns stay."
+        ),
+    ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files."),
 ) -> None:
     """The opinionated default stack, in one command.
@@ -58,6 +77,12 @@ def start(
     boundaries visible until the seams are obvious, and then
     `jfast new service` stands up its deployment and rewires the workspace;
     moving the code across is still yours.
+
+    Single-tenant by default. Multitenant means every route needs a signed-in
+    caller with a tenant and a user system to sign them in -- the right shape
+    for a SaaS and too much for the first `curl` of anything else. Every
+    generated table keeps its `tenant_id` column either way, so switching later
+    is a data backfill, not a schema rewrite.
     """
     if frontend not in FRONTENDS:
         raise typer.BadParameter(f"choose from: {', '.join(FRONTENDS)}", param_hint="--frontend")
@@ -80,7 +105,12 @@ def start(
         ui.created(str(workspace.file), "workspace")
 
     plugins = ["database", "cache", "queue"]
-    api_dir, _api_context = generate_service(
+    if telemetry:
+        plugins.append(_telemetry_or_note())
+    if multitenant:
+        plugins += list(MULTITENANT_RECOMMENDED)
+    plugins = [name for name in plugins if name]
+    api_dir, api_context = generate_service(
         slug,
         kind="api",
         port=port,
@@ -89,17 +119,19 @@ def start(
         target=Path(slug),
         workspace=workspace,
         force=force,
+        multitenant=multitenant,
     )
 
     # A monolith with one module is a monolith with nothing in it. Generate a
     # real one so the first `pytest` and the first migration have a subject.
     scaffolder = Scaffolder()
-    module = module_context("item", modules_dir="modules")
-    scaffolder.render_trees(
+    module = module_context("item", modules_dir="modules", access=api_context["route_access"])
+    written = scaffolder.render_trees(
         module_trees(DEFAULT_LAYOUT, "api", api_dir / "modules", api_dir),
         module,
         force=force,
     )
+    format_generated([file.path for file in written if file.created], api_dir)
     ui.created(f"{api_dir}/modules/item/", "a real module, so the first test has a subject")
 
     # `jfast new module` mounts what it generates, and so does this path. A
@@ -121,6 +153,7 @@ def start(
         target=Path(f"{slug}-web"),
         workspace=workspace,
         force=force,
+        frontend_accounts="accounts" in api_context["enabled_plugins"],
     )
 
     from jfastframework.deploy.workspace import render_caddyfile, render_workspace_compose
@@ -139,6 +172,9 @@ def start(
         ui.created(".env", f"{secrets_written} generated, gitignored")
     for env_path in _write_service_envs(workspace):
         ui.created(str(env_path), "from the resource graph")
+    minted = write_service_secrets(api_dir, api_context)
+    if minted:
+        ui.created(f"{api_dir}/.env", f"+ {', '.join(minted)}, generated")
 
     ui.summary(
         f"{slug} is ready",
@@ -146,6 +182,8 @@ def start(
             ("stack", "modular monolith"),
             ("data", "PostgreSQL + pgvector, Redis"),
             ("jobs", f"background jobs on {queue_backend}"),
+            ("customers", "several (tenancy, accounts)" if multitenant else "one (tenant_id kept)"),
+            ("traces", "OpenTelemetry, off until an endpoint is set" if telemetry else "off"),
             ("web", f"{frontend} frontend, {template} look, behind Caddy"),
         ],
     )
@@ -174,6 +212,53 @@ def start(
 
     ui.note("When a module outgrows the monolith:")
     ui.note("    jfast new service billing --with database")
+
+
+def capability_choices(
+    kind: str, datastores: list[str], *, multitenant: bool
+) -> tuple[list[ui.Choice], set[str], list[str]]:
+    """The capabilities `jfast init` offers, which are pre-checked, and which are skipped.
+
+    Generated from PLUGIN_CATALOG rather than written out, because the written
+    list stopped at 0.1.0a8 and nine plugins shipped after it that the
+    installer never offered. Left out: what the other questions decide --
+    datastores, the always-on base, tenancy (the multitenant question), the
+    gateway (a kind of its own) -- and a plugin this install cannot import.
+    """
+    decided = {*DATASTORE_PLUGINS, *BASE_PLUGINS, "tenancy", "gateway"}
+    if kind != "api":
+        decided.add("web")  # a web service has it; nothing else can host pages
+    recommended = set(RECOMMENDED) | (set(MULTITENANT_RECOMMENDED) if multitenant else set())
+
+    choices: list[ui.Choice] = []
+    skipped: list[str] = []
+    for name, spec in PLUGIN_CATALOG.items():
+        if name in decided:
+            continue
+        if not plugin_importable(name):
+            skipped.append(name)
+            continue
+        hint = "recommended" if name in recommended else ""
+        if name == "rag" and not {"database", "qdrant"} & set(datastores):
+            hint = (hint + "; " if hint else "") + "adds PostgreSQL for its vectors"
+        choices.append(ui.Choice(name, spec.label, hint))
+    # Recommended first: pressing Enter through the list keeps what it should.
+    choices.sort(key=lambda choice: choice.key not in recommended)
+    return choices, {c.key for c in choices if c.key in recommended}, skipped
+
+
+def _telemetry_or_note() -> str:
+    """``"telemetry"``, or nothing with a note when this install lacks the plugin.
+
+    The catalog can list a plugin before its code ships in the installed
+    framework; writing it into jfast.toml then would produce a service that
+    refuses to boot on an unknown plugin.
+    """
+    if plugin_importable("telemetry"):
+        return "telemetry"
+    ui.note("telemetry is not in this jfastframework install; left out. Upgrade, then")
+    ui.note("    jfast add telemetry")
+    return ""
 
 
 def init(
@@ -221,6 +306,7 @@ def init(
         )
 
     chosen: list[str] = []
+    multitenant = False
     if kind in ("api", "web"):
         ui.rule("Datastores")
         chosen += ui.multiselect(
@@ -229,24 +315,24 @@ def init(
             defaults={"database"},
         )
 
+        ui.rule("Customers")
+        ui.note(
+            "Yes turns on tenancy, auth and accounts, scopes every generated route to\n"
+            "  the caller's tenant, and makes RAG and the LLM budget per tenant. No keeps\n"
+            "  one customer. Either way every table keeps its tenant_id column, so the\n"
+            "  switch later is a data backfill, not a schema rewrite."
+        )
+        multitenant = ui.confirm(
+            "Does this app serve several customers (multitenant)?",
+            default=False,
+            hint="a SaaS: yes. An internal tool or one client's system: no",
+        )
+
         ui.rule("Capabilities")
-        optional: list[ui.Choice] = []
-        if {"database", "qdrant"} & set(chosen):
-            optional.append(ui.Choice("rag", "Semantic search", "Retrieval over the store above"))
-        optional += [
-            ui.Choice("queue", "Background jobs", "Retries, backoff, dead-lettering"),
-            ui.Choice("mail", "Email", "Templates, queued by default"),
-            ui.Choice("auth", "Authentication", "JWT, scopes, rotation, revocation"),
-            ui.Choice("storage", "File storage", "Local disks, S3 or MinIO"),
-            ui.Choice("tenancy", "Multi-tenancy", "One deployment, many customers"),
-            ui.Choice("notifications", "Push", "Firebase Cloud Messaging"),
-            ui.Choice("sentry", "Error reporting", "Off unless a DSN is set"),
-        ]
-        if kind == "api":
-            optional.append(
-                ui.Choice("web", "Server-rendered pages", "Jinja2 and HTMX alongside the API")
-            )
-        chosen += ui.multiselect("Anything else?", optional, defaults=set())
+        choices, defaults, skipped = capability_choices(kind, chosen, multitenant=multitenant)
+        for name in skipped:
+            ui.note(f"{name} is catalogued but not in this install; left out (jfast add {name}).")
+        chosen += ui.multiselect("Anything else?", choices, defaults=defaults)
 
     extras_chosen: list[str] = []
     if kind in ("api", "web"):
@@ -302,6 +388,7 @@ def init(
             ("kind", kind + (f" ({frontend}, {template})" if frontend else "")),
             ("ports", f"{port}-{port + 9}"),
             ("plugins", ", ".join(chosen) if chosen else "observability, metrics"),
+            ("customers", "several (tenancy)" if multitenant else "one"),
             ("packages", ", ".join(extras_chosen) if extras_chosen else "none"),
             ("workspace", str(workspace.file) if workspace else "none"),
             ("agents", "AGENTS.md + skills" if agent_docs else "none"),
@@ -319,6 +406,7 @@ def init(
             target=None,
             workspace=workspace,
             agent_docs=agent_docs,
+            multitenant=multitenant,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -337,14 +425,14 @@ def init(
 
     _print_next_steps(destination, context, kind)
 
-    if "tenancy" in chosen:
-        ui.warn("Multi-tenancy needs two things set before it isolates anything.")
+    if multitenant:
+        ui.warn("Multitenant: the tenant comes from the signed-in caller.")
         typer.echo(
-            "Set [plugin.tenancy] base_domain in jfast.toml,\n"
-            "then, for a certificate per tenant subdomain:\n"
-            "    jfast workspace caddy --hostname <your-domain> --production --wildcard-tenants\n"
-            "\nThat needs a wildcard DNS record and an /internal/tenant-exists endpoint --\n"
-            "docs/multitenancy.md explains why the second one is not optional."
+            'Tenancy reads sources = ["token", "user"]: the token\'s tenant claim when an\n'
+            "organisation owns the data, the signed-in user otherwise. Generated routes use\n"
+            "current_tenant (401 without a session, 403 without a tenant). Set\n"
+            "JFAST_AUTH_SECRET and JFAST_ACCOUNTS_BOOTSTRAP_ADMIN_PASSWORD in .env before\n"
+            "the first start; docs/multitenancy.md covers row-level security."
         )
 
     if "storage" in chosen:

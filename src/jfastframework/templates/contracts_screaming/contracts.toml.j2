@@ -71,6 +71,16 @@ paths = ["modules/*/public.py"]
 # governs that edge.
 may_import = ["use_cases", "storage", "domain", "shared"]
 
+[layers.tasks]
+description = "Background work and event subscribers the module owns: @task and @subscribe."
+paths = ["modules/*/tasks.py", "modules/*/tasks/*.py"]
+# An entry point like a route, so it reaches as far as a route does and no
+# further: it calls the use cases, so a rule holds for a job exactly as it does for
+# a request. The worker imports these files at boot, API or not; a task that
+# builds a query or a response has taken a layer's job.
+may_import = ["use_cases", "domain", "storage", "shared"]
+forbid_packages = ["fastapi", "starlette", "sqlalchemy"]
+
 # ---------------------------------------------------------------------------
 # Rules
 # ---------------------------------------------------------------------------

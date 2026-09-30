@@ -1,0 +1,28 @@
+{#  The module README's field table, from what `jfast new module` was given. #}
+## Fields
+
+{% if fields %}
+| Field | Type | Null | Default |
+| --- | --- | --- | --- |
+{% for f in fields %}
+| `{{ f.name }}` | {{ f.type }}{% if f.length %}({{ f.length }}){% elif f.precision %}({{ f.precision }},{{ f.scale }}){% endif %}{% if f.type == "money" %} (minor units){% endif %} | {{ "yes" if f.nullable else "no" }} | {{ f.default if f.default is not none else "" }} |
+{% endfor %}
+
+Every row also has `id`, `tenant_id` and the timestamps{% if layout == "layered" %}, and `version`{% endif %}.
+`tenant_id` is there whether or not the service serves several customers: it
+costs a nullable column, and it is what makes turning tenancy on later a
+backfill rather than a schema change.
+{% if uniques %}
+
+Unique per tenant, each enforced by a named constraint on the table and
+checked first by a rule that returns a readable 409:
+
+{% for unique in uniques %}
+- {{ unique.names|map("tojson")|join(" + ")|replace('"', "`") }} -- `{{ unique.rule }}`, constraint `{{ unique.constraint_name }}`
+{% endfor %}
+{% endif %}
+{% else %}
+None yet (`--bare`). Add each one to the entity, the wire models and the
+public DTO -- or regenerate with `jfast new module {{ module }} --force --fields
+"..."` before anything else is written here.
+{% endif %}

@@ -2,7 +2,7 @@
 
 Dos cosas distintas, a propósito en dos plugins distintos -- y, entre los
 módulos de un mismo servicio, una tercera construida sobre la primera: los
-[eventos de dominio locales](#eventos-entre-módulos), que no necesitan broker.
+[eventos de dominio locales](#eventos-entre-modulos), que no necesitan broker.
 
 | | `queue` | `events` |
 | --- | --- | --- |
@@ -187,7 +187,7 @@ intento, con la razón. Cada envío fallido se registra con su causa en el
 mensaje, y `/ready` se marca `degraded` desde el primer intento fallido, no solo
 cuando un mensaje ya murió o envejeció.
 
-Lo que `publish` hace con el evento está [más abajo](#eventos-entre-módulos).
+Lo que `publish` hace con el evento está [más abajo](#eventos-entre-modulos).
 
 La mitad del consumidor es `claim_once`: registra el id del mensaje en la misma
 transacción que el trabajo, y una reentrega se salta. `idempotent_on` y la
@@ -450,7 +450,7 @@ escucha. Ver [Contratos](contracts.md#eventos-y-tasks).
 ## Eventos entre servicios (Kafka)
 
 El plugin `events` es para que *otros servicios* escuchen a este. Dentro de un
-servicio, usa [eventos locales](#eventos-entre-módulos). Un handler `@on` corre
+servicio, usa [eventos locales](#eventos-entre-modulos). Un handler `@on` corre
 con el tenant, el request id y la traza de la request que publicó restaurados,
 igual que un suscriptor.
 

@@ -248,7 +248,7 @@ async def revisar_presupuesto(event: Event, session: TaskSession) -> None: ...
 
 `alerta` **no** declara `depends_on = ["comprobante"]` por esto: un suscriptor
 no depende de nada, y ese es el punto. Ver
-[Colas y eventos](queues-and-events.md#eventos-entre-módulos) para cómo se
+[Colas y eventos](queues-and-events.md#eventos-entre-modulos) para cómo se
 entrega el evento.
 
 | Regla | Se reporta cuando | Arreglo |

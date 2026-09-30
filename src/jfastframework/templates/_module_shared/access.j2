@@ -1,0 +1,59 @@
+{#
+  How a generated module's routes learn who is asking. Shared by the four
+  layouts so `open`, `auth` and `tenant` mean the same thing in every one of
+  them; see ROUTE_ACCESS in jfastframework/cli/scaffold.py.
+
+  Not a template tree: nothing under this directory is rendered on its own,
+  only imported by the files that are.
+#}
+{% macro fastapi_import(extra=()) -%}
+{% set names = ["APIRouter", "Depends", "Query", "status"] + (["Request"] if access != "tenant" else []) + (extra|list) %}
+from fastapi import {{ names|sort(case_sensitive=False)|join(", ") }}
+{%- endmacro %}
+
+{% macro framework_imports() -%}
+{% if access == "auth" %}
+from jfastframework.plugins.builtin.auth import require_auth
+{% endif %}
+from jfastframework.plugins.builtin.database import DbSession
+{% if access == "tenant" %}
+from jfastframework.plugins.builtin.tenancy import current_tenant
+{% endif %}
+{%- endmacro %}
+
+{% macro router() -%}
+{% if access == "auth" %}
+# Every route needs a signed-in caller. The service has one customer, so rows
+# are written with no tenant -- the column is still there, which is what makes
+# turning tenancy on later a backfill rather than a schema change.
+router = APIRouter(
+    prefix="/{{ table }}",
+    tags=["{{ module }}"],
+    dependencies=[Depends(require_auth)],
+)
+{% else %}
+router = APIRouter(prefix="/{{ table }}", tags=["{{ module }}"])
+{% endif %}
+{%- endmacro %}
+
+{% macro dependency(function, returns, build) -%}
+# DbSession commits when the endpoint returns, before the response is sent,
+# so a write that fails to commit is a 500 and not a 201 for a missing row.
+# `async def`, not `def`, although nothing here awaits: FastAPI runs a plain
+# `def` dependency in its threadpool, a hop that costs more per request than
+# the whole middleware stack.
+{% if access == "tenant" %}
+#
+# current_tenant answers 401 without a session and 403 without a tenant, so
+# no request reaches the repository unscoped -- there is no "all tenants".
+async def {{ function }}(
+    session: DbSession,
+    tenant_id: str = Depends(current_tenant),
+) -> {{ returns }}:
+    return {{ build }}
+{% else %}
+async def {{ function }}(request: Request, session: DbSession) -> {{ returns }}:
+    tenant_id = getattr(request.state, "tenant_id", None)
+    return {{ build }}
+{% endif %}
+{%- endmacro %}

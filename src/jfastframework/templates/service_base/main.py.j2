@@ -11,13 +11,13 @@ from fastapi import APIRouter
 
 from jfastframework import create_app
 
+# `jfast new module <name>` adds its import here, in sorted order, and its
+# router to the list below. Keep both markers: they are where the next module
+# goes, and without them the generator refuses rather than guessing a line.
 {% if is_web %}
 from web import router as web_router
 
 {% endif %}
-# `jfast new module <name>` splices its import here, and its router into the
-# list below. Keep both markers: they are where the next module goes, and
-# without them the generator refuses rather than guessing a line number.
 # [jfast:imports]
 
 {% if is_web %}

@@ -2,25 +2,18 @@
 
 from __future__ import annotations
 
-from sqlalchemy import UniqueConstraint
+{% if spec.stdlib() %}
+{% for line in import_lines(spec.stdlib()) %}
+{{ line }}
+{% endfor %}
+
+{% endif %}
+{% for line in import_lines(spec.sqlalchemy()) %}
+{{ line }}
+{% endfor %}
 from sqlalchemy.orm import Mapped, mapped_column
 
-from jfastframework.db import Base, TenantMixin, TimestampMixin
-
-
-class {{ Module }}(Base, TimestampMixin, TenantMixin):
-    __tablename__ = "{{ table }}"
-    # The duplicate check in the service is for the message; this is what
-    # holds when two requests pass it at once. NULLS NOT DISTINCT so it also
-    # holds with no tenant (PostgreSQL 15+).
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "name", postgresql_nulls_not_distinct=True),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(index=True)
-    description: Mapped[str | None] = mapped_column(default=None)
-    is_active: Mapped[bool] = mapped_column(default=True)
-
-    def __repr__(self) -> str:
-        return f"<{{ Module }} id={self.id} name={self.name!r}>"
+from jfastframework.db import Base, TenantMixin, TimestampMixin{{ ", UTCDateTime" if spec.needs_utc_datetime }}
+{% set entity_class = Module %}
+{% set entity_bases = "Base, TimestampMixin, TenantMixin" %}
+{% include "_module_shared/entity_body.j2" %}

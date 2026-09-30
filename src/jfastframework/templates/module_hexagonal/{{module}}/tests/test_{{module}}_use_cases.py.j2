@@ -9,11 +9,22 @@ Run from the project root so that ``modules`` is importable::
     pytest modules/{{ module }}/tests
 """
 
+{% set subject = "use_cases" %}
+{% set Subject = Module ~ "UseCases" %}
+{% set dict_payloads = true %}
+{% set item = "entity" %}
+{% set stored = "stored_id({})" %}
+{% set violations = fields|selectattr("too_long")|list %}
 from __future__ import annotations
+
+{% for line in import_lines(spec.sample_stdlib() + ["typing.Any"]) %}
+{{ line }}
+{% endfor %}
 
 import pytest
 
-from jfastframework.errors import ConflictError, NotFoundError, ValidationError
+from jfastframework.errors import {{ (["NotFoundError", "ValidationError"] + (["ConflictError"] if uniques else []))|sort|join(", ") }}
+
 from modules.{{ module }}.application.use_cases import MAX_PAGE_SIZE, {{ Module }}UseCases
 from modules.{{ module }}.domain.entities import {{ Module }}
 from modules.{{ module }}.tests import InMemory{{ Module }}Repository
@@ -32,86 +43,51 @@ def stored_id(entity: {{ Module }}) -> int:
     """The id every entity that came back from a use case has.
 
     `id` is `int | None` on the entity because one that has not been stored yet
-    genuinely has no id. Saying so once here beats an assertion in six tests.
+    genuinely has no id. Saying so once here beats an assertion in every test.
     """
     assert entity.id is not None
     return entity.id
 
 
-async def test_create_persists_a_valid_payload(use_cases: {{ Module }}UseCases) -> None:
-    entity = await use_cases.create({"name": "first"})
-    assert entity.id == 1
-    assert entity.name == "first"
+def first() -> dict[str, Any]:
+    {{ fit("return {", spec.sample_items(0, mapping=true), "}", indent=4) }}
+
+
+def second() -> dict[str, Any]:
+    {{ fit("return {", spec.sample_items(1, mapping=true), "}", indent=4) }}
+{% include "_module_shared/service_tests.j2" %}
 
 
 async def test_use_cases_return_entities_not_rows(use_cases: {{ Module }}UseCases) -> None:
     """The port promises entities. This is where that promise gets used."""
-    assert isinstance(await use_cases.create({"name": "typed"}), {{ Module }})
-
-
-async def test_create_rejects_a_duplicate_name(use_cases: {{ Module }}UseCases) -> None:
-    await use_cases.create({"name": "dup"})
-    with pytest.raises(ConflictError):
-        await use_cases.create({"name": "dup"})
-
-
-async def test_create_surfaces_domain_rules_as_validation_errors(
-    use_cases: {{ Module }}UseCases,
-) -> None:
-    with pytest.raises(ValidationError):
-        await use_cases.create({"name": ""})
+    assert isinstance(await use_cases.create(first()), {{ Module }})
 
 
 async def test_create_rejects_a_field_the_entity_does_not_have(
     use_cases: {{ Module }}UseCases,
 ) -> None:
     with pytest.raises(ValidationError):
-        await use_cases.create({"name": "ok", "colour": "red"})
+        await use_cases.create(first() | {"no_such_field": 1})
+{% if violations %}
 
 
-async def test_get_missing_raises_not_found(use_cases: {{ Module }}UseCases) -> None:
-    with pytest.raises(NotFoundError):
-        await use_cases.get(404)
-
-
-async def test_update_applies_only_the_fields_given(use_cases: {{ Module }}UseCases) -> None:
-    entity = await use_cases.create({"name": "before", "description": "keep"})
-    updated = await use_cases.update(stored_id(entity), {"name": "after"})
-    assert updated.name == "after"
-    assert updated.description == "keep"
+async def test_create_surfaces_domain_rules_as_validation_errors(
+    use_cases: {{ Module }}UseCases,
+) -> None:
+    with pytest.raises(ValidationError):
+        await use_cases.create(first() | {"{{ violations[0].name }}": {{ violations[0].too_long }}})
 
 
 async def test_update_revalidates_the_merged_entity(use_cases: {{ Module }}UseCases) -> None:
-    entity = await use_cases.create({"name": "valid"})
+    entity = await use_cases.create(first())
     with pytest.raises(ValidationError):
-        await use_cases.update(stored_id(entity), {"name": ""})
-
-
-async def test_update_keeping_its_own_name_is_not_a_conflict(
-    use_cases: {{ Module }}UseCases,
-) -> None:
-    entity = await use_cases.create({"name": "stable"})
-    updated = await use_cases.update(stored_id(entity), {"name": "stable", "is_active": False})
-    assert updated.is_active is False
-
-
-async def test_update_to_a_taken_name_is_a_conflict(use_cases: {{ Module }}UseCases) -> None:
-    await use_cases.create({"name": "taken"})
-    mine = await use_cases.create({"name": "mine"})
-    with pytest.raises(ConflictError):
-        await use_cases.update(stored_id(mine), {"name": "taken"})
+        await use_cases.update(stored_id(entity), {"{{ violations[0].name }}": {{ violations[0].too_long }}})
+{% endif %}
 
 
 async def test_list_caps_the_page_size(use_cases: {{ Module }}UseCases) -> None:
     page = await use_cases.list(limit=10_000)
     assert page.limit == MAX_PAGE_SIZE
-
-
-async def test_delete_removes_the_entity(use_cases: {{ Module }}UseCases) -> None:
-    entity = await use_cases.create({"name": "gone"})
-    await use_cases.delete(stored_id(entity))
-    with pytest.raises(NotFoundError):
-        await use_cases.get(stored_id(entity))
 
 
 async def test_delete_missing_raises_not_found(use_cases: {{ Module }}UseCases) -> None:

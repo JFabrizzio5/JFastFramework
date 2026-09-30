@@ -313,8 +313,17 @@ en contextos async.
 
 ### Qué prueban realmente los tests generados
 
-**Layout layered** — tests a nivel de servicio contra un repositorio falso. Sin
-base de datos, sin contenedores.
+Prueban los campos declarados, no un marcador de posición: al crear se guarda
+cada campo, cada llave `--unique` se rechaza si está ocupada y otra vez en una
+edición que se mueve a ella (y no cuando una fila conserva la suya), un id que
+no existe es un 404, una edición cambia solo lo enviado, un `null` explícito
+para una columna NOT NULL es un 422, y un texto más largo que su columna se
+rechaza antes del INSERT.
+
+**Layouts layered y modular** — tests a nivel de servicio contra un
+repositorio en memoria que guarda objetos reales de la entidad, así que el
+verificador de tipos ve cada atributo que lee un test. Sin base de datos, sin
+contenedores.
 
 **Layout screaming** — dos archivos, separados a propósito:
 
@@ -327,6 +336,35 @@ base de datos, sin contenedores.
 Los dos se marcan explícitamente con `pytest.mark.asyncio` en vez de depender
 de `asyncio_mode = auto`, así pasan en un proyecto que no configuró
 pytest-asyncio.
+
+### Los controles del proyecto generado
+
+Un servicio generado trae la configuración con la que corren sus controles,
+así que `ruff check .` significa lo mismo en cualquier máquina y en cualquier
+versión de ruff:
+
+| Archivo | Qué fija |
+| --- | --- |
+| `ruff.toml` | el conjunto de reglas (`E F W I UP B SIM RUF ASYNC`), largo de línea 100, `Depends`/`Query`/... de FastAPI como llamadas inmutables para que B008 no marque el idioma propio del framework, y una sección de imports `framework` para `jfastframework` entre terceros y tu código |
+| `mypy.ini` | `strict = True`; `migrations/versions/` excluido -- las revisiones se revisan como migraciones, no se tipan como código |
+| `pytest.ini` | `asyncio_mode = auto`, `modules` y `tests` como rutas de test |
+
+Recién generado, sin tocar nada, pasan los cuatro:
+
+```bash
+pip install -r requirements-dev.txt
+ruff check . && ruff format --check . && mypy . && pytest
+```
+
+`scripts/smoke_generated_quality.sh` lo mantiene cierto en cada cambio del
+framework: genera `jfast start` con un cliente y multitenant y un servicio con
+todos los plugins que no necesitan un servidor propio, agrega un módulo por
+layout con campos de ejemplo, con `--fields ... --unique ...` y con `--bare`,
+más uno con todos los tipos de la gramática, y corre los cuatro controles en
+cada proyecto -- además de `jfast check --ci`, y en el multitenant `jfast check
+--multitenant-ready`, que no debe encontrar nada en código que escribió el
+generador. `JFAST_SMOKE_GENERATED=1 pytest tests/test_smoke_generated_quality.py`
+lo corre desde la suite; tarda como un minuto con la caché de mypy caliente.
 
 ### Tests de integración
 
@@ -350,6 +388,8 @@ Además, para cualquier cosa que toque templates:
 ```bash
 bash scripts/smoke.sh              # renders both layouts, runs their tests, checks alembic
 bash scripts/smoke_workspace.sh    # workspace, gateway, frontends, patching
+bash scripts/smoke_generated_quality.sh   # cada forma generada pasa ruff, format, mypy, pytest
+bash scripts/smoke_upgrade.sh      # el proyecto de la versión anterior, actualizado a este checkout
 ```
 
 Los templates son la parte que se rompe en silencio — renderizan bien y

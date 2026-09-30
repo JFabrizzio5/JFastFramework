@@ -1,0 +1,15 @@
+{#
+  The create rule, re-run on an update that touches the key: without it a
+  rename walks straight past the rule into a value another row holds. The
+  merged values are checked, not the patch, and against other rows only.
+  Expects `item` (the stored row) and `changes` (the patch as a dict).
+#}
+{% for unique in uniques %}
+{% if loop.first %}
+        # The same rules as create, or an update walks straight past them into
+        # a key another row holds. Checked on the merged values -- the patch
+        # alone may carry half a key -- and only when the key is touched.
+{% endif %}
+        if changes.keys() & {{ "{" }}{% for name in unique.names %}"{{ name }}"{{ ", " if not loop.last }}{% endfor %}{{ "}" }}:
+            {{ fit("await " ~ unique.rule ~ "(", ["self.repository"] + unique.merged_arguments("item") + ["exclude_id=item.id"], ")", indent=12) }}
+{% endfor %}

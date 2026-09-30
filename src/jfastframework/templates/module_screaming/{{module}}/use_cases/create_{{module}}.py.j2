@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from jfastframework.errors import ConflictError, ValidationError
+from jfastframework.errors import ValidationError
 
 from ..{{ module }} import {{ Module }}, {{ Module }}RuleViolation
+{% if uniques %}
+from .rules import {{ uniques|map(attribute="rule")|sort|join(", ") }}
+{% endif %}
 
 
 async def create_{{ module }}(repository: Any, payload: Any) -> Any:
@@ -19,15 +22,17 @@ async def create_{{ module }}(repository: Any, payload: Any) -> Any:
     values = payload.model_dump() if hasattr(payload, "model_dump") else dict(payload)
 
     try:
+{% if fields %}
         entity = {{ Module }}(**values)
+{% else %}
+        {{ Module }}(**values)  # runs the rules, and rejects an unknown field
+{% endif %}
     except {{ Module }}RuleViolation as exc:
         raise ValidationError(str(exc)) from exc
+    except TypeError as exc:
+        raise ValidationError(f"unexpected field: {exc}") from exc
+{% for unique in uniques %}
+    {{ fit("await " ~ unique.rule ~ "(", ["repository"] + unique.prefixed("entity."), ")", indent=4) }}
+{% endfor %}
 
-    if await repository.by_name(entity.name) is not None:
-        raise ConflictError(f"{{ Module }} named {entity.name!r} already exists")
-
-    return await repository.create(
-        name=entity.name,
-        description=entity.description,
-        is_active=entity.is_active,
-    )
+    {{ fit("return await repository.create(", spec.read_arguments("entity"), ")", indent=4) }}

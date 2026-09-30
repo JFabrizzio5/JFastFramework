@@ -18,8 +18,9 @@ easiest to introduce by accident.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+{% for line in import_lines(["dataclasses.dataclass", "typing.Protocol", "typing.runtime_checkable"] + spec.key_stdlib()) %}
+{{ line }}
+{% endfor %}
 
 from .entities import {{ Module }}
 
@@ -86,8 +87,10 @@ class {{ Module }}Repository(Protocol):
         """
         ...
 
-    async def find_by_name(self, name: str) -> {{ Module }} | None: ...
+{% for unique in uniques %}
+    {{ fit("async def " ~ unique.port_finder ~ "(", ["self"] + unique.parameter_list, ") -> " ~ Module ~ " | None: ...", indent=4) }}
 
+{% endfor %}
     async def add(self, entity: {{ Module }}) -> {{ Module }}:
         """Store a new entity and return it carrying the id storage assigned."""
         ...

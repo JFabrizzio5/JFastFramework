@@ -30,34 +30,8 @@ A caller declares the dependency in contracts.toml:
     depends_on = ["{{ module }}"]
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-from .infrastructure.repository import Sql{{ Module }}Repository
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-
-@dataclass(frozen=True, slots=True)
-class {{ Module }}Summary:
-    """What other modules may know about a {{ module }}. Add fields deliberately."""
-
-    id: int
-    name: str
-    is_active: bool
-
-
-async def get_{{ module }}(
-    session: AsyncSession, *, tenant_id: str | None, {{ module }}_id: int
-) -> {{ Module }}Summary | None:
-    """One {{ module }}, or None when it does not exist for this tenant."""
-    # Through the port's adapter, which already turns rows into entities: the
-    # facade only decides which of the entity's fields are promised outside.
-    # A write added here calls the use case, so the rules run whoever asked.
-    entity = await Sql{{ Module }}Repository(session, tenant_id=tenant_id).get({{ module }}_id)
-    if entity is None or entity.id is None:
-        return None
-    return {{ Module }}Summary(id=entity.id, name=entity.name, is_active=entity.is_active)
+{% set read_from = "entity" %}
+{% set repository_import = "from .infrastructure.repository import Sql" ~ Module ~ "Repository" %}
+{% set fetch = "entity = await Sql" ~ Module ~ "Repository(session, tenant_id=tenant_id).get(" ~ module ~ "_id)" %}
+{% set fetch_note = "# Through the port's adapter, which already turns rows into entities: the\n    # facade only decides which of the entity's fields are promised outside.\n    # A write added here calls the use case, so the rules run whoever asked." %}
+{% include "_module_shared/public_body.j2" %}
