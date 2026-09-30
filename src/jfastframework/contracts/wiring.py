@@ -85,12 +85,27 @@ class Wiring:
     subscriptions: list[Site] = field(default_factory=list)
     publications: list[Site] = field(default_factory=list)
     job_refs: list[Site] = field(default_factory=list)
+    #: Every folder under modules/, so a task name can be traced to its owner
+    #: even when the handler is registered outside the module.
+    modules: set[str] = field(default_factory=set)
 
     def task_owners(self) -> dict[str, str]:
-        """``task name -> module`` for every task declared inside a module."""
+        """``task name -> module`` for every task a module owns.
+
+        Declared with ``@task`` inside a module first. A name nobody declares
+        there -- a handler registered in a root ``worker.py``, the pre-0.1.0a11
+        shape -- still belongs to the module its ``<module>.`` prefix names:
+        that is the convention every generated task follows, and without it
+        the coupling the rule exists for stays invisible in exactly the
+        projects that most need it.
+        """
         owners: dict[str, str] = {}
         for site in self.tasks:
             owners.setdefault(site.name, site.module)
+        for ref in self.job_refs:
+            prefix = ref.name.partition(".")[0]
+            if ref.name not in owners and "." in ref.name and prefix in self.modules:
+                owners[ref.name] = prefix
         return owners
 
     def of(self, module: str) -> dict[str, list[str]]:
@@ -190,6 +205,9 @@ def scan(root: Path) -> Wiring:
     modules = root / "modules"
     if not modules.is_dir():
         return wiring
+    wiring.modules = {
+        p.name for p in modules.iterdir() if p.is_dir() and not p.name.startswith("_")
+    }
     for path in python_files(modules):
         relative = path.relative_to(root).as_posix()
         try:

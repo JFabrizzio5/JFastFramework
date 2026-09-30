@@ -482,6 +482,10 @@ def _sql_text(source: SourceFile, node: ast.AST) -> str | None:
     return None
 
 
+# A condition interpolated where a filter goes: `WHERE {where}`, `AND {extra}`.
+_INTERPOLATED_FILTER = re.compile(r"\b(where|and|or|on)\s*\(?\s*\{[^}]*\}", re.IGNORECASE)
+
+
 def _raw_sql(source: SourceFile, tables: Sequence[str], report: _Reporter) -> None:
     if not tables:
         return
@@ -508,6 +512,11 @@ def _raw_sql(source: SourceFile, tables: Sequence[str], report: _Reporter) -> No
             if child is not node:
                 inside.add(id(child))
         if not _SQL.search(text) or _mentions_tenant(text):
+            continue
+        if _INTERPOLATED_FILTER.search(text):
+            # `WHERE {donde}`: the filter is built elsewhere -- typically a
+            # repository helper that does add the tenant. Undecidable here,
+            # and a rule that cannot decide stays quiet.
             continue
         named = [table for table, pattern in patterns if pattern.search(text)]
         if not named:

@@ -422,11 +422,72 @@ def remove_plugin(
     ui.note(f"[plugin.{plugin}] stays in jfast.toml; delete it if {plugin} is gone for good.")
 
 
-def _pip_install(requirements: Path) -> None:
-    import subprocess
+def _pinned_version(requirements: str) -> str | None:
+    found = re.search(r"^\s*jfastframework(?:\[[^\]]*\])?\s*==\s*([^\s;#]+)", requirements, re.M)
+    return found.group(1) if found else None
 
+
+def _editable_location() -> str | None:
+    """Where the running jfastframework is checked out, if it is an editable install."""
+    import json
+    from importlib.metadata import PackageNotFoundError, distribution
+
+    try:
+        raw = distribution("jfastframework").read_text("direct_url.json")
+    except PackageNotFoundError:
+        return None
+    if not raw:
+        return None
+    try:
+        info = json.loads(raw)
+    except ValueError:
+        return None
+    if not info.get("dir_info", {}).get("editable"):
+        return None
+    url = str(info.get("url", ""))
+    return url.removeprefix("file://") or None
+
+
+def _install_would_replace_framework(requirements: Path) -> bool:
+    """Say so, and return True, when `pip install -r` would swap the running framework.
+
+    Found migrating a real project: its requirements.txt still pinned the
+    previous release, so `jfast add telemetry` reinstalled that release over
+    the one running -- which does not even ship the extra it had just pinned.
+    """
+    from jfastframework import __version__
+
+    extras = sorted(_extras_in(requirements.read_text(encoding="utf-8")))
+    spec = f"[{','.join(extras)}]" if extras else ""
+    editable = _editable_location()
+    if editable is not None:
+        ui.warn(
+            f"jfastframework is an editable install ({editable}); pip install -r would "
+            f"replace it with the published package. Not running pip."
+        )
+        ui.note(f'Install the extras into your checkout: pip install -e "{editable}{spec}"')
+        return True
+    pinned = _pinned_version(requirements.read_text(encoding="utf-8"))
+    if pinned is not None and pinned != __version__:
+        ui.warn(
+            f"requirements.txt pins jfastframework=={pinned}, but this is {__version__}; "
+            f"pip install -r would install {pinned} over it. Not running pip."
+        )
+        ui.note(
+            f"Run `jfast upgrade --check`, move the pin to {__version__}, then "
+            f"pip install -r {requirements}"
+        )
+        return True
+    return False
+
+
+def _pip_install(requirements: Path) -> None:
+    import subprocess  # nosec B404 - fixed argv: this interpreter's pip
+
+    if _install_would_replace_framework(requirements):
+        return
     ui.step(f"pip install -r {requirements}")
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603
         [sys.executable, "-m", "pip", "install", "-q", "-r", str(requirements)], check=False
     )
     if result.returncode != 0:
