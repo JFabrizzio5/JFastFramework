@@ -25,65 +25,6 @@ archivo para leer antes de depender de cualquier parte de esto.
 
 ## [Unreleased]
 
-### Agregado
-
-Cinco comandos que llevan a la CLI más allá de los primeros diez minutos de un
-proyecto. Cada uno responde algo que el framework ya podía responder y no
-respondía.
-
-- **`jfast check`** — todos los checks que existen, una pantalla, un exit code.
-  Ya existían todos; lo que no existía era una sola cosa que correr, así que CI
-  corría tres y los dos que nadie cableó no corrían nunca. La precedencia de
-  exit codes va por **cuánto del reporte invalida el fallo**, no por severidad:
-  un `jfast.toml` que no parsea vuelve conjetura todo lo demás. `--json` lleva
-  el código de *cada* check que falló, porque un solo número nunca es la
-  respuesta completa. Bajo `--ci` un **skip falla** — en CI un skip significa
-  que al runner le faltaba algo, y una batería que reporta verde sobre lo que no
-  ejecutó es peor que no tenerla.
-
-- **`jfast migration check` / `plan`** — lee las revisiones antes de correrlas:
-  `NOT NULL` sobre tabla poblada, un rename renderizado como drop más add, un
-  índice construido reteniendo un lock de escritura, un cambio de tipo sin
-  `USING`. Verificado mirando fallar `alembic upgrade head` contra PostgreSQL
-  real y prediciéndolo. Los conteos de filas salen de `EXISTS ... LIMIT 1` y
-  `pg_class.reltuples`, nunca de un `count(*)`, y sin base de datos reporta
-  "desconocido, trátalo como poblado" en vez de asumir vacío.
-
-- **`jfast contracts explain`** — por qué existe una regla, dónde está
-  declarada, y qué hacer en su lugar. `contracts check` te dice que una regla se
-  rompió; a un agente con una violación sin remedio le sale más barato
-  satisfacer al checker que arreglar el diseño, borrando el import o apagando la
-  regla. La respuesta cita la línea de tu `contracts.toml` y el comentario que
-  escribió su autor, no prosa inventada. `contracts diff` compara la
-  arquitectura que el contrato permite contra los imports que el código tiene
-  — **no** es un diff de git, y la doc lo dice sin rodeos.
-
-- **`jfast ai context --json` y `jfast next`** — todo lo que un modelo necesita
-  de un proyecto en una llamada. El tamaño **depende del proyecto y no hay un
-  número único**: un servicio generado mide 8,3 KB con un módulo y 11,5 KB con
-  cinco, y un servicio de cinco módulos con hallazgos y violaciones de contrato
-  reales mide 14,8 KB (`--brief` va de 2,8 KB a 6,1 KB en ese mismo rango).
-  **`jfast ai context --size` imprime la cifra de tu proyecto** — esa es la que
-  hay que usar para planificar. Para escala: enviar `docs/` en su lugar habrían
-  sido 555.859 bytes. Lo que deja fuera a propósito queda listado en un campo
-  `omitted` con el comando que lo recupera, `jfast migration check` incluido.
-  `next` ordena los pasos por **dependencia,
-  no por severidad** — un módulo sin registrar va antes que sus tests faltantes,
-  porque testear un módulo no cableado no prueba nada — y en un proyecto limpio
-  dice qué revisó en vez de inventar trabajo.
-
-- **`jfast upgrade --check`** — qué rompe al pasar a una versión más nueva,
-  **filtrado a lo que aplica a este proyecto**: lee tus modelos, tu
-  `contracts.toml` y la configuración de tus plugins, y reporta solo los cambios
-  que pueden afectarte. Un aviso que no aplica es como la gente aprende a
-  saltarse la salida. El manifiesto son datos en el paquete y no un parseo del
-  changelog, que es prosa, no viaja en el wheel, y se rompe en silencio si
-  alguien reescribe un encabezado. `--apply` está rechazado, no stubbeado:
-  reescribir el proyecto de alguien necesita una vuelta atrás que esto no tiene.
-
-
-
-
 ## [0.1.0a11] - 2026-09-30
 
 Sale de construir dos servicios reales sobre 0.1.0a10, Cuadra y Dictamen, y de
@@ -929,6 +870,66 @@ el mismo lugar.
 
 Tracing distribuido, y, en `accounts`, verificación de email, recuperación de
 contraseña y MFA. Los dos en `PLAN-NEXT.md`.
+
+## [0.1.0a8] - 2026-09-03
+
+> Traducción parcial: de 0.1.0a6 a 0.1.0a8 solo esta parte está en español. El registro completo está en el [CHANGELOG en inglés](../../CHANGELOG.md).
+
+### Agregado
+
+Cinco comandos que llevan a la CLI más allá de los primeros diez minutos de un
+proyecto. Cada uno responde algo que el framework ya podía responder y no
+respondía.
+
+- **`jfast check`** — todos los checks que existen, una pantalla, un exit code.
+  Ya existían todos; lo que no existía era una sola cosa que correr, así que CI
+  corría tres y los dos que nadie cableó no corrían nunca. La precedencia de
+  exit codes va por **cuánto del reporte invalida el fallo**, no por severidad:
+  un `jfast.toml` que no parsea vuelve conjetura todo lo demás. `--json` lleva
+  el código de *cada* check que falló, porque un solo número nunca es la
+  respuesta completa. Bajo `--ci` un **skip falla** — en CI un skip significa
+  que al runner le faltaba algo, y una batería que reporta verde sobre lo que no
+  ejecutó es peor que no tenerla.
+
+- **`jfast migration check` / `plan`** — lee las revisiones antes de correrlas:
+  `NOT NULL` sobre tabla poblada, un rename renderizado como drop más add, un
+  índice construido reteniendo un lock de escritura, un cambio de tipo sin
+  `USING`. Verificado mirando fallar `alembic upgrade head` contra PostgreSQL
+  real y prediciéndolo. Los conteos de filas salen de `EXISTS ... LIMIT 1` y
+  `pg_class.reltuples`, nunca de un `count(*)`, y sin base de datos reporta
+  "desconocido, trátalo como poblado" en vez de asumir vacío.
+
+- **`jfast contracts explain`** — por qué existe una regla, dónde está
+  declarada, y qué hacer en su lugar. `contracts check` te dice que una regla se
+  rompió; a un agente con una violación sin remedio le sale más barato
+  satisfacer al checker que arreglar el diseño, borrando el import o apagando la
+  regla. La respuesta cita la línea de tu `contracts.toml` y el comentario que
+  escribió su autor, no prosa inventada. `contracts diff` compara la
+  arquitectura que el contrato permite contra los imports que el código tiene
+  — **no** es un diff de git, y la doc lo dice sin rodeos.
+
+- **`jfast ai context --json` y `jfast next`** — todo lo que un modelo necesita
+  de un proyecto en una llamada. El tamaño **depende del proyecto y no hay un
+  número único**: un servicio generado mide 8,3 KB con un módulo y 11,5 KB con
+  cinco, y un servicio de cinco módulos con hallazgos y violaciones de contrato
+  reales mide 14,8 KB (`--brief` va de 2,8 KB a 6,1 KB en ese mismo rango).
+  **`jfast ai context --size` imprime la cifra de tu proyecto** — esa es la que
+  hay que usar para planificar. Para escala: enviar `docs/` en su lugar habrían
+  sido 555.859 bytes. Lo que deja fuera a propósito queda listado en un campo
+  `omitted` con el comando que lo recupera, `jfast migration check` incluido.
+  `next` ordena los pasos por **dependencia,
+  no por severidad** — un módulo sin registrar va antes que sus tests faltantes,
+  porque testear un módulo no cableado no prueba nada — y en un proyecto limpio
+  dice qué revisó en vez de inventar trabajo.
+
+- **`jfast upgrade --check`** — qué rompe al pasar a una versión más nueva,
+  **filtrado a lo que aplica a este proyecto**: lee tus modelos, tu
+  `contracts.toml` y la configuración de tus plugins, y reporta solo los cambios
+  que pueden afectarte. Un aviso que no aplica es como la gente aprende a
+  saltarse la salida. El manifiesto son datos en el paquete y no un parseo del
+  changelog, que es prosa, no viaja en el wheel, y se rompe en silencio si
+  alguien reescribe un encabezado. `--apply` está rechazado, no stubbeado:
+  reescribir el proyecto de alguien necesita una vuelta atrás que esto no tiene.
 
 ## [0.1.0a5] - 2026-08-30
 
