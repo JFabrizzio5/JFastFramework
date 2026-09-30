@@ -26,6 +26,423 @@ before depending on any single part of this.
 ## [Unreleased]
 
 
+## [0.1.0a11] - 2026-09-30
+
+Built from two real services on 0.1.0a10, Cuadra and Dictamen, and from what
+they had to work around. The worst finding broke a rule this project had not
+written down: the contracts told a module to publish an event instead of
+calling another module, and in the default stack that event went nowhere --
+`outbox.publish` answered 201 and the row retried until it died. So this
+release is mostly about making the recommended path the one that works:
+events that reach a subscriber without a broker, a worker that exists,
+accounts a SaaS can open with, a switch from one customer to several that is
+a command and not a hunt, a deadline on every call to something that can
+hang, and generated code that passes its own checks.
+
+For every breaking item below, run `jfast upgrade --check`: it lists the ones
+that apply to your project, with file and line, and the remedy.
+
+### Breaking
+
+- **`outbox.publish` refuses an event nobody will receive.** With no module
+  `@subscribe`d to the event type and no event bus configured, it raises
+  `UndeliverableEvent` -- a 500 whose detail names the fix, with nothing
+  written -- instead of answering 201 and retrying the row until it died.
+  Declare a subscriber (below) or enable `events`. It fails in the request,
+  not at boot: nothing checks declared `publishes` against subscribers at
+  startup.
+- **`Outbox(...)` built by hand needs `events=<bus>`** to write event rows.
+- **`contracts check` has new rules.** `orphan-subscription` (a subscriber to
+  an event nobody publishes), `undeclared-event` (a module publishing a type
+  its `[modules.x] publishes` does not list) and `unused-dependency` (a
+  `depends_on` nothing uses, reported at its `contracts.toml` line and
+  waivable there). `undeclared-dependency` now covers `Job(task="<another
+  module's task>")`, which also counts as an edge for `module-cycle`: the
+  hidden coupling Cuadra's workaround got through. Existing projects may fail
+  until they declare `publishes` and drop stale `depends_on` entries.
+  Contracts generated before this release have no `[layers.tasks]` block, and
+  in the screaming layout a `tasks.py` that imports `use_cases` is reported
+  until it is added.
+- **`Worker.run()` waits at most `drain_timeout` (25 s) on stop**, then
+  releases the jobs still running back to the queue without spending an
+  attempt. Pass `drain_timeout=` for jobs that need longer at shutdown.
+- **`POST /auth/login` may answer an MFA challenge** --
+  `{mfa_required | mfa_enrollment_required, mfa_token, expires_in}` -- instead
+  of a token pair when `mfa = true`. With `email_verification = "required"`,
+  `POST /auth/register` answers 202 with no tokens, and existing users are
+  unverified until you grandfather them (`UPDATE jfast_users SET
+  email_verified_at = created_at WHERE email_verified_at IS NULL`).
+- **Generated frontends are private by default** (`PUBLIC_BY_DEFAULT = false`)
+  when a backend in the workspace enables `accounts`, and fetch
+  `/auth/account` after signing in instead of reading the user from the login
+  response. The two nexora `LoginView` overrides are replaced by one shared
+  `LoginView` inside a per-look `AuthShell`.
+- **Boot refuses misconfiguration** in the `database`, `cache`, `storage`,
+  `mail`, `auth` and `queue` settings, one test per rule. Among them:
+  `pool_size = 0` (SQLAlchemy reads it as unlimited), an unknown
+  `session_timezone`, a tenant DSN template without `{tenant}`, a storage
+  `visibility` that is not `public` or `private` (a typo silently made a disk
+  private), `access_key` without `secret_key`, a PostgreSQL queue name that is
+  not an SQL identifier (it is interpolated into SQL), `public_key` mode with
+  `issue_tokens`, algorithms PyJWT does not know, a `from_email` without `@`;
+  in production, an http `jwks_url`, an HMAC secret or signing key under 32
+  bytes and RabbitMQ's `guest` default.
+- **Redis commands time out after 1 s** (`[plugin.cache] command_timeout`).
+  Raise it for long Lua scripts or `SCAN`s. Blocking commands and pub/sub are
+  exempt.
+- **A lost database answers 503, not 500 or a hang.** Connect failures,
+  dropped connections and a full pool raise `DatabaseUnavailableError`; every
+  other database error stays a 500.
+- **Token revocation fails open by default.** A Redis outage used to answer
+  500 on every authenticated request; now the token is accepted without the
+  revocation check, with a throttled warning and a degraded `/ready`.
+  `revocation_fail_open = false` answers 503 instead. This is a trade-off, not
+  a free fix: during the outage a revoked token keeps working until it expires.
+- **`jfast check --ci` fails a service with `rag` on, `tenancy` off and
+  `tenant_scoped` not false** (`tenancy-rag-scoped-without-tenancy`, medium).
+  Plain `jfast check` still exits 0. Set `tenant_scoped = false`, or run
+  `jfast tenancy enable`.
+- **Hexagonal modules no longer import FastAPI from their package init.**
+  0.1.0a10's hexagonal template imported `CreatePayload` from the HTTP adapter
+  at the top of `__init__.py`, so importing the domain pulled in FastAPI and
+  the module's own generated test failed. The import is deferred through
+  `__getattr__`; modules generated by 0.1.0a10 need the same change
+  (`hexagonal-eager-create-payload`).
+
+### Added -- events and background work
+
+- **Local, durable domain events.** `@subscribe("<type>")` in
+  `modules/<name>/tasks.py`; `outbox.publish` queues one job per subscriber in
+  the publishing transaction, so an event exists if and only if its rows were
+  committed. Job ids are deterministic per event and subscriber, so
+  publishing twice queues each subscriber once. Subscribers match on event
+  type, never topic; delivery is at least once, and a subscriber that takes a
+  `TaskSession` claims the event in its own transaction -- one effect per
+  subscriber. With a bus configured the event also goes to Kafka.
+- **`@task` declared in the owning module** (`jfastframework.tasks`),
+  discovered from `modules/<name>/tasks.py` by the API and the worker alike;
+  a broken `tasks.py` stops the boot. **`TaskSession`** is a session on the
+  primary database with the job's tenant (RLS-aware), committed on return and
+  rolled back on error. **`idempotent_on=`** claims a key with `claim_once` in
+  the handler's transaction.
+- **`jfast worker`** boots the app's lifespan and runs every module's tasks
+  and subscriptions. SIGTERM stops claiming and drains for `--grace` seconds
+  (25); what is left is released without spending an attempt; a second
+  signal releases at once. **`jfast dev` starts it** when the queue is on
+  (`--no-worker`). Generated compose files (service and workspace) get a
+  `<svc>-worker` service and Kubernetes a `<svc>-worker` Deployment.
+- **`jfast jobs dead` and `jfast jobs retry <id...> | --all`** for the
+  PostgreSQL and Redis queues. RabbitMQ gets a message pointing at its
+  management UI.
+- **Events in the contract.** `[modules.x] publishes`; subscriptions, task
+  ownership and `Job(task=...)` references are read from the code.
+  `contracts show --json`, `CONTRACTS.md` and `jfast ai context` list
+  publishers, subscribers, tasks and each module's facade functions.
+- **`Job.trace` and `Event.trace`** carry W3C trace context next to the
+  tenant and request id; job and event handler spans are consumer spans
+  inside the trace of the request that created them.
+
+### Added -- telemetry
+
+- **`telemetry` plugin** (`pip install "jfastframework[telemetry]"`):
+  OpenTelemetry traces over OTLP to Jaeger, Tempo, Honeycomb, Datadog or a
+  Collector. Spans for every request (route template, never the raw path),
+  every SQL statement (never bound parameters; statement text only with
+  `record_sql_statement = true`), every `http` client and gateway call,
+  `llm.chat`/`llm.embed` with tokens and cost, `rag.ingest`/`rag.search` with
+  counts, jobs and event handlers. **Never prompt text, documents, answers,
+  queries or bodies**, enforced at the call sites and again in the backend,
+  which drops any attribute that is not a small scalar.
+- **Free until configured.** With no `OTEL_EXPORTER_OTLP_ENDPOINT` nothing is
+  installed -- no middleware, no SQL listener, no tracer -- and OpenTelemetry
+  need not even be installed. Measured in-process: 41 us per request without
+  the plugin, 41 with it and no endpoint, 66 exporting to memory.
+  `/ready` reports the exporter and is never critical.
+- **One trace across services.** The `http` client sends `traceparent` and
+  `tracestate` on every call inside a client span of its own; the gateway
+  replaces the caller's header with its own span's, and relays it untouched
+  when telemetry is off; incoming requests continue the caller's trace.
+  `sample_ratio` decides at the edge and every service behind follows.
+- **`include_infra = true`** adds an OpenTelemetry Collector and Jaeger to the
+  generated compose -- one pair for a whole workspace.
+- `tracing.span(...)` and `tracing.inject()` for your own spans and raw
+  clients, free when telemetry is off; the provider is set as OpenTelemetry's
+  global one when nothing set one first.
+
+### Added -- accounts
+
+- **Email verification** (`email_verification = "off" | "optional" |
+  "required"`) and **password reset by email**, which ends every session,
+  access tokens included. Tokens are stored as SHA-256 hashes, single use,
+  expiring. "Forgot" and "resend" answer 202 before the address is looked up,
+  and in `required` mode a taken address signs up with the same answer as a
+  new one.
+- **TOTP MFA** (RFC 6238, standard library only) with recovery codes and
+  replay protection, enforceable per role (`mfa_required_roles`) at sign-in,
+  refresh and disable; the secret is encrypted at rest. A social sign-in of
+  an account with MFA still gets the challenge. Wrong codes count toward both
+  the MFA token's attempts and the account lockout.
+- **Sign-in rate limited by default** when `cache` is on: token buckets per
+  IP, per account and for email requests, 429 with `Retry-After`.
+- `POST /auth/logout/all`, `GET /auth/features`, and an admin MFA reset
+  (`DELETE /accounts/users/{id}/mfa`). Deactivating a user ends their sessions
+  at once. Errors a frontend must tell apart carry a `code`.
+- **Framework tables gain new columns at startup** (`ensure_columns`), so a
+  0.1.0a10 `jfast_users` table upgrades in place.
+- **Generated Vue and React frontends speak accounts:** sign-in with the MFA
+  step, register, verify email, forgot and reset password, MFA enrolment and
+  a Security page; `VITE_API_TIMEOUT` (60 s by default, for AI calls). With no
+  backend enabling `accounts` the frontend stays public, with none of those
+  pages.
+- The service refuses to boot with verification or reset on and no `mail`
+  plugin or no `frontend_url`, with `mfa_required_roles` while `mfa` is off,
+  or with `mfa` on and no `JFAST_ENCRYPTION_KEYS`.
+
+### Added -- one customer today, several tomorrow
+
+- **`jfast check` gains a seventh check, `tenancy`**: tenant settings that
+  contradict each other or the code -- rag scoped with no tenancy, a
+  per-tenant budget with no tenant, `rls = true` with nothing setting the
+  tenant, policies in revisions with `rls = false`, `current_tenant` with no
+  source, sources that can never resolve. Each finding names the fix.
+- **`jfast check --multitenant-ready`**: what a switch to several customers
+  would break, with file and line -- `tenant_id=None`, routes and service
+  factories with no tenant dependency, raw SQL, storage and cache keys,
+  unscoped RAG, scheduled tasks, LLM calls. Heuristics, documented with their
+  blind spots; a rule that cannot decide stays quiet. Waive with
+  `# contracts: allow <reason>`; `--json`.
+- **`jfast tenancy enable --tenant <id>`**: one reviewable Alembic revision
+  (backfill, optional `--not-null`, tenant RLS, RAG chunks re-keyed) plus the
+  `jfast.toml` edit with its comments kept, then the manual steps left.
+  `--dry-run` writes nothing. Verified end to end on a generated service: as
+  a non-`BYPASSRLS` role, PostgreSQL shows a second tenant none of the first
+  tenant's rows and refuses its writes.
+- **`[plugin.database] pgbouncer = true`** for transaction pooling: no asyncpg
+  or SQLAlchemy statement caches, unique statement names; tenant engines
+  inherit it. RLS behind PgBouncer 1.25 in transaction mode is verified by
+  `tests/test_rls_pgbouncer.py`: the tenant does not survive into the next
+  client's transaction on the same backend, and fifty interleaved
+  transactions from two tenants on one backend never see each other.
+- **`jfast init` asks whether the app serves several customers**, and the
+  answer sets every piece consistently: tenancy and its sources, auth,
+  `rag.tenant_scoped`, `llm.tenant_budget_usd`, and generated routes on
+  `current_tenant`. `jfast start` is single-tenant by default;
+  `--multitenant` generates `JFAST_AUTH_SECRET` and a first-admin password
+  into `.env` so `jfast check --ci` passes. The `tenant_id` columns stay
+  either way.
+
+### Added -- deadlines, breakers and failure drills
+
+- **Every external call has a deadline and a breaker by default**, each a
+  setting with its reason in the code. PostgreSQL: 10 s to connect (asyncpg's
+  own is 60), a bounded 2 s pool ping that replaces SQLAlchemy's (which had
+  no deadline and hung requests), a connect breaker. Redis: 2 s to connect,
+  1 s per command, a breaker. JWKS: 5 s for the whole attempt, one retry on
+  429, 5xx and network errors only, a breaker, and callers queued behind a
+  failed fetch share its failure. S3/MinIO: configurable timeouts, retries
+  and a breaker per disk; a 404 never counts.
+- **`/ready` never fails on a non-critical plugin.** Auth is degraded, not
+  unavailable, while it serves cached JWKS keys; an object store is degraded;
+  a local disk failure is critical.
+- **`get_or_set` fails open in one round trip** when Redis is down.
+- **Mail rejected with 5xx, oversized or malformed goes to the dead letters
+  at once;** timeouts and 4xx keep their retries.
+- **Failure drills**, `tests/test_failure_drills.py`: PostgreSQL and Redis
+  paused (`docker pause`: the socket stays open and nothing answers) and the
+  identity provider hung. Each checks the status inside its deadline, what
+  `/ready` names, and recovery with no restart. The timings are in
+  `docs/resilience.md`, new.
+
+### Added -- generated code that passes its own gates
+
+- **Generated services pass ruff, ruff format, `mypy --strict` and pytest**
+  in every layout and form: each ships a `ruff.toml` naming its rules
+  (FastAPI's `Depends` and friends allowed as default calls) and a strict
+  `mypy.ini`. `scripts/smoke_generated_quality.sh` generates `jfast start`
+  single- and multitenant and `jfast new service` with 19 plugins, one module
+  per layout in each form, and gates them all.
+- **`jfast new module --fields "..." --unique "..." --bare`** in all four
+  layouts: int, bigint, `str(N)`, text, bool, float, `decimal(P,S)`, money
+  (integer minor units), date, timezone-aware datetime and json; `?` for
+  nullable, `=value` for a default. Entity, models with matching limits,
+  repository finders, uniqueness on create and update, domain rules, port and
+  adapter, `public.py` DTO, README and tests all come from the fields.
+  `--access open|auth|tenant` picks the route guard; its default follows
+  `jfast.toml`. `--ui htmx` is refused with `--fields` or `--bare`.
+- **`jfast init` lists plugins from the catalog**, so a new plugin cannot be
+  left out again; `telemetry` and `queue` are recommended and pre-checked.
+  `jfast start --no-telemetry`.
+- **`jfast add <plugin>` and `jfast remove <plugin>`**: `add` enables it and
+  what it requires, pins the extra, appends its settings block and prints the
+  env vars, keeping comments; `remove` refuses while another plugin requires
+  it.
+- **Modules get `tasks.py`** and generated contracts a `tasks` layer.
+- **`scripts/smoke_upgrade.sh`**: the previous release from PyPI, a project
+  generated by it, this checkout's wheel over it, and exactly the change codes
+  in `scripts/smoke_upgrade.expected` from `jfast upgrade --check`.
+- **`JFAST_TEST_WINDOWS_CLOCK=1`** floors `time.monotonic` to 1/64 s, as
+  Windows does, for the whole suite. Against the pre-fix JWKS code it failed
+  16 of 30 runs; with it on, the concurrency suites passed 10 of 10.
+
+### Added -- CI
+
+- Jobs for the generated-project gates, the upgrade smoke, the concurrency
+  suites on a Windows-grained clock, RLS behind a pinned PgBouncer
+  (`edoburu/pgbouncer:v1.25.2-p0`), and spans exported over OTLP and read
+  back from Jaeger (`scripts/smoke_telemetry.sh`); the performance budget
+  against the change's base on the same runner; the S3 disk against MinIO;
+  the multi-replica suite. The failure drills run
+  last in the main job, pausing its own PostgreSQL and Redis. The suites for
+  local events, the worker, dead letters, account flows, SQL spans and the
+  tenancy switch are on the list that fails the build if they skip.
+
+### Changed
+
+- `Event` moved to `jfastframework.events` (still importable from
+  `plugins.builtin.events`) and inherits `tenant_id` and `request_id` from
+  context, as `Job` does. Kafka `@on` handlers run with the event's tenant,
+  request id and trace.
+- `jfast inspect`'s `module-cycle` uses declared `depends_on` as well as
+  imports, as `contracts check` does; they disagreed.
+- The PostgreSQL queue adds a `trace` column at startup (`ADD COLUMN IF NOT
+  EXISTS`; the app role needs `ALTER` on `jfast_jobs`) and records the error
+  of a failed job.
+- The accounts failure count is cleared only when a session is issued. A
+  correct password used to reset it, so anyone holding the password got a
+  fresh set of MFA guesses at every sign-in.
+- The generated frontend's axios timeout is 60 s (`VITE_API_TIMEOUT`).
+- `--with accounts` also enables `auth`; the generator turns on whatever a
+  chosen plugin requires.
+- `jfast new enum` writes `StrEnum`. Rewriting a service `.env` keeps the keys
+  the workspace graph does not own.
+- Quieter by default: storage's "no signing key" warning appears only in
+  production (`temporary_url()` still fails with the fix), and auth's
+  in-memory token store notice is info outside production.
+- `docs/modules.md` no longer recommends `outbox.publish` plus Kafka `@on`
+  between modules -- the dead end -- but `publishes` plus `@subscribe`.
+
+### Fixed
+
+- **Outbox `/ready` said `ok` while messages failed to send.** It is degraded
+  from the first failed attempt and quotes the latest dead reason; the
+  relay's log line includes the cause; a row that can never be delivered goes
+  dead on its first attempt with its reason.
+- **Workspace compose containers read the host's address.** A service using
+  Kafka, RabbitMQ or MinIO got no `client_env` in `jfast workspace compose`,
+  fell back to its `.env`, and dialled `localhost` -- itself. Regenerate the
+  compose file.
+- **`Job(task="alerta.x")` from another module passed `contracts check`**
+  when the task was registered in a root `worker.py` (the 0.1.0a10 shape), so
+  no `@task` declared it. The task name's module prefix now names its owner.
+  Found migrating Cuadra.
+- **`--multitenant-ready` reported raw SQL whose filter is interpolated after
+  `WHERE`/`AND`** -- a repository helper that does filter by tenant. That is
+  undecidable from the source, so the rule stays quiet. Cuadra had eight
+  findings, all false.
+- **FastAPI 0.142's own telemetry ran beside the plugin.** On seeing
+  `OTEL_EXPORTER_OTLP_ENDPOINT` it configured a second global provider
+  (`unknown_service`), duplicated every server span, and would have exported
+  logs carrying exception messages and rejected input values. `create_app`
+  turns it off whenever FastAPI has the switch; FastAPI's own spans are not
+  recorded, by design. Found tracing Cuadra to Jaeger.
+- **`jfast add` reinstalled the previous release over the running one.** A
+  `requirements.txt` still pinned to 0.1.0a10 made `jfast add telemetry` run
+  `pip install -r` and put a10 -- which does not ship that extra -- over a11.
+  pip is now skipped, with the command to run, when the pin differs from the
+  running version or the install is editable. Found migrating Cuadra.
+- **The S3 disk's `listing(limit=1500)` returned 1,000.** It now follows the
+  continuation token.
+- Spanish docs linked three accented anchors the site strips; fixed, with the
+  one in the new telemetry page.
+
+### Performance and scale, measured
+
+Every number here is in `docs/scaling.md`, new, with the machine it was
+measured on (an Apple M5 laptop with other suites running) and the script that
+produces it.
+
+- **A performance budget.** `scripts/bench_overhead.py` drives each app
+  in-process and measures process CPU time per request as a ratio to bare
+  FastAPI in the same run -- JFast's defaults 2.48x, auth + tenancy + metrics
+  5.43x -- and `tests/test_performance_budget.py` (`JFAST_PERF_BUDGET=1`)
+  fails when a ratio grows more than 20 % over the baseline. A second test
+  proves it has teeth: one `BaseHTTPMiddleware` put back, the 0.1.0a10
+  regression, fails it.
+- **`jfast bench <url>`**: a step load test built from the service's
+  OpenAPI. It reports req/s, p50/p95/p99 and errors per step, where the
+  service breaks (`--max-p99-ms`, `--max-error-rate`) and where throughput
+  stops growing, and any `/ready` check that degraded; `--k6` exports the
+  scenario, `--json` and `--fail-on-break` are for CI. Its own generator tops
+  out at 3,000-3,600 req/s; use `ab` or k6 above that.
+- **Framework routes are matched after the application's.** `/health`,
+  `/ready`, `/info`, `/metrics` and the docs move behind the app's routes at
+  startup, which saves 2-4 us of CPU per app request (measured; the plan's
+  "~8 us" was not). An app route that would claim one of their paths, fully
+  or with a 405, still does not: each is probed and put back in front of it.
+  `app.routes` and `/openapi.json` list the application's paths first.
+- **The S3 disk is verified against MinIO** (`tests/test_storage_minio.py`):
+  put, get, stat, listing, signed URLs fetched and then expired, presigned
+  uploads, a three-part multipart stream and its abort, health.
+- **Multi-replica guarantees, proven.** Two apps and two workers against one
+  PostgreSQL and one Redis (`tests/test_multi_replica.py`): 400 outbox
+  messages relayed and consumed once each; scheduler ticks enqueued once on
+  both tick stores; a $1.00 LLM cap across both replicas lets exactly 10 of
+  60 concurrent $0.10 calls through; a logout on one replica is refused on the
+  other, and a refresh race across them rotates once.
+- **`jfastframework.db.rollups.MonthlyRollup`**: pre-computed monthly totals
+  per tenant, refreshed one bucket at a time from its rows, so an event
+  handled twice is harmless; serialised on an advisory lock. On 3M rows, a
+  990k-row tenant's six-aggregate panel went from 455 ms to 3.25 ms at p50.
+- **RAG at 300k chunks across 1,000 tenants** (`scripts/bench_rag.py`):
+  vector search p50 2.54 ms, p99 6.92 ms; hybrid p50 2.96 ms. At that size the
+  planner serves tenant-scoped queries from the tenant btree and an exact
+  sort, so the 586 MB HNSW index serves none of them; with four large tenants
+  it does, and recall@10 is 0.918 at the default `ef_search` (0.950 at 200).
+
+### Not done, and named
+
+- **Not run for real:** the Kafka path against a broker; local events over
+  the Redis or RabbitMQ queue (tested with a recording queue); the Kubernetes worker manifests
+  (parsed, never applied); `jfast dev` spawning the worker (stubbed); a
+  RabbitMQ failure drill; S3 or MinIO (doubles only); SMTP (the 5xx/4xx split
+  is tested against `smtplib` exceptions); a hosted tracing backend or TLS to
+  the collector; the generated account pages in a browser; the interactive
+  `jfast init` end to end; `--not-null` applied against PostgreSQL; read
+  replicas behind PgBouncer under load.
+- **Limits:** a worker long-polling a paused Redis waits on the socket (BLMOVE
+  and pub/sub have no command deadline); an identity provider down with no
+  key ever cached still answers 401, not 503; `TaskSession` always uses the
+  primary database, not per-tenant ones; the worker has no health endpoint and
+  does not reload under `jfast dev`; RabbitMQ has no `jfast jobs`; the
+  frontend's social-login callback does not handle the MFA challenge; there is
+  no QR code for MFA enrolment; changing a password does not end other
+  sessions (a reset does); the generated `tasks.py` is a docstring.
+- **Ten `jfast upgrade --check` detectors have known bugs**, each pinned by a
+  strict xfail in `tests/test_upgrade_detectors.py` (for example
+  `async-dependencies` flags any call named `current_tenant`, and `SKIP_DIRS`
+  is matched against absolute paths, so a project under a folder named
+  `build` is not read).
+- **The upgrade smoke fails until `upgrades.py` names
+  `hexagonal-eager-create-payload`**, by design.
+- Drill timings were measured on one loaded laptop; a slower CI runner is
+  untested. Only Python 3.12 was run locally for the generator gates.
+- **Scale, not yet measured:** RAG at 1M chunks (all embeddings were
+  synthetic); the `ab` table in `docs/deploy.md` (not re-measured on a loaded
+  machine); a Linux baseline for the budget, which CI measures against the
+  base branch instead -- a step not yet run in CI; the telemetry plugin as a
+  budgeted scenario; `jfast bench` naming the saturated dependency beyond
+  `/ready`, and a mocked-model scenario.
+- **Found, not fixed:** the pgvector store's writes filter with `tenant_id IS
+  NOT DISTINCT FROM`, which no btree serves -- one document's delete took
+  19.2 ms instead of 0.03 ms at 300k chunks (a strict xfail in
+  `tests/test_rag_scale.py`); a 405's problem+json response drops the `Allow`
+  header.
+- **The MinIO CI job runs a community fork** (`pgsty/minio`): MinIO stopped
+  publishing images, and the suite was verified locally only against the last
+  official one, `RELEASE.2025-09-07T16-13-09Z`.
+- Long AI work through the queue by default, tested recipes, and the RLS
+  tables in `jfast ai context` are not started.
+
 ## [0.1.0a10] - 2026-09-29
 
 Three things a project outgrows in its first month of real use: retrieval that
