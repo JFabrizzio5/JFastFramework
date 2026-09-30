@@ -177,7 +177,7 @@ async def test_a_forged_proto_cannot_downgrade_a_request_that_really_was_tls() -
 TEMPLATE_ROOT = Path(jfastframework.__file__).parent / "templates"
 
 # Only the templates this middleware's headers actually cover: pages the
-# service itself serves. A built SPA is served by Caddy from ./dist.
+# service itself serves. A built SPA is served by Caddy from <frontend>/dist.
 SERVED_TEMPLATES = (
     TEMPLATE_ROOT / "ui_htmx" / "templates" / "base.html.j2",
     TEMPLATE_ROOT / "service_web" / "templates" / "base.html.j2",

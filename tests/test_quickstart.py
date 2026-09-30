@@ -71,6 +71,33 @@ def test_the_compose_file_start_writes_has_something_to_build(started: Path) -> 
     assert (started / "demo" / ".dockerignore").is_file()
 
 
+def test_caddy_serves_the_directory_the_frontend_builds_into(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The compose file mounted ./dist at the workspace root; `npm run build`
+    writes demo-web/dist. Nothing ever reached /srv, and production Caddy
+    served an empty site while the panel said "nothing else to install"."""
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["start", "demo"])
+    assert result.exit_code == 0, result.output
+
+    compose = (tmp_path / "docker-compose.yml").read_text(encoding="utf-8")
+    assert '"./demo-web/dist:/srv:ro"' in compose
+    assert "./dist:/srv" not in compose
+    front = tmp_path / "demo-web"
+    # Vite's outDir is dist unless a config says otherwise, and none does.
+    package = json.loads((front / "package.json").read_text(encoding="utf-8"))
+    assert package["scripts"]["build"] == "vite build"
+    for config in front.glob("vite.config.*"):
+        assert "outDir" not in config.read_text(encoding="utf-8")
+    # The panel builds the SPA before it brings the stack up.
+    output = " ".join(result.output.split())
+    assert "npm run build" in output
+    assert output.index("npm run build") < output.index("docker compose up --build")
+
+
 def test_the_env_start_wrote_is_not_thrown_away_by_the_next_step(started: Path) -> None:
     """The panel used to say `cp .env.example .env`, "defaults already match".
 

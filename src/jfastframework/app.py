@@ -176,10 +176,11 @@ def _install_edge_middleware(app: FastAPI, settings: JFastSettings) -> None:
     if max_body is not None:
         app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body)
 
-    if settings.cors_origins:
+    if settings.cors_origins or settings.cors_origin_regex:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origins,
+            allow_origin_regex=settings.cors_origin_regex,
             allow_credentials=settings.cors_allow_credentials,
             allow_methods=settings.cors_allow_methods,
             allow_headers=settings.cors_allow_headers,

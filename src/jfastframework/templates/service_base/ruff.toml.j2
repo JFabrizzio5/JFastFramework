@@ -30,6 +30,12 @@ extend-immutable-calls = [
     "fastapi.Path",
     "fastapi.Query",
     "fastapi.Security",
+    # `Depends(require_scopes("invoices:write"))`, as docs/auth.md writes it:
+    # the factory runs once, at import, and returns the dependency.
+    "jfastframework.auth.require_roles",
+    "jfastframework.auth.require_scopes",
+    "jfastframework.plugins.builtin.auth.require_roles",
+    "jfastframework.plugins.builtin.auth.require_scopes",
 ]
 
 [lint.isort]

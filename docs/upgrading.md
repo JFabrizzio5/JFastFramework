@@ -196,8 +196,11 @@ Nothing else stops a correct `0.1.0a11` service. Three notes point at files
 `0.1.0a11` generated that need a hand:
 
 - `image-cannot-write-local-storage` -- a service with `storage` whose
-  Dockerfile runs as `appuser` without owning `/app`. The production image
-  stops at boot. `jfast deploy dockerfile` regenerates it.
+  Dockerfile runs as `appuser` without owning `/app` (the image stops at boot),
+  or without creating a local disk root other than `public` and `private`
+  (`/ready` 503, uploads 500). `jfast deploy dockerfile` regenerates it from
+  `[plugin.storage.disks]`; a volume already created as root needs one `chown`
+  ([Storage](storage.md#a-volume-created-as-root)).
 - `facade-tenant-optional` -- a multitenant service whose `public.py` facades
   take `tenant_id: str | None`: None reads every tenant. Make it `tenant_id:
   str` and let mypy name the callers.

@@ -21,6 +21,10 @@ deterministic serialiser is cheaper than pulling in PyYAML.
 
 from __future__ import annotations
 
+import posixpath
+import tomllib
+from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -150,6 +154,35 @@ def named_volumes(mounts: list[str]) -> list[str]:
     ]
 
 
+def local_disk_dirs(disks: Mapping[str, Any] | None) -> dict[str, str]:
+    """Disk name -> the directory it writes in the image, for every local disk.
+
+    ``disks`` is ``[plugin.storage.disks]``; empty or ``None`` means the
+    plugin's defaults, as the plugin itself reads it. A relative root is
+    resolved against the image's WORKDIR, as ``LocalStorage`` resolves it
+    against the working directory; an absolute one is kept. The driver and the
+    root default the way ``DiskConfig`` defaults them -- ``local`` and
+    ``storage`` -- so a disk that relies on either is not skipped here while
+    the plugin writes to it.
+
+    One function for the compose volumes, the Dockerfile and the upgrade
+    detector: a disk the Dockerfile creates is exactly a disk compose mounts.
+    """
+    from jfastframework.plugins.builtin.storage import DEFAULT_DISKS
+
+    chosen: Mapping[str, Any] = disks or DEFAULT_DISKS
+    found: dict[str, str] = {}
+    for disk, spec in sorted(chosen.items()):
+        if not isinstance(spec, Mapping):
+            continue
+        # S3 and MinIO hold the bytes themselves; there is nothing local to keep.
+        if spec.get("driver", "local") != "local":
+            continue
+        root = str(spec.get("root") or "storage")
+        found[disk] = posixpath.normpath(posixpath.join(IMAGE_WORKDIR, root))
+    return found
+
+
 def storage_mounts(plugin: Plugin, *, prefix: str) -> list[str]:
     """Volumes for one service's local storage disks.
 
@@ -163,20 +196,11 @@ def storage_mounts(plugin: Plugin, *, prefix: str) -> list[str]:
     """
     if plugin.meta.name != "storage":
         return []
-
-    from jfastframework.plugins.builtin.storage import DEFAULT_DISKS
-
-    disks: dict[str, dict[str, Any]] = getattr(plugin.settings, "disks", None) or DEFAULT_DISKS
+    disks: dict[str, dict[str, Any]] | None = getattr(plugin.settings, "disks", None)
     mounts: list[str] = []
-    for disk, spec in sorted(disks.items()):
-        # S3 and MinIO hold the bytes themselves; there is nothing local to keep.
-        if spec.get("driver") != "local":
-            continue
-        root = str(spec.get("root", "")).lstrip("./")
-        if not root:
-            continue
+    for disk, directory in local_disk_dirs(disks).items():
         volume = f"{prefix}_{disk}_data".replace("-", "_").replace(".", "_")
-        mounts.append(f"{volume}:{IMAGE_WORKDIR}/{root}")
+        mounts.append(f"{volume}:{directory}")
     return mounts
 
 
@@ -374,13 +398,7 @@ RUN useradd --create-home --uid 10001 appuser
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder --chown=appuser:appuser /app /app
-# WORKDIR created /app as root, and --chown only reaches what was copied into
-# it: without this, local storage cannot create its directory and the service
-# stops at boot. The default disks exist in the image so the volume compose
-# mounts on each starts out owned by appuser; another disk's root needs its
-# own line here.
-RUN mkdir -p /app/storage/public /app/storage/private \\
- && chown appuser:appuser /app /app/storage /app/storage/public /app/storage/private
+{storage_block}
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\
@@ -439,17 +457,146 @@ CMD ["/entrypoint.sh"]
 MAX_DERIVED_WORKERS = 8
 
 
-def render_dockerfile(python_version: str = "3.12", workers: int | None = None) -> str:
+#: The comment over the storage line, and how `jfast add storage` finds it.
+STORAGE_COMMENT = """\
+# WORKDIR created /app as root, and --chown only reaches what was copied into
+# it: without this, local storage cannot create its directory and the service
+# stops at boot. Every local disk root exists in the image owned by appuser,
+# because Docker creates a volume's mount point as root when the image does
+# not have it -- and then the disk cannot write. Written from
+# [plugin.storage.disks]; `jfast deploy dockerfile` and `jfast add storage`
+# rewrite this line, so a new disk needs one of them, not an edit here."""
+
+_STORAGE_COMMENT_FIRST = STORAGE_COMMENT.splitlines()[0]
+
+
+def storage_dirs(disks: Mapping[str, Any] | None = None) -> list[str]:
+    """Every directory the image creates for local storage.
+
+    The default disks always, so an image built before storage was configured
+    -- or with it configured only through the environment -- still has them;
+    then every local disk in ``disks``.
+    """
+    from jfastframework.plugins.builtin.storage import DEFAULT_DISKS
+
+    defaults = local_disk_dirs(None)
+    # public before private, as the plugin declares them, then the rest by name.
+    ordered = [defaults[name] for name in DEFAULT_DISKS if name in defaults]
+    for directory in local_disk_dirs(disks).values():
+        if directory not in ordered:
+            ordered.append(directory)
+    return ordered
+
+
+def _owned(directories: Iterable[str]) -> list[str]:
+    """What ``chown`` needs: /app, and each directory with its parents under it.
+
+    ``mkdir -p`` creates the parents as root, and a disk whose root is
+    ``uploads/tickets`` cannot create a sibling of ``tickets`` otherwise.
+    """
+    owned = [IMAGE_WORKDIR]
+    for directory in directories:
+        chain = [directory]
+        parent = posixpath.dirname(directory)
+        while parent.startswith(IMAGE_WORKDIR + "/"):
+            chain.insert(0, parent)
+            parent = posixpath.dirname(parent)
+        for item in chain:
+            if item not in owned:
+                owned.append(item)
+    return owned
+
+
+def _wrapped(first: str, words: list[str], indent: str, width: int = 84) -> list[str]:
+    lines = [first]
+    for word in words:
+        if len(lines[-1]) + 1 + len(word) > width:
+            lines[-1] += " \\"
+            lines.append(indent + word)
+        else:
+            lines[-1] += " " + word
+    return lines
+
+
+def render_storage_block(disks: Mapping[str, Any] | None = None) -> str:
+    """The comment and the RUN line that give appuser every local disk root."""
+    directories = storage_dirs(disks)
+    mkdir = _wrapped("RUN mkdir -p", directories, "    ")
+    chown = _wrapped(" && chown appuser:appuser", _owned(directories), "    ")
+    mkdir[-1] += " \\"
+    return "\n".join([STORAGE_COMMENT, *mkdir, *chown])
+
+
+def read_storage_disks(config_file: Path) -> dict[str, Any] | None:
+    """``[plugin.storage.disks]`` from a jfast.toml, or None.
+
+    Read as TOML rather than through ``JFastConfig``: generating a Dockerfile
+    must not depend on the kernel settings validating in this shell.
+    """
+    try:
+        raw = tomllib.loads(config_file.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    disks = raw.get("plugin", {}).get("storage", {}).get("disks")
+    return disks if isinstance(disks, dict) and disks else None
+
+
+def render_dockerfile(
+    python_version: str = "3.12",
+    workers: int | None = None,
+    disks: Mapping[str, Any] | None = None,
+) -> str:
     """The image. ``workers`` pins a worker count instead of deriving one.
 
     Left as ``None``, the entrypoint reads the container's CPU quota at start,
-    which is the only place that number is actually known.
+    which is the only place that number is actually known. ``disks`` is
+    ``[plugin.storage.disks]``: each local root is created for appuser.
     """
     return DOCKERFILE_TEMPLATE.format(
         python_version=python_version,
         workers="" if workers is None else workers,
         max_workers=MAX_DERIVED_WORKERS,
+        storage_block=render_storage_block(disks),
     )
+
+
+def refresh_storage_block(dockerfile: str, disks: Mapping[str, Any] | None) -> str | None:
+    """*dockerfile* with its storage line rewritten for *disks*.
+
+    Only that line and the comment over it: a generated Dockerfile is often
+    edited elsewhere (a private index, a system package), and regenerating
+    the whole file would throw that away. None when there is no generated
+    storage line to find -- an older or hand-written Dockerfile, which
+    `jfast upgrade --check` reports instead.
+    """
+    lines = dockerfile.split("\n")
+    start = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.startswith("RUN mkdir -p ")
+            and "/app/storage" in line
+            and any("chown appuser:appuser /app" in rest for rest in lines[i : i + 12])
+        ),
+        None,
+    )
+    if start is None:
+        return None
+    end = start
+    while lines[end].rstrip().endswith("\\") and end + 1 < len(lines):
+        end += 1
+    if "chown appuser:appuser /app" not in "\n".join(lines[start : end + 1]):
+        return None
+    top = start
+    while top > 0 and lines[top - 1].startswith("#"):
+        top -= 1
+    comment = "\n".join(lines[top:start])
+    if _STORAGE_COMMENT_FIRST not in comment:
+        top = start
+    block = render_storage_block(disks).split("\n")
+    if top == start:
+        block = [line for line in block if not line.startswith("#")]
+    return "\n".join([*lines[:top], *block, *lines[end + 1 :]])
 
 
 # The Dockerfile ends in `COPY . .`, which is the only spelling that survives a

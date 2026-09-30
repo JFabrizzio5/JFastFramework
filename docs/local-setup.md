@@ -187,8 +187,13 @@ you see it immediately rather than on your first real feature.
 
 ```bash
 cd ~/projects/shop
+(cd shop-web && npm install && npm run build)   # the SPA Caddy serves
 docker compose up --build
 ```
+
+Caddy serves the frontend from `shop-web/dist`, which is where `npm run build`
+writes; the compose file runs no Node container, so the build comes first.
+Without it the API still answers under `/api` and `/` is empty.
 
 ---
 

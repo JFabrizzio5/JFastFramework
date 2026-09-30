@@ -7,6 +7,7 @@ these is that the default behaviour did not change.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 from fastapi import APIRouter, Request
@@ -185,6 +186,76 @@ def test_wildcard_origins_with_credentials_is_refused_at_boot() -> None:
     """Browsers reject the pair, so failing here beats failing in a console."""
     with pytest.raises(ValidationError, match="cors_origins cannot be"):
         JFastSettings(cors_origins=["*"], cors_allow_credentials=True, _env_file=None)  # type: ignore[call-arg]
+
+
+# One origin per tenant subdomain: what a list cannot spell (bitácora F15).
+TENANT_ORIGINS = r"https://[a-z0-9-]+\.example\.com"
+
+
+async def test_an_origin_pattern_allows_every_tenant_subdomain() -> None:
+    app = _app(cors_origin_regex=TENANT_ORIGINS, cors_allow_credentials=True)
+    async with client_for(app) as client:
+        simple = await client.get("/quick", headers={"Origin": "https://acme.example.com"})
+        preflight = await client.options(
+            "/quick",
+            headers={
+                "Origin": "https://cafeteria-luna.example.com",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+    assert simple.headers["access-control-allow-origin"] == "https://acme.example.com"
+    assert simple.headers["access-control-allow-credentials"] == "true"
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "https://cafeteria-luna.example.com"
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://evil-example.com",  # a lookalike: the dot is escaped
+        "https://acme.example.com.evil.com",  # a suffix: matched whole, not as a prefix
+        "http://acme.example.com",  # the scheme is part of the origin
+        "https://example.com",  # the bare domain is not a subdomain
+    ],
+)
+async def test_an_origin_pattern_refuses_what_it_does_not_match(origin: str) -> None:
+    app = _app(cors_origin_regex=TENANT_ORIGINS)
+    async with client_for(app) as client:
+        simple = await client.get("/quick", headers={"Origin": origin})
+        preflight = await client.options(
+            "/quick", headers={"Origin": origin, "Access-Control-Request-Method": "POST"}
+        )
+    assert "access-control-allow-origin" not in simple.headers
+    assert preflight.status_code == 400
+
+
+async def test_the_pattern_adds_to_the_exact_origins() -> None:
+    app = _app(cors_origins=["http://localhost:5173"], cors_origin_regex=TENANT_ORIGINS)
+    async with client_for(app) as client:
+        listed = await client.get("/quick", headers={"Origin": "http://localhost:5173"})
+        matched = await client.get("/quick", headers={"Origin": "https://acme.example.com"})
+    assert listed.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert matched.headers["access-control-allow-origin"] == "https://acme.example.com"
+
+
+def test_a_pattern_that_does_not_compile_fails_at_boot() -> None:
+    with pytest.raises(ValidationError, match="cors_origin_regex is not a valid pattern"):
+        JFastSettings(cors_origin_regex="https://(unclosed", _env_file=None)  # type: ignore[call-arg]
+
+
+def test_the_pattern_is_read_from_jfast_toml_and_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jfastframework.settings import JFastConfig
+
+    config = tmp_path / "jfast.toml"
+    config.write_text(
+        "[app]\ncors_origin_regex = 'https://[a-z0-9-]+\\.example\\.com'\n", encoding="utf-8"
+    )
+    assert JFastConfig.load(config_path=config).settings.cors_origin_regex == TENANT_ORIGINS
+    monkeypatch.setenv("JFAST_CORS_ORIGIN_REGEX", TENANT_ORIGINS)
+    assert JFastSettings(_env_file=None).cors_origin_regex == TENANT_ORIGINS  # type: ignore[call-arg]
 
 
 async def test_an_untrusted_host_is_rejected() -> None:

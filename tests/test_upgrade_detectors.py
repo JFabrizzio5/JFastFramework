@@ -1877,6 +1877,86 @@ def _only_object_storage_disks(root: Path) -> None:
     write(root / "Dockerfile", OLD_DOCKERFILE)
 
 
+ADJUNTOS = (
+    '\n[plugin.storage.disks.public]\ndriver = "local"\nroot = "storage/public"\n'
+    '\n[plugin.storage.disks.private]\ndriver = "local"\nroot = "storage/private"\n'
+    '\n[plugin.storage.disks.adjuntos]\ndriver = "local"\nroot = "storage/adjuntos"\n'
+)
+
+#: What the first 0.1.0a12 build generated: /app handed over, the two default
+#: disks created, and nothing for a disk of the project's own.
+A12_STORAGE_LINES = (
+    "FROM python:3.12-slim\nWORKDIR /app\n"
+    "RUN useradd --create-home --uid 10001 appuser\n"
+    "COPY --chown=appuser:appuser . /app\n"
+    "RUN mkdir -p /app/storage/public /app/storage/private \\\n"
+    " && chown appuser:appuser /app /app/storage /app/storage/public /app/storage/private\n"
+    "USER appuser\n"
+)
+
+
+@affected_by("image-cannot-write-local-storage")
+def _a_disk_of_its_own_the_dockerfile_never_creates(root: Path) -> list[str]:
+    """The help desk's `adjuntos` disk (bitácora F13): /ready 503, upload 500."""
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    write(root / "Dockerfile", A12_STORAGE_LINES)
+    return ["Dockerfile: /app/storage/adjuntos (disk adjuntos) is not created for appuser"]
+
+
+@affected_by("image-cannot-write-local-storage")
+def _a_disk_created_but_left_to_root(root: Path) -> list[str]:
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    write(root / "Dockerfile", A12_STORAGE_LINES)
+    edit(
+        root / "Dockerfile",
+        "mkdir -p /app/storage/public /app/storage/private",
+        "mkdir -p /app/storage/public /app/storage/private /app/storage/adjuntos",
+    )
+    return ["Dockerfile: /app/storage/adjuntos (disk adjuntos)"]
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _the_dockerfile_regenerated_from_the_disks(root: Path) -> None:
+    from jfastframework.deploy.compose import read_storage_disks, render_dockerfile
+
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    write(root / "Dockerfile", render_dockerfile(disks=read_storage_disks(root / "jfast.toml")))
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _the_storage_line_refreshed_by_jfast_add_storage(root: Path) -> None:
+    from jfastframework.deploy.compose import read_storage_disks, refresh_storage_block
+
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    refreshed = refresh_storage_block(A12_STORAGE_LINES, read_storage_disks(root / "jfast.toml"))
+    assert refreshed is not None
+    write(root / "Dockerfile", refreshed)
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _the_whole_storage_tree_handed_over_recursively(root: Path) -> None:
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    write(root / "Dockerfile", A12_STORAGE_LINES)
+    edit(
+        root / "Dockerfile",
+        "RUN mkdir -p /app/storage/public /app/storage/private \\\n"
+        " && chown appuser:appuser /app /app/storage /app/storage/public "
+        "/app/storage/private\n",
+        "RUN mkdir -p /app/storage/adjuntos && chown -R appuser:appuser /app\n",
+    )
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _a_second_disk_on_object_storage(root: Path) -> None:
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    edit(
+        root / "jfast.toml",
+        'disks.adjuntos]\ndriver = "local"\nroot = "storage/adjuntos"',
+        'disks.adjuntos]\ndriver = "s3"\nbucket = "adjuntos"',
+    )
+    write(root / "Dockerfile", A12_STORAGE_LINES)
+
+
 NULLABLE_UNIQUE_ENTITY = (
     "from sqlalchemy import UniqueConstraint\n"
     "from sqlalchemy.orm import Mapped, mapped_column\n\n\n"

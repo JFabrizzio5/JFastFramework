@@ -544,6 +544,46 @@ still verifies after the object has moved to a disk that does no signing of its
 own. The visibility rule is unchanged: whichever disk the key resolves to
 decides whether a signature is required.
 
+## Local disks in the production image
+
+The generated image runs as `appuser` (uid 10001), and the generated compose
+file mounts a named volume on every local disk's root
+(`<service>_<disk>_data`). Docker creates a volume's mount point as root when
+the image does not already have that directory, so each local root has to
+exist in the image, owned by `appuser`. `jfast deploy dockerfile` writes one
+`mkdir`/`chown` line for every local disk in `[plugin.storage.disks]`, and
+`jfast add storage` rewrites that line alone in a Dockerfile you have edited.
+After declaring a disk:
+
+```bash
+jfast add storage          # the Dockerfile creates the new root for appuser
+jfast workspace compose    # its volume (`jfast deploy compose` for a lone service)
+docker compose up --build
+```
+
+Skip the first and `/ready` answers 503 (`/app/storage/adjuntos is not
+writable`) while `/health` stays 200, and the first upload is a 500
+`PermissionError`. `jfast upgrade --check` names every root the Dockerfile does
+not create (`image-cannot-write-local-storage`).
+
+### A volume created as root
+
+Docker copies the image's directory, owner included, into a named volume that
+is empty when it is mounted. So a volume created as root before the image had
+the directory is fixed by the rebuilt image only while it is still empty; once
+it holds a file it stays root's, `/ready` stays 503, and rebuilding changes
+nothing. Hand it over once, as root, with the data in place:
+
+```bash
+docker compose run --rm --no-deps --user root <service> \
+  chown -R appuser:appuser /app/storage/adjuntos
+```
+
+`<service>` is the API's compose service -- `api` from `jfast deploy compose`,
+the service's own name in a workspace. The worker mounts the same volume, so
+once is enough. An empty volume can be removed instead (`docker volume rm
+<project>_<service>_adjuntos_data`); the next `up` creates it from the image.
+
 ## Health
 
 `/ready` reports each disk: a local disk that is missing or read-only, an S3

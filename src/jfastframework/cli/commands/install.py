@@ -197,10 +197,16 @@ def start(
     # password nobody has set. `jfast dev` rewrites the container hostnames to the
     # published ports and resolves the workspace secret, which is exactly what a
     # process on the host needs and what no static file can hold for both.
+    #
+    # The SPA is built on the host first: Caddy serves <front>/dist, where
+    # `npm run build` writes, and the compose file runs no Node container. The
+    # panel used to promise "nothing else to install" and Caddy came up
+    # serving an empty directory.
     ui.next_steps(
         "Run it",
         [
-            ("docker compose up --build", "all of it, nothing else to install"),
+            (f"cd {front_dir} && npm install && npm run build && cd ..", "the SPA Caddy serves"),
+            ("docker compose up --build", "API, worker, datastores and Caddy"),
             ("", ""),
             (f"cd {api_dir}", "or run it on the host"),
             ("pip install -r requirements-dev.txt", "in a virtualenv"),
