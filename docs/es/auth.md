@@ -162,6 +162,21 @@ in-memory token store: revocation does not survive a restart or reach other repl
 No es crítico — el servicio sigue autenticando — pero es visible, en vez de
 descubrirse desde un ticket de soporte.
 
+Cuando Redis deja de responder, la consulta de revocación falla **abierta** por
+defecto: el token se acepta sin la verificación, se registra un aviso (a lo más
+cada diez segundos) y `/ready` reporta auth degradado. Es el mismo trato que
+hace el rate limiter, acotado por la vida del access token. Donde un logout que
+tarda unos minutos en surtir efecto es peor que una caída, ciérralo:
+
+```toml
+[plugin.auth]
+revocation_fail_open = false   # toda petición autenticada responde 503 hasta que vuelva Redis
+```
+
+En los dos casos la consulta está acotada: el cliente de caché le da un segundo
+a cada comando y deja de llamar a un Redis que no responde (ver
+[Resiliencia](resilience.md)).
+
 ---
 
 ## Rotación de refresh, con detección de reuso
@@ -286,7 +301,27 @@ ella.
 
 Si el endpoint de JWKS es inalcanzable, las claves cacheadas siguen funcionando
 — una caída de JWKS no debe tirar abajo todos los servicios — y `/ready` reporta
-qué tan viejas están.
+qué tan viejas están como *degradado*, no como no disponible: cada réplica sigue
+verificando lo que verificaba hace un minuto. Sin ninguna clave traída es
+crítico, porque no hay nada con qué verificar.
+
+Llegar a las claves cacheadas no debe costar primero un timeout, así que la
+descarga tiene deadline, un reintento para lo que parece pasajero, y breaker:
+
+```toml
+[plugin.auth]
+jwks_timeout = 5.0             # segundos para una descarga, completa
+jwks_attempts = 2              # contando el primero; solo 429/5xx/errores de red reintentan
+jwks_breaker_failures = 3      # refrescos fallidos seguidos que dejan de llamar al issuer...
+jwks_breaker_cool_down = 30.0  # ...durante este tiempo, sirviendo las claves cacheadas
+```
+
+Medido con un issuer que se cuelga: las tres primeras peticiones después de que
+expira la caché esperan cerca de un segundo cada una (dos intentos de 0.5 s en
+el drill), y todas las siguientes responden en menos de un milisegundo hasta que
+vuelve el issuer. Quien hace fila detrás de una descarga que falló se queda con
+esa falla en vez de volver a preguntar, así que una caída le cuesta al issuer
+una petición, no una por cada llamada.
 
 ---
 

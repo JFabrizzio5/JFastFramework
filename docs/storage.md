@@ -111,8 +111,12 @@ Set the key or temporary URLs do not work:
 JFAST_STORAGE_SIGNING_KEY=$(openssl rand -hex 32)
 ```
 
-The plugin warns at startup when a private local disk has no key, rather than
-letting the first user to click a download link discover it.
+In production the plugin warns at startup when a private local disk has no key,
+rather than letting the first user to click a download link discover it; a key
+shorter than 32 bytes refuses to boot there. Outside production it stays quiet
+-- most services never sign a URL, and a warning on every start of every one of
+them is a warning nobody reads -- and `temporary_url()` itself fails with the
+variable to set.
 
 An expired link and a forged one return the same 403 with the same message.
 Different answers would tell an attacker whether the key exists.
@@ -155,6 +159,22 @@ minio_include_infra = true
 
 `jfast deploy compose` then emits MinIO at your service's base port `+6`, like
 every other plugin's container.
+
+Every S3 call has a deadline, a retry policy and a circuit breaker, per disk:
+
+```toml
+[plugin.storage.disks.uploads]
+connect_timeout = 5.0      # seconds to connect
+read_timeout = 30.0        # seconds of silence while reading
+max_attempts = 3           # botocore "standard" retries, first try included
+breaker_failures = 5       # failed calls in a row that stop calling S3...
+breaker_cool_down = 15.0   # ...for this long; then one probe
+```
+
+While the breaker is open an upload fails at once with a 503 instead of holding
+a worker thread through three timeouts. A 404 is an answer and never counts.
+Presigning is local and is not behind the breaker. The reasons for each number
+are in [Resilience](resilience.md).
 
 ## Keys are not paths
 
@@ -522,9 +542,17 @@ decides whether a signature is required.
 ## Health
 
 `/ready` reports each disk: a local disk that is missing or read-only, an S3
-bucket that cannot be reached. Storage failing does not make the service
-unhealthy on its own — an API that can still answer queries should stay in the
-load balancer — so it is reported as degraded.
+bucket that cannot be reached. The two are not the same failure:
+
+- **A local disk** belongs to this replica. Missing or read-only, it fails
+  readiness, so the orchestrator stops sending traffic to the one replica with
+  the broken volume.
+- **An object store** is shared by every replica. Failing readiness over it
+  would take all of them out of rotation and fix nothing, so it is reported
+  *degraded*: `/ready` answers 200 and names the bucket.
+
+Each disk answers inside the readiness budget. The S3 probe makes one short
+try, and while the disk's breaker is open it is not probed at all.
 
 ## What this does not do
 
