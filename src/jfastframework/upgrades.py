@@ -37,6 +37,7 @@ implementation, which *is* installed for development.
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import re
 import tomllib
@@ -240,23 +241,69 @@ def _table(config: dict[str, Any], *keys: str) -> dict[str, Any]:
     return current if isinstance(current, dict) else {}
 
 
+def _active_plugins(project: Project) -> frozenset[str]:
+    """The plugins the registry will load for this project, not the list it wrote.
+
+    ``[plugins].enabled`` is an allow-list with two rules the literal list does
+    not show: an empty one loads every ``default_enabled`` plugin (metrics
+    among them), and a plugin another one ``requires`` is loaded without being
+    named (``ratelimit`` pulls in ``cache``). ``disabled`` wins over both. A
+    detector reading the list itself reports the service somebody meant to
+    write, not the one that runs.
+    """
+    return _resolved_plugins(tuple(project.plugins), tuple(project.disabled))
+
+
+@functools.lru_cache(maxsize=64)
+def _resolved_plugins(enabled: tuple[str, ...], disabled: tuple[str, ...]) -> frozenset[str]:
+    from jfastframework.plugins import registry
+
+    try:
+        chosen = registry.select(
+            _installed_plugins(), enabled=list(enabled), disabled=list(disabled)
+        )
+    except Exception:  # noqa: BLE001 -- a graph that will not resolve is `jfast check`'s report
+        # The list as written, minus what it disables: the best statement of
+        # intent available when a named plugin is not installed here.
+        return frozenset(name for name in enabled if name not in disabled)
+    return frozenset(cls.meta.name for cls in chosen)
+
+
+@functools.lru_cache(maxsize=1)
+def _installed_plugins() -> dict[str, Any]:
+    from jfastframework.plugins import registry
+
+    return dict(registry.discover())
+
+
 def _issues_tokens(project: Project) -> bool:
     """Whether this service is the one minting tokens, not just verifying them.
 
     A service that only validates somebody else's tokens is untouched by every
     change to the issuing endpoints, which is most services with `auth` on.
     """
-    if "auth" not in project.plugins:
+    if "auth" not in _active_plugins(project):
         return False
     return bool(_table(_config(project), "plugin", "auth").get("issue_tokens", False))
 
 
+def _skipped(path: Path, root: Path) -> bool:
+    """Whether *path* sits in a directory this report never reads.
+
+    Tested on the parts *below the project root*, not on the absolute path: a
+    checkout at `~/build/billing` or `/srv/site/billing` is a project, and
+    testing the absolute parts skipped every file in it -- so every note that
+    reads source reported a clean project.
+    """
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = path.parts
+    return any(part in SKIP_DIRS for part in parts)
+
+
 def _python_files(root: Path) -> list[Path]:
-    return [
-        path
-        for path in sorted(root.rglob("*.py"))
-        if not any(part in SKIP_DIRS for part in path.parts)
-    ]
+    return [path for path in sorted(root.rglob("*.py")) if not _skipped(path, root)]
 
 
 def _parsed_files(root: Path) -> list[tuple[str, ast.Module]]:
@@ -537,7 +584,7 @@ def _env_drops_framework_tables(project: Project) -> list[str]:
     """
     affected = []
     for env in sorted(project.root.rglob("migrations/env.py")):
-        if any(part in SKIP_DIRS for part in env.parts):
+        if _skipped(env, project.root):
             continue
         try:
             source = env.read_text(encoding="utf-8")
@@ -561,9 +608,21 @@ def _token_store_implementations(project: Project) -> list[str]:
             if (
                 isinstance(statement, ast.AsyncFunctionDef | ast.FunctionDef)
                 and statement.name == "rotate_refresh"
+                # Already migrated: the grace keyword is the half of the new
+                # protocol a signature shows. A store fixed before the pin was
+                # bumped is not told to do what it has done.
+                and not _takes_argument(statement, "grace")
             ):
                 affected.append(f"{where}:{statement.lineno}  ->  {node.name}.rotate_refresh")
     return affected
+
+
+def _takes_argument(function: ast.AsyncFunctionDef | ast.FunctionDef, name: str) -> bool:
+    arguments = function.args
+    return any(
+        argument.arg == name
+        for argument in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+    )
 
 
 def _refresh_grace_unset(project: Project) -> list[str]:
@@ -728,14 +787,40 @@ def _globs_that_narrowed(project: Project) -> list[str]:
         if not path.is_file():
             continue
         relative = path.relative_to(project.root).as_posix()
-        if any(part in {".venv", "__pycache__", ".git"} for part in path.parts):
+        if any(
+            part in {".venv", "__pycache__", ".git"}
+            for part in path.relative_to(project.root).parts
+        ):
             continue
-        for layer, patterns in sorted(layers.items()):
-            was = any(fnmatch(relative, p) for p in patterns)
-            now = any(match_path(relative, p) for p in patterns)
-            if was and not now:
-                lost.append(f"{relative} (was layer {layer!r})")
+        # The layer each matcher *resolves* the file to, not each layer on its
+        # own: a screaming contract's catch-all also matched `use_cases/*.py`
+        # under fnmatch, but the more specific use_cases layer won then and wins
+        # now, so nothing changed hands.
+        was = _resolve_layer(layers, relative, fnmatch)
+        now = _resolve_layer(layers, relative, match_path)
+        if was is not None and was != now:
+            now_text = "no layer" if now is None else f"layer {now!r}"
+            lost.append(f"{relative} (was layer {was!r})  ->  {now_text}")
     return sorted(lost)
+
+
+def _resolve_layer(
+    layers: dict[str, list[str]], relative: str, matches: Callable[[str, str], bool]
+) -> str | None:
+    """The layer `Contract.layer_for` would pick for *relative* under *matches*.
+
+    Its specificity rule, restated so it can run under the old matcher too:
+    fewest wildcards, then the longer pattern, then the layer name.
+    """
+    best: tuple[int, int, str] | None = None
+    for name, patterns in layers.items():
+        for pattern in patterns:
+            if not matches(relative, pattern):
+                continue
+            candidate = (-sum(pattern.count(char) for char in "*?["), len(pattern), name)
+            if best is None or candidate > best:
+                best = candidate
+    return best[2] if best else None
 
 
 def _naive_datetimes(project: Project) -> list[str]:
@@ -779,7 +864,9 @@ def _session_store_missing(project: Project) -> list[str]:
     """
     if not _issues_tokens(project):
         return []
-    if "cache" in project.plugins:
+    # Resolved, not read off the list: `ratelimit` requires `cache`, and the
+    # registry loads it unasked -- so auth finds `cache.client` and never refuses.
+    if "cache" in _active_plugins(project):
         return []
     return ['[plugins] enabled has "auth" with issue_tokens = true and no "cache"']
 
@@ -818,11 +905,22 @@ def _rag_without_tenant_scope(project: Project) -> list[str]:
 
 
 def _rag_router_default(project: Project) -> list[str]:
-    """A rag service that relied on the router being mounted by default."""
+    """A rag service whose router moved: gone by default, or behind auth when kept.
+
+    Only an explicit ``false`` means nothing is left to do. ``true`` was legal in
+    0.1.0a9 without auth; 0.1.0a10 refuses to start it that way, and with auth
+    the router wants a signed-in caller and ignores the tenant in the body.
+    """
     rag = _rag_settings(project)
-    if rag is None or "mount_router" in rag:
+    if rag is None or rag.get("mount_router") is False:
         return []
-    return ["[plugin.rag] mount_router now defaults to false (POST /rag/search is gone)"]
+    if "mount_router" not in rag:
+        return ["[plugin.rag] mount_router now defaults to false (POST /rag/search is gone)"]
+    auth = "" if "auth" in _active_plugins(project) else ", and auth is not enabled"
+    return [
+        "[plugin.rag] mount_router = true: the router now needs a signed-in caller and takes "
+        f"the tenant from the token{auth}"
+    ]
 
 
 def _rag_on_qdrant(project: Project) -> list[str]:
@@ -871,7 +969,25 @@ def _module_boundary_violations(project: Project) -> list[str]:
         f"{v.path}:{v.line} {v.rule}: {v.message}"
         for v in check_placement(contract, project.root)
         if v.rule in _NEW_BOUNDARY_RULES
+        or (v.rule == _CROSS_MODULE and _widened_cross_module(project.root, v.path, v.line))
     ][:20]
+
+
+_CROSS_MODULE = "cross-module"
+
+
+def _widened_cross_module(root: Path, relative: str, line: int) -> bool:
+    """A `cross-module` finding on a spelling the rule only catches since 0.1.0a10.
+
+    Relative imports across modules, and the second and later names in
+    `import a, b`. An absolute `from modules.x import y` failed 0.1.0a9's check
+    as well, so it is not news to the project -- but these passed yesterday.
+    """
+    try:
+        text = (root / relative).read_text(encoding="utf-8").splitlines()[line - 1].strip()
+    except (OSError, IndexError):
+        return False
+    return text.startswith("from .") or (text.startswith("import ") and "," in text)
 
 
 def _screaming_contract_without_public_layer(project: Project) -> list[str]:
@@ -898,6 +1014,8 @@ def _direct_calls_to_async_dependencies(project: Project) -> list[str]:
     ``require_auth(request)`` in a service factory -- now returns a coroutine,
     and the first attribute read on it fails.
     """
+    from jfastframework.contracts._scan import call_name, import_aliases, resolve
+
     found = []
     for relative, tree in _parsed_files(project.root):
         awaited = {
@@ -905,13 +1023,20 @@ def _direct_calls_to_async_dependencies(project: Project) -> list[str]:
             for node in ast.walk(tree)
             if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
         }
-        found += [
-            f"{relative}:{node.lineno} {_called_name(node.func)}(...)"
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and _called_name(node.func) in _NOW_ASYNC
-            and id(node) not in awaited
-        ]
+        aliases = import_aliases(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or id(node) in awaited:
+                continue
+            # Resolved through the file's imports: `current_tenant` is a name any
+            # multi-tenant codebase may already have, and a helper of its own
+            # never became a coroutine.
+            written = call_name(node)
+            origin = resolve(written, aliases) if written else None
+            if origin is None or not origin.startswith("jfastframework."):
+                continue
+            name = origin.rsplit(".", 1)[-1]
+            if name in _NOW_ASYNC:
+                found.append(f"{relative}:{node.lineno} {name}(...)")
     return found
 
 
@@ -926,16 +1051,24 @@ def _sync_request_factories(project: Project) -> list[str]:
     for relative, tree in _parsed_files(project.root):
         if not relative.startswith("modules/"):
             continue
-        for node in ast.walk(tree):
+        # The module's own body: a dependency is a module-level function. A
+        # `get_service` method is ordinary Python that FastAPI never calls, and
+        # making it `async` -- the remedy -- breaks every caller.
+        for node in tree.body:
             if isinstance(node, ast.FunctionDef) and node.name in ("get_service", "get_use_cases"):
                 found.append(f"{relative}:{node.lineno} def {node.name}")
     return found
 
 
 def _metrics_enabled(project: Project) -> list[str]:
-    if "metrics" not in project.plugins:
+    """Metrics as the registry resolves it: `disabled` wins, an empty list loads it."""
+    if "metrics" not in _active_plugins(project):
         return []
-    return ["[plugins] enabled includes metrics"]
+    if "metrics" in project.plugins:
+        return ["[plugins] enabled includes metrics"]
+    if not project.plugins:
+        return ["[plugins] enabled is empty, so metrics loads by default"]
+    return ["metrics loads as a dependency of another enabled plugin"]
 
 
 def _job_timeout_past_the_claim(project: Project) -> list[str]:

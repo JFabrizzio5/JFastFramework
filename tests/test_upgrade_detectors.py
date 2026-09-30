@@ -18,9 +18,8 @@ Both are registered by change code, and
 the registry with the manifest: a note added to `upgrades.py` without both
 fixtures fails here instead of shipping untested.
 
-Where a detector is wrong, the test states the correct behaviour and is marked
-as a strict xfail naming the bug. Fixing the detector turns it into an
-unexpected pass, which is the cue to drop the marker.
+Where a detector was wrong, a test states the correct behaviour on the
+smallest project that showed the bug, so the fix cannot quietly come undone.
 
 Everything runs through `report`, which takes the same steps as the command:
 read the pin, load the project, ask `applicable` for the range. Nothing here
@@ -161,10 +160,6 @@ def _the_dependency_passed_to_depends(root: Path) -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: flags any call named current_tenant, not only the framework's",
-)
 def test_a_projects_own_current_tenant_helper_is_not_mistaken_for_the_framework_one(
     tmp_path: Path,
 ) -> None:
@@ -225,10 +220,6 @@ def _the_same_factories_made_async(root: Path) -> None:
     edit(root / HEXAGONAL_HTTP, "def get_use_cases", "async def get_use_cases")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: flags a get_service method on a class, which FastAPI never calls",
-)
 def test_a_method_named_get_service_is_not_a_request_factory(tmp_path: Path) -> None:
     """The threadpool hop is paid by a module-level dependency, not by a method.
 
@@ -294,10 +285,6 @@ def _the_same_service_without_metrics(root: Path) -> None:
     edit(root / "jfast.toml", ', "metrics"]', "]")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: reads [plugins].enabled literally; an empty list loads metrics",
-)
 def test_metrics_loaded_by_default_is_reported(tmp_path: Path) -> None:
     """An empty allow-list loads every `default_enabled` plugin, metrics among them.
 
@@ -308,10 +295,6 @@ def test_metrics_loaded_by_default_is_reported(tmp_path: Path) -> None:
     assert "metrics-route-labels" in report(tmp_path)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: ignores [plugins].disabled, which always wins over enabled",
-)
 def test_metrics_named_in_disabled_is_not_reported(tmp_path: Path) -> None:
     """`disabled` is the documented way to strip monitoring without editing code."""
     _a_service_with_metrics_enabled(tmp_path)
@@ -367,10 +350,6 @@ def _rag_router_note_with_rag_off(root: Path) -> None:
     without_rag(root)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: any explicit mount_router silences it, true included",
-)
 def test_a_router_mounted_on_purpose_without_auth_is_reported(tmp_path: Path) -> None:
     """The project this change breaks hardest, and the one the detector skips.
 
@@ -494,10 +473,6 @@ def _the_same_modules_with_no_contract(root: Path) -> None:
     (root / "contracts.toml").unlink()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: skips cross-module, which 0.1.0a10 widened to relative imports",
-)
 def test_a_relative_import_across_modules_is_reported(tmp_path: Path) -> None:
     """The note's own detail says `cross-module` now catches relative imports.
 
@@ -588,10 +563,6 @@ def _the_glob_widened_to_double_star(root: Path) -> None:
     edit(root / "contracts.toml", "modules/*/handlers.py", "modules/**/handlers.py")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: compares layer by layer, not the layer each file resolves to",
-)
 def test_a_file_its_own_layer_still_claims_did_not_change_hands(tmp_path: Path) -> None:
     """The screaming contract's shape: a domain catch-all and a use_cases layer.
 
@@ -927,10 +898,6 @@ def _an_issuer_on_the_shipped_stores(root: Path) -> None:
     token_issuer(root)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: flags a store already migrated to the grace keyword",
-)
 def test_a_token_store_already_on_the_new_protocol_is_not_reported(tmp_path: Path) -> None:
     """A project fixes its store first and bumps the pin second.
 
@@ -970,10 +937,6 @@ def _the_same_issuer_with_the_cache_plugin(root: Path) -> None:
 unaffected_by("session-store-per-process")(only_verifies_tokens)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: misses cache pulled in by another plugin's requires",
-)
 def test_cache_pulled_in_by_ratelimit_counts_as_a_shared_store(tmp_path: Path) -> None:
     """`ratelimit` requires `cache`, and the registry loads it without being asked.
 
@@ -1103,10 +1066,6 @@ def _the_same_routes_on_the_scoped_aliases(root: Path) -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="detector bug: SKIP_DIRS is matched against absolute path parts",
-)
 def test_a_project_inside_a_folder_named_build_is_still_read(tmp_path: Path) -> None:
     """`_python_files` tests every part of the absolute path against SKIP_DIRS.
 

@@ -87,10 +87,15 @@ ROOT_FILES = frozenset(
 
 
 def _python_files(directory: Path) -> list[Path]:
-    """Every `.py` under *directory*, skipping the noise directories."""
+    """Every `.py` under *directory*, skipping the noise directories.
+
+    The parts below *directory*, not the absolute path: a project checked out
+    at `~/build/billing` is still a project, and testing the absolute parts
+    skipped every file in it.
+    """
     found: list[Path] = []
     for path in sorted(directory.rglob("*.py")):
-        if any(part in SKIP_DIRS for part in path.parts):
+        if any(part in SKIP_DIRS for part in path.relative_to(directory).parts):
             continue
         found.append(path)
     return found
