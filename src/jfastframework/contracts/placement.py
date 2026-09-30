@@ -749,6 +749,11 @@ def check_placement(contract: Contract, root: Path) -> list[Violation]:
         for table in found.values():
             owners.setdefault(table.lower(), module)
     wiring = Wiring()
+    modules_dir = root / "modules"
+    if modules_dir.is_dir():
+        wiring.modules = {
+            p.name for p in modules_dir.iterdir() if p.is_dir() and not p.name.startswith("_")
+        }
     for scanned in files:
         scan_tree(scanned.tree, scanned.relative, scanned.lines, wiring)
 

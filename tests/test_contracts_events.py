@@ -205,6 +205,34 @@ def test_queuing_another_modules_task_by_name_is_an_undeclared_dependency(
     assert "@subscribe" in violation.why and "event" in violation.why
 
 
+def test_a_task_registered_outside_the_module_is_owned_by_its_name_prefix(
+    tmp_path: Path,
+) -> None:
+    # The real 0.1.0a10 Cuadra: the handler is registered in a root worker.py,
+    # so no module declares it with @task. The name's prefix still says whose
+    # it is -- otherwise the coupling this rule exists for is invisible.
+    contract, root = build(
+        tmp_path,
+        {
+            "modules/comprobante/services.py": QUEUES_BY_NAME,
+            "worker.py": "tareas.task('alerta.revisar_presupuesto')(revisar)\n",
+        },
+        extra=DECLARED,
+    )
+    [violation] = check_placement(contract, root)
+    assert violation.rule == "undeclared-dependency"
+    assert "module 'alerta' owns" in violation.message
+
+
+def test_a_prefix_that_is_no_module_owns_nothing(tmp_path: Path) -> None:
+    contract, root = build(
+        tmp_path,
+        {"modules/comprobante/services.py": QUEUES_BY_NAME.replace("alerta.", "correo.")},
+        extra=DECLARED,
+    )
+    assert rules(contract, root) == []
+
+
 def test_declared_it_is_an_edge_that_can_close_a_cycle(tmp_path: Path) -> None:
     # The Cuadra shape: alerta reads comprobante's facade, comprobante queues
     # alerta's task. Declared both ways, it is a cycle, and it is reported.
