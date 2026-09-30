@@ -6,6 +6,16 @@ client, for anything the facade does not cover).
 Convention inherited from the CometaX stack: DB 0 = cache, DB 1 = pub/sub,
 DB 2 = queue. One Redis container, three logical namespaces.
 
+Every command has a deadline and the client has a circuit breaker, both on by
+default. Redis that stops answering -- paused, partitioned, swapping -- used to
+hold each request for as long as the socket lived, because redis-py sets no
+read timeout; now a command gives up after ``command_timeout`` and, after
+``breaker_failures`` of those in a row, every caller fails in microseconds
+until ``breaker_cool_down`` has passed and one probe finds Redis back. Blocking
+commands (``BLMOVE``, ``BLPOP``, ``XREAD``...) and pub/sub are exempt: waiting
+is what they are for, and the queue and ``channels`` read them from this same
+client. See docs/resilience.md.
+
 ``get_or_set`` is the resilient read path and the one to reach for: it absorbs
 a backend failure by falling back to the loader, which is what makes
 ``health_critical=False`` an honest claim. The primitives below it --
@@ -27,6 +37,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_settings import SettingsConfigDict
 
+from jfastframework.errors import PluginError
+from jfastframework.http.resilience import BreakerPolicy, CircuitBreaker
 from jfastframework.plugins.base import (
     HealthReport,
     InfraService,
@@ -63,9 +75,61 @@ class CacheSettings(PluginSettings):
     # loading for itself. Zero disables the lock entirely.
     stampede_wait: float = 2.0
 
+    # -- deadlines -----------------------------------------------------
+    # Seconds to open a TCP connection. A Redis on the same network answers a
+    # SYN in well under a millisecond; two seconds covers a cold container and
+    # DNS, and anything slower is a Redis that is not there.
+    connect_timeout: float = 2.0
+    # Seconds one command may take, connecting included. A cache read slower
+    # than this costs more than the recompute it saves, and the rate limiter
+    # and the token store sit in front of every request. Blocking commands and
+    # pub/sub are exempt. 0 turns the deadline off.
+    command_timeout: float = 2.0
+    # Consecutive failures (timeouts, refused or dropped connections) that
+    # open the breaker. While it is open no command is sent: callers get a
+    # `CircuitOpenError` -- a 503 if it escapes a route, "Redis is down" to
+    # the code that already fails open -- instead of each waiting out
+    # `command_timeout` on a Redis that is not answering. 0 turns it off.
+    breaker_failures: int = 5
+    # Seconds the breaker stays open before letting one probe through. Short,
+    # because a cache is cheap to probe and expensive to go without.
+    breaker_cool_down: float = 5.0
+
     include_infra: bool = True
     image: str = "redis:7-alpine"
     port_offset: int = 3
+
+    def validate_for_boot(self) -> None:
+        """Every value that would otherwise fail on the first command, refused now."""
+        scheme = self.url.partition("://")[0].lower()
+        if scheme not in ("redis", "rediss", "unix"):
+            raise PluginError(
+                f"[plugin.cache] url must start with redis://, rediss:// or unix://, "
+                f"not {self.url.split('@')[-1]!r}. Set JFAST_CACHE_URL."
+            )
+        if self.default_ttl < 0:
+            raise PluginError(
+                "[plugin.cache] default_ttl cannot be negative; use 0 to store without expiry."
+            )
+        if self.stampede_lock_ttl < 1:
+            raise PluginError(
+                "[plugin.cache] stampede_lock_ttl must be at least 1 second: Redis "
+                "cannot expire a lock in less, and 0 would hold it forever."
+            )
+        if self.stampede_wait < 0:
+            raise PluginError("[plugin.cache] stampede_wait cannot be negative; 0 disables it.")
+        if self.connect_timeout <= 0:
+            raise PluginError(
+                "[plugin.cache] connect_timeout must be positive: without one a "
+                "connect to an unreachable Redis waits for the operating system."
+            )
+        if self.command_timeout < 0 or self.breaker_failures < 0:
+            raise PluginError(
+                "[plugin.cache] command_timeout and breaker_failures cannot be "
+                "negative; 0 turns each off."
+            )
+        if self.breaker_cool_down <= 0:
+            raise PluginError("[plugin.cache] breaker_cool_down must be positive.")
 
 
 class CacheMetrics:
@@ -300,6 +364,134 @@ class Cache:
         return _MISS
 
 
+#: Commands that wait on purpose: a deadline would cut a queue's long poll or a
+#: stream read short. Pub/sub does not go through ``execute_command`` at all.
+BLOCKING_COMMANDS = frozenset(
+    {
+        "BLPOP",
+        "BRPOP",
+        "BRPOPLPUSH",
+        "BLMOVE",
+        "BLMPOP",
+        "BZPOPMIN",
+        "BZPOPMAX",
+        "BZMPOP",
+        "XREAD",
+        "XREADGROUP",
+        "WAIT",
+        "WAITAOF",
+        "MONITOR",
+    }
+)
+
+_CLIENT_CLASS: Any = None
+_OPEN_ERROR: Any = None
+
+
+def _redis_classes() -> tuple[Any, Any]:
+    """The bounded client and its circuit-open error, built on first use.
+
+    Built lazily so importing this module does not import redis: the plugin
+    only needs it once it is enabled, and ``jfast describe`` should not.
+    """
+    global _CLIENT_CLASS, _OPEN_ERROR
+    if _CLIENT_CLASS is not None:
+        return _CLIENT_CLASS, _OPEN_ERROR
+
+    import redis.asyncio as aioredis
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    from jfastframework.http.errors import CircuitOpenError
+
+    class RedisCircuitOpenError(CircuitOpenError, RedisConnectionError):  # type: ignore[misc]
+        """The cache breaker is open. Both a 503 and a ``redis.ConnectionError``.
+
+        A 503 so a route that lets it escape answers ``Service Unavailable``;
+        a redis ``ConnectionError`` so code written against redis-py --
+        ``except RedisError`` -- treats it as the outage it stands for.
+        """
+
+    class BoundedRedis(aioredis.Redis):  # type: ignore[misc]
+        """redis-py's client with a deadline per command and a breaker around it."""
+
+        jfast_command_timeout: float = 0.0
+        jfast_breaker: CircuitBreaker | None = None
+
+        async def execute_command(self, *args: Any, **options: Any) -> Any:
+            name = str(args[0]).upper() if args else ""
+            breaker = self.jfast_breaker
+            timeout = self.jfast_command_timeout
+            if name in BLOCKING_COMMANDS or (breaker is None and not timeout):
+                return await super().execute_command(*args, **options)
+
+            permit = None
+            if breaker is not None:
+                try:
+                    permit = breaker.acquire()
+                except CircuitOpenError as exc:
+                    raise RedisCircuitOpenError(
+                        upstream=breaker.name, retry_after=exc.retry_after
+                    ) from None
+            try:
+                if timeout:
+                    try:
+                        async with asyncio.timeout(timeout):
+                            result = await super().execute_command(*args, **options)
+                    except TimeoutError as exc:
+                        # redis-py's own class, so `except RedisError` sees it.
+                        # The cancelled connection was already dropped by
+                        # redis-py; the next command opens a fresh one.
+                        raise RedisTimeoutError(
+                            f"redis did not answer {name} within {timeout}s"
+                        ) from exc
+                else:
+                    result = await super().execute_command(*args, **options)
+            except (RedisConnectionError, RedisTimeoutError, OSError):
+                if breaker is not None and permit is not None:
+                    breaker.record(permit, failed=True)
+                raise
+            except asyncio.CancelledError:
+                if breaker is not None and permit is not None:
+                    breaker.release(permit)
+                raise
+            except Exception:
+                # WRONGTYPE, NOSCRIPT, a script error: Redis answered, which is
+                # all the breaker is asked to know.
+                if breaker is not None and permit is not None:
+                    breaker.record(permit, failed=False)
+                raise
+            if breaker is not None and permit is not None:
+                breaker.record(permit, failed=False)
+            return result
+
+    _CLIENT_CLASS, _OPEN_ERROR = BoundedRedis, RedisCircuitOpenError
+    return _CLIENT_CLASS, _OPEN_ERROR
+
+
+def build_client(settings: CacheSettings, *, name: str = "redis") -> Any:
+    """A redis client with the deadlines and breaker ``settings`` describe."""
+    client_class, _ = _redis_classes()
+    client = client_class.from_url(
+        settings.url,
+        decode_responses=True,
+        socket_connect_timeout=settings.connect_timeout,
+        # Keepalive so a connection the network silently dropped is found by
+        # the kernel rather than by the next request that borrows it.
+        socket_keepalive=True,
+    )
+    client.jfast_command_timeout = settings.command_timeout
+    if settings.breaker_failures:
+        client.jfast_breaker = CircuitBreaker(
+            name,
+            BreakerPolicy(
+                failure_threshold=settings.breaker_failures,
+                cool_down=settings.breaker_cool_down,
+            ),
+        )
+    return client
+
+
 class CachePlugin(Plugin):
     meta = PluginMeta(
         name="cache",
@@ -323,11 +515,10 @@ class CachePlugin(Plugin):
         self._client: Any = None
 
     def register(self, ctx: AppContext) -> None:
-        import redis.asyncio as aioredis
-
         settings: CacheSettings = self.settings
+        settings.validate_for_boot()
         prefix = settings.key_prefix or f"{ctx.settings.app_name}:"
-        client = aioredis.from_url(settings.url, decode_responses=True)
+        client = build_client(settings)
 
         self._client = client
         ctx.provide("cache.client", client)
@@ -351,13 +542,17 @@ class CachePlugin(Plugin):
 
     async def health(self, ctx: AppContext) -> HealthReport:
         if self._client is None:
-            return HealthReport.fail("redis client not initialised")
+            return HealthReport.fail("redis client not initialised", critical=False)
+        breaker: CircuitBreaker | None = getattr(self._client, "jfast_breaker", None)
+        meta = {"breaker": breaker.snapshot()} if breaker is not None else {}
         try:
             await self._client.ping()
         except Exception as exc:  # noqa: BLE001
             # Cache being down degrades the service; it does not break it.
-            return HealthReport.fail(f"redis unreachable: {exc}", critical=False)
-        return HealthReport.ok("redis reachable")
+            if breaker is not None:
+                meta = {"breaker": breaker.snapshot()}
+            return HealthReport.fail(f"redis unreachable: {exc}", critical=False, **meta)
+        return HealthReport.ok("redis reachable", **meta)
 
     def infra(self, ctx: AppContext | None = None) -> list[InfraService]:
         settings: CacheSettings = self.settings
