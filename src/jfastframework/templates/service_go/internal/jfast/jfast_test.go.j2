@@ -159,7 +159,6 @@ func TestPanicsBecomeProblemJSONWithoutLeaking(t *testing.T) {
 	}
 }
 
-
 func newTestLogger() *slog.Logger {
 	// Discard output: a panic test that prints a stack trace on every run
 	// trains people to ignore the test output.

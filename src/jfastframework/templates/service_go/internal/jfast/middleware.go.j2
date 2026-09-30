@@ -67,20 +67,51 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+// logFields is what the middlewares further in learn about a request and the
+// access log line needs: the trace id and the resolved tenant. A pointer in
+// the context, because a context value set further in is invisible out here.
+type logFields struct {
+	traceID  string
+	tenantID string
+}
+
+const logFieldsKey contextKey = "jfast_log_fields"
+
+func logFieldsFrom(ctx context.Context) *logFields {
+	fields, _ := ctx.Value(logFieldsKey).(*logFields)
+	return fields
+}
+
+// AccessLog writes one line per request, with the same field names as the
+// Python services: request_id, http_method, http_path, http_status,
+// duration_ms, plus trace_id and tenant_id when the request has them.
 func AccessLog(logger *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			started := time.Now()
 			recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(recorder, r)
+			fields := &logFields{}
+			// Trace may also run outside this middleware; then it is already
+			// in the context.
+			if trace, ok := TraceFrom(r.Context()); ok {
+				fields.traceID = trace.TraceID
+			}
+			next.ServeHTTP(recorder, r.WithContext(context.WithValue(r.Context(), logFieldsKey, fields)))
 
-			logger.Info("request",
+			attrs := []any{
 				"request_id", RequestIDFrom(r.Context()),
 				"http_method", r.Method,
 				"http_path", r.URL.Path,
 				"http_status", recorder.status,
-				"duration_ms", float64(time.Since(started).Microseconds())/1000.0,
-			)
+				"duration_ms", float64(time.Since(started).Microseconds()) / 1000.0,
+			}
+			if fields.traceID != "" {
+				attrs = append(attrs, "trace_id", fields.traceID)
+			}
+			if fields.tenantID != "" {
+				attrs = append(attrs, "tenant_id", fields.tenantID)
+			}
+			logger.Info("request", attrs...)
 		})
 	}
 }

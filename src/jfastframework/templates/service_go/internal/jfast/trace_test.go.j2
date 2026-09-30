@@ -1,0 +1,136 @@
+package jfast
+
+import (
+	"bytes"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+const validTraceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+func TestValidTraceparentIsParsed(t *testing.T) {
+	trace, ok := ParseTraceparent(validTraceparent)
+	if !ok {
+		t.Fatal("a valid traceparent was refused")
+	}
+	if trace.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" || trace.ParentID != "00f067aa0ba902b7" || !trace.Sampled() {
+		t.Fatalf("trace = %+v", trace)
+	}
+}
+
+func TestInvalidTraceparentsAreIgnored(t *testing.T) {
+	for name, value := range map[string]string{
+		"empty":            "",
+		"version ff":       "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		"unknown version":  "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		"zero trace id":    "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+		"zero parent id":   "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+		"uppercase hex":    "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
+		"short trace id":   "00-4bf92f3577b34da6a3ce929d0e0e473-00f067aa0ba902b7-01",
+		"not hex":          "00-4bf92f3577b34da6a3ce929d0e0e473z-00f067aa0ba902b7-01",
+		"wrong separator":  "00_4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		"trailing garbage": validTraceparent + "-extra",
+		"flags not hex":    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-0g",
+	} {
+		if _, ok := ParseTraceparent(value); ok {
+			t.Errorf("%s: %q accepted", name, value)
+		}
+	}
+}
+
+func TestTraceIsPropagatedUnchangedToTheNextHop(t *testing.T) {
+	var seen http.Header
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Clone()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer downstream.Close()
+
+	client := &http.Client{Transport: PropagatingTransport{}}
+	handler := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, downstream.URL, nil)
+		response, err := client.Do(out)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		response.Body.Close()
+		w.WriteHeader(http.StatusOK)
+	}), RequestID, Trace)
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(RequestIDHeader, "req-1")
+	request.Header.Set(TraceparentHeader, validTraceparent)
+	request.Header.Set(TracestateHeader, "vendor=abc,other=def")
+	request.Header.Set("X-Tenant-ID", "acme")
+	request.Header.Set("Authorization", "Bearer inbound-token")
+	serve(handler, request)
+
+	if seen.Get(TraceparentHeader) != validTraceparent {
+		t.Fatalf("traceparent = %q, want it unchanged", seen.Get(TraceparentHeader))
+	}
+	if seen.Get(TracestateHeader) != "vendor=abc,other=def" {
+		t.Fatalf("tracestate = %q", seen.Get(TracestateHeader))
+	}
+	if seen.Get(RequestIDHeader) != "req-1" {
+		t.Fatalf("request id = %q", seen.Get(RequestIDHeader))
+	}
+	if seen.Get("X-Tenant-ID") != "" || seen.Get("Authorization") != "" {
+		t.Fatal("tenant or authorization forwarded; Python forwards neither by default")
+	}
+}
+
+func TestInvalidTraceparentIsNotPropagated(t *testing.T) {
+	out := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler := Trace(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		Propagate(r.Context(), out)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(TraceparentHeader, "00-00000000000000000000000000000000-00f067aa0ba902b7-01")
+	request.Header.Set(TracestateHeader, "vendor=abc")
+	serve(handler, request)
+
+	if out.Header.Get(TraceparentHeader) != "" || out.Header.Get(TracestateHeader) != "" {
+		t.Fatalf("an invalid trace context was propagated: %v", out.Header)
+	}
+}
+
+func TestCallerHeadersWinOverPropagation(t *testing.T) {
+	out := httptest.NewRequest(http.MethodGet, "/", nil)
+	out.Header.Set(RequestIDHeader, "chosen-by-caller")
+	handler := Chain(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		Propagate(r.Context(), out)
+	}), RequestID)
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(RequestIDHeader, "inbound")
+	serve(handler, request)
+
+	if out.Header.Get(RequestIDHeader) != "chosen-by-caller" {
+		t.Fatalf("request id = %q", out.Header.Get(RequestIDHeader))
+	}
+}
+
+func TestAccessLogCarriesTraceAndTenant(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buffer, nil))
+	auth := newTestAuth(t, secretConfig())
+	handler := Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), RequestID, AccessLog(logger), Trace, Authenticate(auth))
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(TraceparentHeader, validTraceparent)
+	request.Header.Set("Authorization", "Bearer "+mint(t, "HS256", []byte(testSecret), validClaims()))
+	serve(handler, request)
+
+	line := buffer.String()
+	if !strings.Contains(line, `"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"`) {
+		t.Fatalf("no trace_id in %s", line)
+	}
+	if !strings.Contains(line, `"tenant_id":"acme"`) {
+		t.Fatalf("no tenant_id in %s", line)
+	}
+}

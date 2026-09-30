@@ -284,8 +284,48 @@ that apply to your project, with file and line, and the remedy.
   Windows does, for the whole suite. Against the pre-fix JWKS code it failed
   16 of 30 runs; with it on, the concurrency suites passed 10 of 10.
 
+### Added -- Go services in a Python workspace
+
+"Contract yes, framework no": the Go scaffold gets what a Go service needs to
+sit next to Python ones -- still standard library only, all of it plain
+`net/http` middleware that wraps a Gin, Echo or Chi engine as it is.
+
+- **Go services propagate trace context.** `traceparent`/`tracestate` are
+  validated (W3C version 00; an invalid one is dropped with its state), logged
+  as `trace_id`, and passed on unchanged with `X-Request-ID` by
+  `jfast.Propagate` / `jfast.PropagatingTransport`. No spans are created; the
+  README shows `otelhttp` as the user's own choice.
+- **Go services verify the workspace's JWTs and resolve the tenant**, with the
+  Python plugins' variable names and rules: `JFAST_AUTH_*` in `secret`
+  (HS256/384/512) or `public_key` (RS256/384/512, ES256/384) mode, algorithms
+  pinned by configuration, `exp`/`iat`/`sub` required, `nbf`, `iss` and `aud`
+  checked with the same 30 s leeway, refresh tokens refused as bearers, and
+  the same boot-time refusals; `JFAST_TENANCY_*` sources in the same order of
+  trust. `RequireAuth`, `RequireScopes`, `RequireRoles` (401/403) and
+  `RequireTenant` (401 without a session, 403 without a tenant), with
+  `ClaimsFrom(ctx)` and `TenantFrom(ctx)`; the tenant is in the access log.
+  Off unless configured. `jwks` mode refuses to start and names a library.
+  **Revocation is not checked**: a revoked access token works against a Go
+  service until it expires (15 minutes by default); the service says so at
+  every start.
+- The sample module partitions its store by tenant, and works unchanged with
+  auth and tenancy off.
+- **The PostgreSQL queue's format is documented for other languages**
+  (`docs/service-contract.md`, "Consuming the queue from another language"):
+  the `jfast_jobs` columns and states, the claim, ack, retry, dead and release
+  statements, the event envelope, and what a consumer must do to be safe. A
+  documented format, not a supported client: there is no Go worker.
+- `tests/test_go_service.py`: tokens minted by the auth plugin's own
+  `TokenIssuer` (HS256 and RS256) are accepted by the generated service's
+  middleware under a real Go toolchain and resolve the same tenant a JFast app
+  resolves; refresh and expired tokens get 401 on both sides; a `traceparent`
+  reaches the Go service's outgoing call unchanged. `scripts/smoke_go.sh` also
+  runs the binary with Python-minted tokens (tenant isolation, `trace_id` and
+  `tenant_id` in the log, `jwks` refused) and checks `gofmt`.
+
 ### Added -- CI
 
+- The `go` job also runs the cross-language test above.
 - Jobs for the generated-project gates, the upgrade smoke, the concurrency
   suites on a Windows-grained clock, RLS behind a pinned PgBouncer
   (`edoburu/pgbouncer:v1.25.2-p0`), and spans exported over OTLP and read
@@ -438,6 +478,14 @@ produces it.
   base branch instead -- a step not yet run in CI; the telemetry plugin as a
   budgeted scenario; `jfast bench` naming the saturated dependency beyond
   `/ready`, and a mocked-model scenario.
+- **Go, not verified:** a Go service behind the gateway or in `jfast
+  workspace compose` with auth on (the values reach it only through its own
+  `.env`, as for a Python service); ES256/ES384 against Python-minted tokens
+  (only Go-minted); tokens from a real identity provider; a Go consumer of the
+  queue table (only documented); the Gin/Echo/Chi wrapping shown in the docs
+  (not compiled here, since the scaffold has no dependencies to try it with).
+  The cross-language test and the extended smoke have run locally in
+  `golang:1.23`, not yet in CI.
 - **Found, not fixed:** a 405's problem+json response drops the `Allow`
   header.
 - **The MinIO CI job runs a community fork** (`pgsty/minio`): MinIO stopped

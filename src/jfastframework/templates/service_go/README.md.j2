@@ -28,23 +28,125 @@ the Python services satisfy:
 | `GET /ready` | Readiness. 503 when a critical dependency is down, `degraded` when a non-critical one is. |
 | `GET /info` | Inventory. Absent when `JFAST_ENV=prod`. |
 | `X-Request-ID` | Reused from the caller, minted when absent, echoed, logged. |
+| `traceparent` / `tracestate` | W3C trace context: validated, logged as `trace_id`, passed on unchanged. |
 | Errors | `application/problem+json` — same shape the Python services emit. |
 | Config | `JFAST_*` environment variables. |
+| Auth (optional) | The workspace's JWTs, verified with the Python `auth` plugin's rules and variable names. |
+| Tenancy (optional) | The tenant, resolved in the Python `tenancy` plugin's order of trust. |
 
 That contract is why the gateway routes to this service without knowing it is
 Go, the workspace allocates its port block, and Caddy fronts it alongside
 everything else.
 
+## Contract yes, framework no
+
+`internal/jfast/` is what this service needs to be a good citizen of a
+workspace whose other services are Python: the endpoints, the headers, the
+error shape, the tokens and the tenant. It is not a Go framework. Bring your
+own router, ORM and workers.
+
+Everything in it is standard `net/http` middleware
+(`func(http.Handler) http.Handler`), so it wraps whatever router you pick --
+gin, echo and chi engines are all `http.Handler`s:
+
+```go
+engine := gin.New()                       // or echo.New(), chi.NewRouter()
+handler := jfast.Chain(engine,
+    jfast.RequestID, jfast.AccessLog(logger), jfast.Trace,
+    jfast.Recover(logger, cfg), jfast.Authenticate(auth), jfast.ResolveTenant(tenancy),
+)
+```
+
+Inside a handler, read `jfast.ClaimsFrom(r.Context())` and
+`jfast.TenantFrom(r.Context())` (in gin, `c.Request.Context()`). Per-route
+guards are middleware too: `chi` takes them directly, echo through
+`echo.WrapMiddleware(jfast.RequireAuth)`.
+
+## Auth and tenancy
+
+Both are off until configured, like the Python plugins. Set the same
+variables the Python services read (see `.env.example`):
+
+```bash
+JFAST_AUTH_MODE=secret                # or public_key
+JFAST_AUTH_ALGORITHMS=["HS256"]
+JFAST_AUTH_SECRET=<the minting service's secret>
+JFAST_AUTH_AUDIENCE=<the aud it writes>
+JFAST_TENANCY_SOURCES=["token"]
+```
+
+Then guard routes:
+
+```go
+mux.Handle("GET /invoices", jfast.RequireTenant(http.HandlerFunc(list)))       // 401 / 403
+mux.Handle("POST /invoices", jfast.RequireScopes("invoices:write")(http.HandlerFunc(create)))
+```
+
+What is checked, exactly as in Python: the algorithm is pinned by
+configuration (never read from the token, `none` never accepted, HMAC and
+RSA/EC never mixed); `exp`, `iat` and `sub` are required; `exp`, `nbf` and
+`iat` are checked with a 30 s leeway; `iss` and `aud` are checked when
+configured; a refresh token (`typ: refresh`) is not a bearer. A bad token on
+an open route is ignored, not rejected; `RequireAuth` answers 401,
+`RequireTenant` 401 without a session and 403 without a tenant.
+
+What is **not** done here:
+
+- **Revocation.** The Python services look revoked token ids up in Redis on
+  every request; this service does not. A token revoked by a logout keeps
+  working here until it expires -- 15 minutes for an access token with the
+  Python defaults (`access_lifetime_minutes`). The service logs this at every
+  start when auth is on.
+- **JWKS.** `JFAST_AUTH_MODE=jwks` refuses to start: fetching, caching and
+  rotating keys is a library's job. Use
+  [`keyfunc`](https://github.com/MicahParks/keyfunc) with
+  [`golang-jwt`](https://github.com/golang-jwt/jwt), or pin the issuer's key
+  with `JFAST_AUTH_MODE=public_key`.
+- **Minting tokens.** That belongs to the service that owns the users.
+
+## Calling other services
+
+Forward the correlation headers on every outgoing call, or the trace breaks at
+this hop:
+
+```go
+client := &http.Client{Transport: jfast.PropagatingTransport{}}
+req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
+resp, err := client.Do(req)   // X-Request-ID, traceparent, tracestate added
+```
+
+`Authorization` is not forwarded (the Python client only does it for an
+upstream with `forward_authorization = true`); set it yourself when you mean to.
+
+## Tracing
+
+This service **passes trace context through**; it does not create spans. A
+span id minted here and never exported would be a parent nobody can find.
+For real spans, add OpenTelemetry yourself -- it is a dependency decision,
+which is yours:
+
+```go
+import "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
+handler = otelhttp.NewHandler(handler, "{{ service_slug }}")
+client := &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
+```
+
+with an OTLP exporter pointed at the same `OTEL_EXPORTER_OTLP_ENDPOINT` the
+Python services use. `otelhttp` reads and writes `traceparent` itself, so
+drop `jfast.PropagatingTransport` from clients you wrap with it.
+
 ## Layout
 
 ```
 main.go                    wiring and graceful shutdown
-internal/jfast/            the contract: config, health, problem+json, middleware
+internal/jfast/            the contract: config, health, problem+json, middleware,
+                           trace context, JWT verification, tenancy
 internal/modules/{{ module }}/  a domain module
 ```
 
 `internal/jfast/` is deliberately vendored rather than imported from a shared
-Go module. At two services it is 300 lines you can read; at ten, extract it
+Go module. At two services it is a few files you can read in one sitting; at ten, extract it
 into its own module and import it. Extracting early buys a versioning problem
 before there is anything to version.
 
@@ -75,6 +177,9 @@ Deliberate, not an oversight:
   service that owns the schema. Two languages writing migrations against one
   database is a coordination problem you do not want.
 - **No module generator beyond this one.** `jfast new module` targets Python.
+- **No queue worker.** The PostgreSQL queue's table format is documented in
+  the service contract ("Consuming the queue from another language"); a Go
+  consumer is yours to write, against its own table.
 
 Use Go where it earns its keep: a hot path, a long-lived connection handler, a
 binary you want to be 12MB. Use Python for the parts where the plugin system

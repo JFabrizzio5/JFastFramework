@@ -291,6 +291,11 @@ jobs:
       - run: pip install -e ".[all,dev]"
       - name: Generate, vet, test, build and run a Go service
         run: bash scripts/smoke_go.sh
+      # Tokens minted by the Python auth plugin, verified by the generated Go
+      # service; the tenant and the trace context compared across the hop.
+      # The main test job skips it: it has no Go toolchain.
+      - name: Cross-language auth, tenancy and trace context
+        run: python -m pytest -q tests/test_go_service.py
 
   # The image the generator writes, built and run against a real PostgreSQL.
   # Its own job because it needs Docker and a few minutes, and because four

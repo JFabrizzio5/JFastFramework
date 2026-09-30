@@ -299,8 +299,52 @@ los que aplican a tu proyecto, con archivo y línea, y el arreglo.
   falló 16 de 30 corridas; con él activo, las suites de concurrencia pasaron
   10 de 10.
 
+### Agregado -- servicios en Go en un workspace de Python
+
+"Contrato sí, framework no": el scaffold de Go recibe lo que un servicio en Go
+necesita para convivir con los de Python -- sigue siendo solo biblioteca
+estándar, todo middleware de `net/http` plano que envuelve tal cual un engine
+de Gin, Echo o Chi.
+
+- **Los servicios en Go propagan el trace context.** `traceparent`/`tracestate`
+  se validan (W3C versión 00; uno inválido se descarta con su state), se
+  loguean como `trace_id` y se pasan sin cambios, junto con `X-Request-ID`,
+  con `jfast.Propagate` / `jfast.PropagatingTransport`. No se crean spans; el
+  README muestra `otelhttp` como decisión del usuario.
+- **Los servicios en Go verifican los JWT del workspace y resuelven el
+  tenant**, con los nombres de variables y las reglas de los plugins de
+  Python: `JFAST_AUTH_*` en modo `secret` (HS256/384/512) o `public_key`
+  (RS256/384/512, ES256/384), algoritmos fijados por configuración,
+  `exp`/`iat`/`sub` obligatorios, `nbf`, `iss` y `aud` verificados con el
+  mismo leeway de 30 s, refresh tokens rechazados como bearer, y los mismos
+  rechazos al arrancar; fuentes `JFAST_TENANCY_*` en el mismo orden de
+  confianza. `RequireAuth`, `RequireScopes`, `RequireRoles` (401/403) y
+  `RequireTenant` (401 sin sesión, 403 sin tenant), con `ClaimsFrom(ctx)` y
+  `TenantFrom(ctx)`; el tenant va en el access log. Apagado salvo que se
+  configure. El modo `jwks` no arranca y nombra una librería. **La revocación
+  no se consulta**: un access token revocado sirve contra un servicio en Go
+  hasta que vence (15 minutos por default); el servicio lo dice en cada
+  arranque.
+- El módulo de ejemplo separa su store por tenant, y funciona igual con auth
+  y tenancy apagados.
+- **El formato de la cola de PostgreSQL está documentado para otros
+  lenguajes** (`docs/es/service-contract.md`, "Consumir la cola desde otro
+  lenguaje"): las columnas y estados de `jfast_jobs`, las sentencias de
+  claim, ack, reintento, muerte y release, el sobre del evento, y lo que un
+  consumidor debe hacer para ser seguro. Un formato documentado, no un
+  cliente soportado: no hay worker de Go.
+- `tests/test_go_service.py`: los tokens que emite el propio `TokenIssuer`
+  del plugin auth (HS256 y RS256) los acepta el middleware del servicio
+  generado bajo un toolchain de Go real y resuelven el mismo tenant que
+  resuelve una app JFast; refresh y vencidos reciben 401 de los dos lados; un
+  `traceparent` llega sin cambios a la llamada saliente del servicio en Go.
+  `scripts/smoke_go.sh` además corre el binario con tokens emitidos por
+  Python (aislamiento por tenant, `trace_id` y `tenant_id` en el log, `jwks`
+  rechazado) y revisa `gofmt`.
+
 ### Agregado -- CI
 
+- El job `go` también corre la prueba entre lenguajes de arriba.
 - Jobs para los controles de proyectos generados, el smoke de actualización,
   las suites de concurrencia con un reloj de grano Windows, RLS detrás de un
   PgBouncer fijado (`edoburu/pgbouncer:v1.25.2-p0`), y spans exportados por
@@ -472,6 +516,15 @@ produce.
   la última oficial, `RELEASE.2025-09-07T16-13-09Z`.
 - Trabajo largo de IA por la cola por defecto, recetas probadas y las tablas
   con RLS en `jfast ai context` no se empezaron.
+- **Go, sin verificar:** un servicio en Go detrás del gateway o en `jfast
+  workspace compose` con auth encendido (los valores le llegan solo por su
+  propio `.env`, igual que a uno de Python); ES256/ES384 contra tokens
+  emitidos por Python (solo emitidos por Go); tokens de un proveedor de
+  identidad real; un consumidor en Go de la tabla de la cola (solo
+  documentado); el envoltorio de Gin/Echo/Chi que muestran los docs (no se
+  compila aquí, porque el scaffold no tiene dependencias con qué probarlo). La
+  prueba entre lenguajes y el smoke extendido corrieron en local en
+  `golang:1.23`, todavía no en CI.
 
 ## [0.1.0a10] - 2026-09-29
 
