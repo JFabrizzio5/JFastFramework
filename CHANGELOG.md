@@ -78,8 +78,8 @@ One addition came with it: enums in `--fields`.
   settings) and `/queue/stats` open, console mail "sent" to stdout and no HSTS,
   with nothing in the log. `env` and `debug` describe the deployment, so
   `JFAST_ENV` and `JFAST_DEBUG` set in the process environment now win over
-  `[app] env` and `debug`; every other key still loses to the file, as
-  documented. A `.env` file read by the settings does not count (the generated
+  `[app] env` and `debug` -- and so does every other setting that depends on
+  where the service runs (next entry). A `.env` file read by the settings does not count (the generated
   `.env.example` says `JFAST_ENV=local`, and a copied one must not turn a
   committed `prod` off). A disagreement is a WARNING at boot. `jfast start`,
   `jfast new service` and the gateway no longer write `env` at all (the default
@@ -89,6 +89,39 @@ One addition came with it: enums in `--fields`.
   `/docs`, `/openapi.json`, `/info` and `/queue/stats` are 404, `/health` says
   `prod`, and console mail stops the boot. `jfast upgrade --check`:
   `jfast-env-wins-over-the-file`.
+- **`JFAST_MAIL_BACKEND=smtp`, `JFAST_LLM_BUDGET_USD` and
+  `JFAST_STORAGE_SERVE_LOCAL=false` were ignored under a `jfast.toml` that set
+  them.** The same help desk hit it after `JFAST_ENV`: every `[plugin.x]`
+  table beat the environment, so a production deployment kept the file's
+  console mail, its $10 cap and its Python file server, silently. The rule is
+  now **the environment wins for what depends on where the service runs; the
+  file keeps winning for the service's shape**, declared once in
+  `jfastframework.deployment_keys.DEPLOYMENT_KEYS` and read by the kernel and
+  every tool: `[app]` `env`, `debug`, `cors_origins`, `cors_origin_regex`,
+  `trusted_hosts`, `trusted_proxies`, `root_path`; the log level and format;
+  mail backend, host, port, credentials, sender and TLS flags; the
+  notifications backend; the LLM key, `base_url`, models and both caps;
+  storage `serve_local` and `signing_key`; auth `issuer`, `audience`,
+  `jwks_url` and keys; accounts `frontend_url`; tenancy `base_domain`; every
+  DSN and address a plugin connects to (database, cache, mongo, qdrant,
+  rabbitmq, kafka, ollama, sentry, the OTLP endpoint) and each HTTP upstream's
+  `base_url`. The full table, and why a storage disk's bucket or `[app] port`
+  are not in it, is in `docs/deploy.md`, "Which wins". As for `env`, only the
+  process environment counts, never a `.env` file the settings read. A test
+  checks every row against the settings class that reads it.
+  Every disagreement is visible, with credentials masked (`'***'`, and a URL
+  keeps its host but not its user and password): one WARNING per key at boot;
+  a `jfast check` notice with `jfast.toml:<line>` and the variable -- reported,
+  never a failure, `--ci` included, since it describes the machine and not the
+  repository; an `environment` section in `jfast ai context`; and a paragraph
+  in the generated `AGENTS.md` telling an agent which keys the environment owns
+  and to report a disagreement instead of editing either side. The generator
+  no longer writes `[plugin.auth] issuer = ""` or `[plugin.notifications]
+  project_id = ""`, and every owned key it still writes (log format,
+  `serve_local`, `base_domain`, the LLM caps, the dev CORS origins) names the
+  variable that wins over it. `jfast upgrade --check`:
+  `jfast-env-wins-over-the-file` now lists every owned key a project set to a
+  chosen value, plus the two lines 0.1.0a12 stopped writing.
 - **The first `jfast dev` of a new project crashed: the API and the worker
   created the bootstrap administrator at once.** Both saw no administrator and
   inserted the `admin` role; the loser died on `uq_jfast_roles_tenant_name`

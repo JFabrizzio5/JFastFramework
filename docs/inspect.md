@@ -277,6 +277,29 @@ what makes the command safe in a pre-commit hook, and it is also its limit:
 `deploy` proves the compose file can be generated and is internally consistent,
 not that the images pull.
 
+### Notices: the environment overrides `jfast.toml`
+
+One thing `check` reports without ever failing on it. For a setting the
+environment owns ([Which wins](deploy.md#which-wins-jfasttoml-or-the-environment)),
+a variable set in *this* process that disagrees with `jfast.toml` is listed
+under `config`, with file, line and variable, credentials masked:
+
+```
+  ✓ config      pass   shop (local)  (1 environment override)
+  ...
+  CONFIG  the environment overrides jfast.toml (reported, never a failure)
+    jfast.toml:52  [plugin.mail] backend = 'console' is overridden by JFAST_MAIL_BACKEND='smtp' from the environment
+```
+
+In `--json` they are the check's `notices` (severity `medium`, code
+`environment-overrides-file`) and the top-level `notices` count. They never
+set a status or an exit code, `--ci` included: every other answer here is the
+same on every machine, and this one is about the machine -- run with the
+deployment's environment, it lists exactly what the boot WARNING lists; on a
+laptop, the laptop's. A file default the deployment replaces is usually the
+design working, and failing on it would push a team to delete the default or
+copy production's values into CI.
+
 ### What `check` does not check
 
 **`jfast check` runs no linter, no formatter, no type checker and no test

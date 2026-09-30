@@ -205,11 +205,13 @@ Every key of `[plugin.http.upstreams.<name>]`:
 
 A misspelt key is refused at start-up rather than ignored. The base URL can
 come from the environment instead of the file --
-`JFAST_HTTP_UPSTREAMS__BILLING__BASE_URL=http://billing.internal:8010` -- and,
-as for every plugin, a value in `jfast.toml` wins over the environment, so
-leave `base_url` out of the file for an upstream whose address differs per
-environment. (Only `[app] env` and `debug` go the other way; see
-[deploy](deploy.md#which-wins-jfasttoml-or-the-environment).)
+`JFAST_HTTP_UPSTREAMS__BILLING__BASE_URL=http://billing.internal:8010` -- and
+it wins over the file: an upstream's address depends on where the service
+runs, so a `base_url` in `jfast.toml` is only the default for wherever that
+variable is unset, and a disagreement is a WARNING at boot. Every other
+upstream setting is the service's shape and the file wins for it; see
+[deploy](deploy.md#which-wins-jfasttoml-or-the-environment) for the full
+table.
 
 ## Health
 

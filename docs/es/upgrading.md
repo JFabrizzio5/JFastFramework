@@ -191,13 +191,22 @@ Correcciones, y una es de seguridad y cambia respuestas:
   activo, copia `tenancy.go` de un servicio generado por 0.1.0a12 y pásale el
   `*jfast.Auth` a `jfast.NewTenancy(tenancyConfig, cfg, auth, logger)`.
 
-- `jfast-env-wins-over-the-file` -- `[app] env` (o `debug`) en `jfast.toml`,
-  que tiene todo proyecto que generó `jfast start`. `JFAST_ENV` en el entorno
-  del proceso ahora le gana, así que un despliegue que pone `JFAST_ENV=prod`
-  por fin corre como producción: `/docs`, `/info` y `/queue/stats` se cierran,
-  y un plugin que quedó en un backend de desarrollo (correo por consola) se
-  niega a arrancar. Borra la línea, pon `JFAST_ENV=prod` en el `environment:`
-  de compose y lee el log de arranque por el warning `overridden by JFAST_ENV`.
+- `jfast-env-wins-over-the-file` -- un ajuste que depende de dónde corre el
+  servicio, escrito en `jfast.toml`: `[app] env` (que tiene todo proyecto que
+  generó `jfast start`), `debug`, `[plugin.auth] issuer = ""` (modo jwks), un
+  backend de correo, un tope del LLM, un DSN -- la tabla completa está en
+  [deploy](deploy.md#quien-gana-jfasttoml-o-el-entorno). El entorno del proceso
+  ahora le gana a cada uno, así que un despliegue que pone `JFAST_ENV=prod`
+  por fin corre como producción (`/docs`, `/info` y `/queue/stats` se cierran,
+  y un plugin que quedó en un backend de desarrollo se niega a arrancar), y uno
+  que pone `JFAST_MAIL_BACKEND=smtp` por fin manda correo. La nota lista un
+  valor que alguien eligió y las dos líneas que 0.1.0a12 ya no escribe; deja
+  fuera los defaults de desarrollo que el generador sigue escribiendo
+  (`json_logs = false`, `serve_local = true`, `base_domain = "localhost"`,
+  ...), para los que el cambio es el arreglo mismo. Borra lo que solo es un
+  default de desarrollo, pon el valor real en el `environment:` de compose y
+  lee el log de arranque por las líneas `overridden by ... from the
+  environment` -- `jfast check` lista lo mismo, con archivo y línea.
 
 Nada más detiene a un servicio correcto de `0.1.0a11`. Tres notas señalan
 archivos que `0.1.0a11` generó y que hay que tocar:
