@@ -455,10 +455,22 @@ it does not register.
   Throughput scales with them until the database is the limit, which is usually
   first.
 
+**Since 0.1.0a11 a CI budget holds this.** `scripts/bench_overhead.py`
+measures the same scenarios in-process, in CPU time, as a ratio to bare
+FastAPI on the same machine -- JFast defaults 2.48x, auth + tenancy + metrics
+5.43x on the reference laptop -- and `tests/test_performance_budget.py` fails
+when a ratio grows more than 20 %. The framework's own routes (`/health`,
+`/ready`, `/info`, `/metrics`, the docs) are now matched after the
+application's, which saves 2-4 us of CPU on every application request. The
+`ab` table above was not re-measured for 0.1.0a11: the machine was shared with
+other test suites, and the in-process ratios, which were, did not move. Method,
+numbers and the rest of the scale work -- `jfast bench`, several replicas,
+MinIO, RAG and aggregates -- are in [Scaling](scaling.md).
+
 To measure your own service, start it with one worker and no access log, and
-point `ab`, `wrk` or `oha` at a real endpoint with a real token; compare with
-the same endpoint in a bare FastAPI app before believing any number, this page's
-included.
+point `jfast bench` (or `ab`, `wrk`, `oha`) at a real endpoint with a real
+token; compare with the same endpoint in a bare FastAPI app before believing
+any number, this page's included.
 
 ## Checklist before production
 
