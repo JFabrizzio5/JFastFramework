@@ -13,7 +13,7 @@
   <ol class="steps">
     <li><code>jfast new module invoice --ui htmx</code></li>
     <li>Mount both routers in <code>main.py</code></li>
-    <li><code>alembic revision --autogenerate -m "add invoices"</code></li>
+    <li><code>jfast exec -- alembic revision --autogenerate -m "add invoices"</code></li>
   </ol>
 </section>
 {% endblock %}

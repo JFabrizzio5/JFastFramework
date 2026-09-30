@@ -19,9 +19,9 @@ from jfastframework.cli.exits import Code
 from jfastframework.settings import DEFAULT_CONFIG_FILE, JFastConfig
 from jfastframework.workspace import Workspace
 
-# Vite's own default. Only what `jfast dev` prints depends on it: the port is
-# left to vite unless --web-port asks for another one.
-WEB_PORT = 5173
+# Vite's own default, for the help text. What `jfast dev` announces is read from
+# the frontend itself: its dev script and vite.config usually pin another one.
+WEB_PORT = devtools.VITE_DEFAULT_PORT
 
 
 def serve(
@@ -84,14 +84,27 @@ def serve(
         f"{service_dir}{os.pathsep}{existing}" if existing else str(service_dir)
     )
 
+    # The generated .env is written for compose: container names and a
+    # ${...} password only compose interpolates. On the host, the same
+    # translation `jfast dev` does; in a container, or with no compose file,
+    # nothing. Before the settings load, and into os.environ so the child
+    # uvicorn starts for --reload inherits it.
+    host_env = devtools.apply_host_environment(service_dir)
+
     settings = JFastConfig.load(config_path=DEFAULT_CONFIG_FILE).settings
     resolved_port = port if port is not None else settings.port
 
+    env_line = (
+        f"  env       .env translated for the host ({_relative(host_env.compose_file)})\n"
+        if host_env.compose_file is not None
+        else ""
+    )
     typer.echo(
         f"  {settings.app_name}  ({settings.env})\n"
         f"  http://{host}:{resolved_port}\n"
         f"  docs      {settings.effective_docs_url or 'closed in this environment'}\n"
         f"  probes    /health  /ready\n"
+        f"{env_line}"
     )
     uvicorn.run(
         app_path,
@@ -119,7 +132,10 @@ def dev(
     ),
     port: int | None = typer.Option(None, "--port", help="Overrides the port in jfast.toml."),
     web_port: int | None = typer.Option(
-        None, "--web-port", help=f"Frontend dev server port. Vite's {WEB_PORT} when omitted."
+        None,
+        "--web-port",
+        help="Frontend dev server port. The one its dev script or vite.config names when "
+        f"omitted, else Vite's {WEB_PORT}.",
     ),
     host: str = typer.Option("127.0.0.1", "--host", help="Interface to bind."),
     infra: bool = typer.Option(True, "--infra/--no-infra", help="Bring up database and cache."),
@@ -142,7 +158,8 @@ def dev(
     have nothing to do with it.
 
     Both servers can be moved: `--port` for the API, `--web-port` for the
-    frontend, so a machine already using 5173 still gets both halves.
+    frontend, so a machine already using the frontend's port still gets both
+    halves.
     """
     service_dir = path.resolve()
     config_file = service_dir / DEFAULT_CONFIG_FILE
@@ -162,7 +179,7 @@ def dev(
     started: set[str] = set()
 
     # -- infrastructure --------------------------------------------------
-    compose_file = _find_compose(service_dir)
+    compose_file = devtools.find_compose(service_dir)
     if not infra:
         ui.note("infra    skipped (--no-infra)")
     elif compose_file is None:
@@ -195,13 +212,11 @@ def dev(
     # Alembic needs the same translation the server does -- and it runs first,
     # so getting this only onto the server means the migration fails with a DNS
     # error naming a host that was never meant to resolve here.
-    env = {"PYTHONPATH": str(service_dir) + os.pathsep + os.environ.get("PYTHONPATH", "")}
-    if compose_file is not None:
-        env.update(
-            devtools.host_environment(
-                service_dir / ".env", compose_file.parent / ".env", compose_file
-            )
-        )
+    #
+    # A variable already set in the shell is left alone, as pydantic-settings
+    # leaves it over .env. Inside a container nothing is translated.
+    env = devtools.service_host_environment(service_dir).values
+    env["PYTHONPATH"] = str(service_dir) + os.pathsep + os.environ.get("PYTHONPATH", "")
 
     # -- migrations ------------------------------------------------------
     if not migrate:
@@ -276,11 +291,7 @@ def dev(
     elif not (front_dir / "node_modules").is_dir():
         ui.warn(f"{front_dir}/node_modules is missing. Run npm install there first.")
     else:
-        # The bare `--` is npm's, not vite's: without it npm eats the flag
-        # instead of forwarding it to the script.
-        command = ["npm", "run", "dev"]
-        if web_port is not None:
-            command += ["--", "--port", str(web_port)]
+        command, resolved_web_port = devtools.frontend_command(front_dir, web_port)
         processes.append(devtools.spawn(command, cwd=front_dir, name="web"))
         started.add("web")
 
@@ -308,17 +319,73 @@ def dev(
     raise typer.Exit(code)
 
 
-def _find_compose(service_dir: Path) -> Path | None:
-    """The compose file for this service, which usually lives one level up.
+def _relative(path: Path | None) -> str:
+    if path is None:
+        return ""
+    try:
+        return os.path.relpath(path)
+    except ValueError:  # pragma: no cover - another drive on Windows
+        return str(path)
 
-    A workspace writes one compose file at its root covering every service, so
-    looking only in the service directory finds nothing in the normal case.
+
+def exec_(
+    command: list[str] = typer.Argument(
+        ..., help="The command to run, after `--`: jfast exec -- alembic upgrade head"
+    ),
+    path: Path = typer.Option(
+        Path("."), "--path", "-p", help="Service directory. Defaults to the current one."
+    ),
+) -> None:
+    """Run a command with the service's .env translated for the host.
+
+    The generated `.env` is written for compose: it names the database
+    `<workspace>-database:5432` and leaves the password as `${...}`, which
+    only compose fills in. `jfast dev`, `jfast serve` and `jfast worker`
+    translate it; everything else run on the host -- Alembic, pytest, a
+    script -- gets DNS errors. This runs any of them with the translated
+    values, from the service directory:
+
+        jfast exec -- alembic revision --autogenerate -m "add invoices"
+        jfast exec -- pytest
+
+    Variables already set in the shell win. Inside a container, or with no
+    docker-compose.yml here or one level up, the command runs unchanged.
     """
-    for candidate in (service_dir, service_dir.parent):
-        found = candidate / "docker-compose.yml"
-        if found.is_file():
-            return found
-    return None
+    service_dir = path.resolve()
+    if not (service_dir / DEFAULT_CONFIG_FILE).is_file():
+        typer.echo(
+            f"No {DEFAULT_CONFIG_FILE} in {service_dir}. Run this from a service directory, "
+            f"or point at one: jfast exec --path ./billing -- alembic upgrade head",
+            err=True,
+        )
+        raise typer.Exit(Code.CONFIG)
+
+    found = devtools.service_host_environment(service_dir)
+    if found.skipped is not None:
+        typer.echo(f"jfast exec: .env used as is ({found.skipped})", err=True)
+    env = {**os.environ, **found.values}
+    # As `jfast dev` does for Alembic: `main` and `modules` importable from here.
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{service_dir}{os.pathsep}{existing}" if existing else str(service_dir)
+    os.chdir(service_dir)
+
+    if sys.platform != "win32":
+        # Replaced rather than supervised: the command gets the terminal's
+        # signals and its exit status is ours, with nothing in between.
+        try:
+            os.execvpe(command[0], command, env)  # nosec B606 - the user's own command
+        except FileNotFoundError:
+            typer.echo(f"jfast exec: {command[0]}: command not found", err=True)
+            raise typer.Exit(127) from None
+    else:  # pragma: no cover - Windows only
+        import subprocess  # nosec B404
+
+        try:
+            result = subprocess.run(command, env=env, check=False)  # nosec B603
+        except FileNotFoundError:
+            typer.echo(f"jfast exec: {command[0]}: command not found", err=True)
+            raise typer.Exit(127) from None
+        raise typer.Exit(result.returncode)
 
 
 def _find_frontend(service_dir: Path, workspace: Workspace | None) -> Path | None:
@@ -434,7 +501,7 @@ def doctor(
 
 
 def register(app: typer.Typer) -> None:
-    """Attach `serve`, `dev` and `doctor` to *app*.
+    """Attach `serve`, `dev`, `exec` and `doctor` to *app*.
 
     `dev` reaches every process helper through ``devtools``, the module, not
     names copied out of it: that attribute is what a test replaces to run the
@@ -442,4 +509,9 @@ def register(app: typer.Typer) -> None:
     """
     app.command()(serve)
     app.command()(dev)
+    app.command(
+        "exec",
+        # Everything after the command's name is the command's, flags included.
+        context_settings={"allow_interspersed_args": False, "ignore_unknown_options": True},
+    )(exec_)
     app.command()(doctor)

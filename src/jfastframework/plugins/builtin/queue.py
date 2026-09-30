@@ -78,8 +78,10 @@ class QueueSettings(PluginSettings):
     rabbitmq_include_infra: bool = True
     rabbitmq_port_offset: int = 6
 
-    # Exposes GET /queue/stats. Handy in development, noise in production.
-    expose_stats: bool = True
+    # GET /queue/stats: task names and queue depths, unauthenticated. Unset,
+    # it is on in development and closed in production -- the same rule as
+    # /docs; set it to say which. Until 0.1.0a12 it was on everywhere.
+    expose_stats: bool | None = None
 
     # Run the scheduler loop in this process, enqueueing the recurring tasks
     # declared on the registry. Safe in every replica and every worker: each
@@ -279,7 +281,10 @@ class QueuePlugin(Plugin):
                 retention=timedelta(days=self.settings.scheduler_retention_days),
             )
 
-        if self.settings.expose_stats:
+        expose = self.settings.expose_stats
+        if expose is None:
+            expose = not ctx.settings.is_production
+        if expose:
             ctx.app.include_router(self._build_router(), prefix="/queue", tags=["queue"])
 
     def _build_router(self) -> APIRouter:

@@ -35,6 +35,15 @@ generated frontend in a browser, an upload.
 
 ### Fixed
 
+- **CLI help dropped every `[section]` it named.** Rich reads `[scaffold]` as a
+  style tag, so "Defaults to [scaffold] language." printed "Defaults to
+  language." Escaped in `new module`, `remove` and `tenancy enable`; a test now
+  walks all 61 commands' help. The same walk exposed that the bare-install test
+  added in 0.1.0a11 checked the root command only: it now reaches every one.
+- **`GET /queue/stats` answered anyone, in every environment.** It lists the
+  service's task names and queue depths without authentication. Unset,
+  `expose_stats` now follows `/docs`: on in development, closed in production;
+  set it to choose.
 - **The generated image could not write local storage, so it stopped at
   boot.** It runs as `appuser`, but `WORKDIR` created `/app` as root and
   `--chown` only reached the copied files. The Dockerfile now creates
@@ -84,6 +93,30 @@ generated frontend in a browser, an upload.
 - **`jfast new enum` left the module's `# None yet: jfast new enum ...`
   comment above the enum it wrote.** The placeholder is removed when the first
   enum lands.
+
+- **A `@task` or `@subscribe` handler could not reach `llm`, `storage` or the
+  outbox.** It received the payload and a `TaskSession`, nothing else, and the
+  docs only showed `request.app.state.jfast.require(...)` -- which a worker does
+  not have -- so every project kept its own global copy of the context. A
+  parameter annotated `TaskContext` (from `jfastframework.tasks`; it is
+  `AppContext`, and that annotation works too) now receives the running app's
+  context, in `jfast worker` and in the API alike. Verified with a real `jfast
+  worker` process running a task and a subscriber that ask it for providers.
+- **`jfast dev` announced the frontend on :5173 while Vite ran on 8610.** The
+  generated dev script pins the workspace port and `jfast dev` printed Vite's
+  default; `--web-port 8610` then ran `vite --port 8610 --port 8610`. The
+  announced URL is now read from the frontend (its dev script, then
+  `vite.config`, then 5173), and `--port` is passed only when it changes
+  something.
+- **Only `jfast dev` could use a workspace's `.env` on the host.** It names the
+  database by its compose name and leaves the password for compose to fill in,
+  so `alembic revision --autogenerate` -- the step `jfast new module` prints --
+  `jfast serve`, `jfast worker` and `pytest` failed with a DNS error. `jfast
+  serve` and `jfast worker` now translate it as `jfast dev` does when they find
+  the compose file, `jfast exec -- <command>` runs anything else with it, and
+  every printed `alembic` step goes through `jfast exec --`. A variable set in
+  the shell wins; inside a container, and in the production image (which has
+  no compose file to find), nothing changes.
 
 ### Added
 

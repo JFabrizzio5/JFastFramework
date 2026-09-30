@@ -137,7 +137,7 @@ REMEDY: dict[str, str] = {
     "shared-imports-module": "move the shared piece into shared/, or invert the import",
     "cross-module-import": "go through modules/<other>/public.py  (jfast contracts check names it)",
     "code-outside-module": "move it into a module, or into shared/",
-    "module-no-migration": "alembic revision --autogenerate",
+    "module-no-migration": "jfast exec -- alembic revision --autogenerate",
     # The contract describes a tree this project does not have, so editing its
     # globs by hand is the long way round: the layout's own contract is a
     # template that ships. `<layout>` is filled in from the recorded layout
@@ -387,7 +387,7 @@ def steps(found: Survey) -> list[Step]:
                 Step(
                     stage="persist",
                     what=f"{', '.join(module.tables)} has no revision (this project has none)",
-                    do="alembic revision --autogenerate",
+                    do="jfast exec -- alembic revision --autogenerate",
                     why=(
                         "The table is never created. The service starts and the first query "
                         "fails on a relation that does not exist."

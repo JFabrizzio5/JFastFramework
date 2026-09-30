@@ -25,6 +25,21 @@ rls = true`` every transaction is scoped to it, exactly as a request's is. It
 is committed when the handler returns and rolled back when it raises, and the
 job is then retried.
 
+**The app.** A parameter annotated ``TaskContext`` (or ``AppContext``, which
+it is) receives the running app's context -- the same object
+``get_context(request.app)`` returns in a route -- so a handler reaches what
+the plugins provide exactly as a route does::
+
+    @task("comprobante.extraer")
+    async def extraer(payload: dict, session: TaskSession, ctx: TaskContext) -> None:
+        llm = ctx.require("llm")
+        disk = ctx.require("storage").disk()
+
+It is the context of the process running the job: the worker's in ``jfast
+worker``, the API's when the API runs it. Both build the same app from the
+same ``jfast.toml``, so both have the same providers. ``@subscribe`` handlers
+take it the same way.
+
 **Idempotency.** Delivery is at least once. ``idempotent_on`` extracts a key
 from the payload and claims it in the inbox *inside the handler's
 transaction*: if the work commits, so does the claim, and every redelivery
@@ -46,12 +61,12 @@ from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from jfastframework.context import AppContext
 from jfastframework.errors import PluginError
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from jfastframework.context import AppContext
     from jfastframework.events import Subscriber
     from jfastframework.queues.worker import TaskRegistry
 
@@ -68,7 +83,14 @@ else:
         """
 
 
+#: What a handler declares to receive the running app's context. It *is*
+#: :class:`~jfastframework.context.AppContext` -- annotating with either works --
+#: named here so a ``tasks.py`` imports everything it needs from one place.
+TaskContext = AppContext
+
+
 __all__ = [
+    "TaskContext",
     "TaskSession",
     "TaskSpec",
     "bind",
@@ -76,6 +98,7 @@ __all__ = [
     "declared_tasks",
     "discover",
     "task",
+    "task_context_param",
     "task_session_param",
 ]
 
@@ -87,12 +110,16 @@ TASKS_MODULE = "tasks"
 _CONSUMER_MAX = 128
 
 
-def task_session_param(handler: Callable[..., Any]) -> str | None:
-    """The name of the handler parameter annotated ``TaskSession``, if any.
+def _annotated_param(
+    handler: Callable[..., Any], marker: type, spellings: tuple[str, ...]
+) -> str | None:
+    """The name of the first handler parameter annotated ``marker``, if any.
 
     Resolved through ``get_type_hints`` so ``from __future__ import
     annotations`` -- a string annotation -- is read the same as a real one;
-    when the hints cannot be resolved the annotation's text is compared.
+    when the hints cannot be resolved (the type imported only under
+    ``TYPE_CHECKING``) the annotation's last dotted name is compared against
+    ``spellings``.
     """
     try:
         hints = typing.get_type_hints(handler)
@@ -100,11 +127,21 @@ def task_session_param(handler: Callable[..., Any]) -> str | None:
         hints = {}
     for name, parameter in inspect.signature(handler).parameters.items():
         hint = hints.get(name, parameter.annotation)
-        if hint is TaskSession:
+        if hint is marker:
             return name
-        if isinstance(hint, str) and hint.rsplit(".", 1)[-1] == "TaskSession":
+        if isinstance(hint, str) and hint.rsplit(".", 1)[-1] in spellings:
             return name
     return None
+
+
+def task_session_param(handler: Callable[..., Any]) -> str | None:
+    """The name of the handler parameter annotated ``TaskSession``, if any."""
+    return _annotated_param(handler, TaskSession, ("TaskSession",))
+
+
+def task_context_param(handler: Callable[..., Any]) -> str | None:
+    """The name of the handler parameter annotated ``TaskContext``/``AppContext``."""
+    return _annotated_param(handler, AppContext, ("TaskContext", "AppContext"))
 
 
 @dataclass(frozen=True)
@@ -114,6 +151,7 @@ class TaskSpec:
     name: str
     handler: Callable[..., Awaitable[Any]] = field(compare=False)
     session_param: str | None = None
+    context_param: str | None = None
     idempotent_on: Callable[[dict[str, Any]], Any] | None = field(default=None, compare=False)
     every: timedelta | None = None
     cron: str | None = None
@@ -174,6 +212,7 @@ def task(
             name=name,
             handler=handler,
             session_param=task_session_param(handler),
+            context_param=task_context_param(handler),
             idempotent_on=idempotent_on,
             every=every,
             cron=cron,
@@ -280,10 +319,16 @@ async def _transaction(ctx: AppContext) -> AsyncIterator[Any]:
         yield session
 
 
+def _context_kwargs(param: str | None, ctx: AppContext) -> dict[str, Any]:
+    return {} if param is None else {param: ctx}
+
+
 def _task_runner(spec: TaskSpec, ctx: AppContext) -> Callable[[dict[str, Any]], Awaitable[Any]]:
+    extra = _context_kwargs(spec.context_param, ctx)
+
     async def run(payload: dict[str, Any]) -> Any:
         if not spec.needs_transaction:
-            return await spec.handler(payload)
+            return await spec.handler(payload, **extra)
         from jfastframework.outbox import claim_once
 
         async with _transaction(ctx) as session:
@@ -297,8 +342,8 @@ def _task_runner(spec: TaskSpec, ctx: AppContext) -> Callable[[dict[str, Any]], 
                     )
                     return None
             if spec.session_param is None:
-                return await spec.handler(payload)
-            return await spec.handler(payload, **{spec.session_param: session})
+                return await spec.handler(payload, **extra)
+            return await spec.handler(payload, **{spec.session_param: session}, **extra)
 
     run.__qualname__ = f"task[{spec.name}]"
     return run
@@ -309,10 +354,12 @@ def _subscriber_runner(
 ) -> Callable[[dict[str, Any]], Awaitable[Any]]:
     from jfastframework.events import Event
 
+    extra = _context_kwargs(subscriber.context_param, ctx)
+
     async def run(payload: dict[str, Any]) -> Any:
         event = Event.from_dict(dict(payload.get("event") or {}))
         if subscriber.session_param is None:
-            return await subscriber.handler(event)
+            return await subscriber.handler(event, **extra)
         from jfastframework.outbox import claim_once
 
         async with _transaction(ctx) as session:
@@ -325,7 +372,7 @@ def _subscriber_runner(
                     extra={"task": subscriber.task, "event_id": event.id},
                 )
                 return None
-            return await subscriber.handler(event, **{subscriber.session_param: session})
+            return await subscriber.handler(event, **{subscriber.session_param: session}, **extra)
 
     run.__qualname__ = f"subscriber[{subscriber.task}]"
     return run
