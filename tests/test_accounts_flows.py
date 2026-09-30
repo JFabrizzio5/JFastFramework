@@ -359,9 +359,7 @@ async def test_the_token_is_stored_only_as_a_hash(dsn: str) -> None:
 async def test_signing_up_with_a_taken_address_says_nothing_and_tells_the_owner(
     dsn: str,
 ) -> None:
-    app = _app(
-        dsn, allow_registration=True, email_verification="required", password_reset=True
-    )
+    app = _app(dsn, allow_registration=True, email_verification="required", password_reset=True)
     async with _Running(app) as client:
         body = {"email": ADMIN[0], "password": "somebody else's password"}
         taken = await client.post("/auth/register", json=body)
@@ -384,7 +382,9 @@ async def test_optional_verification_signs_in_at_once_and_sends_the_link(dsn: st
         )
         assert created.status_code == 201
         headers = _bearer(created.json())
-        assert (await client.get("/auth/account", headers=headers)).json()["email_verified"] is False
+        assert (await client.get("/auth/account", headers=headers)).json()[
+            "email_verified"
+        ] is False
         token = _token_in(_outbox(app)[0])
         assert (await client.post("/auth/verify", json={"token": token})).status_code == 200
         assert (await client.get("/auth/account", headers=headers)).json()["email_verified"] is True
@@ -404,12 +404,16 @@ async def test_resend_answers_the_same_for_anyone_and_mails_only_who_needs_it(ds
         # cooldown for d@: nothing either.
         assert len(_outbox(app)) == 1
 
-    app = _app(dsn, allow_registration=True, email_verification="required", email_cooldown_seconds=0)
+    app = _app(
+        dsn, allow_registration=True, email_verification="required", email_cooldown_seconds=0
+    )
     async with _Running(app) as client:
         await client.post("/auth/verify/resend", json={"email": "d@example.com"})
         [message] = _outbox(app)
         # Both links work: the second email does not break the first.
-        assert (await client.post("/auth/verify", json={"token": _token_in(message)})).status_code == 200
+        assert (
+            await client.post("/auth/verify", json={"token": _token_in(message)})
+        ).status_code == 200
 
 
 async def test_an_expired_link_is_refused(dsn: str) -> None:
@@ -566,9 +570,7 @@ async def test_sessions_minted_elsewhere_end_at_their_next_refresh(dsn: str) -> 
         assert again.status_code == 200
 
 
-async def test_nothing_secret_reaches_the_log(
-    dsn: str, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_nothing_secret_reaches_the_log(dsn: str, caplog: pytest.LogCaptureFixture) -> None:
     app = _app(dsn, allow_registration=True, email_verification="required", password_reset=True)
     caplog.set_level(logging.DEBUG)
     async with _Running(app) as client:
@@ -600,14 +602,18 @@ async def test_deactivating_a_user_ends_their_access_token_at_once(dsn: str) -> 
         user = await _create(client, "k@example.com")
         pair = (await _login(client, "k@example.com", PASSWORD)).json()
         admin = _bearer((await _login(client, *ADMIN)).json())
-        await client.patch(f"/accounts/users/{user['id']}", json={"is_active": False}, headers=admin)
+        await client.patch(
+            f"/accounts/users/{user['id']}", json={"is_active": False}, headers=admin
+        )
         assert (await client.get("/auth/account", headers=_bearer(pair))).status_code == 401
 
 
 # -- MFA ---------------------------------------------------------------------
 
 
-async def _enrol(client: httpx.AsyncClient, pair: dict[str, Any], step: int) -> tuple[str, list[str]]:
+async def _enrol(
+    client: httpx.AsyncClient, pair: dict[str, Any], step: int
+) -> tuple[str, list[str]]:
     setup = await client.post("/auth/mfa/setup", json={"password": PASSWORD}, headers=_bearer(pair))
     assert setup.status_code == 200, setup.text
     secret = setup.json()["secret"]
@@ -650,7 +656,9 @@ async def test_the_same_code_does_not_work_twice(dsn: str, frozen_step: int) -> 
         )
         code = _code(secret, frozen_step)
         first = (await _login(client, "n@example.com", PASSWORD)).json()
-        ok = await client.post("/auth/login/mfa", json={"mfa_token": first["mfa_token"], "code": code})
+        ok = await client.post(
+            "/auth/login/mfa", json={"mfa_token": first["mfa_token"], "code": code}
+        )
         assert ok.status_code == 200
 
         second = (await _login(client, "n@example.com", PASSWORD)).json()
@@ -751,7 +759,9 @@ async def test_turning_mfa_off_takes_the_password_and_a_code(dsn: str, frozen_st
         assert no_password.status_code == 422
         assert no_password.json()["code"] == "password_invalid"
         no_code = await client.post(
-            "/auth/mfa/disable", json={"password": PASSWORD, "code": "123456"}, headers=_bearer(pair)
+            "/auth/mfa/disable",
+            json={"password": PASSWORD, "code": "123456"},
+            headers=_bearer(pair),
         )
         assert no_code.status_code == 422 and no_code.json()["code"] == "mfa_code_invalid"
         off = await client.post(
@@ -887,3 +897,43 @@ async def test_without_cache_the_lockout_still_applies(dsn: str) -> None:
         for _ in range(2):
             await _login(client, ADMIN[0], "not the password")
         assert (await _login(client, *ADMIN)).status_code == 401
+
+
+async def test_a_provider_sign_in_still_owes_the_second_factor(dsn: str, frozen_step: int) -> None:
+    from types import SimpleNamespace
+
+    app = _app(dsn, mfa=True)
+    async with _Running(app) as client:
+        await _create(client, "v@example.com")
+        await _enrol(client, (await _login(client, "v@example.com", PASSWORD)).json(), frozen_step)
+        plugin = app.state.jfast.require("accounts")
+        identity = SimpleNamespace(
+            federated_id="google:123", email="v@example.com", email_verified=True, name="V"
+        )
+        request = SimpleNamespace(state=SimpleNamespace(tenant_id=None))
+        result = await plugin._sign_in_identity(identity, request)
+    assert result.mfa_required is True and not hasattr(result, "access_token")
+
+
+async def test_a_column_that_cannot_be_added_in_place_is_refused(tmp_path: Path) -> None:
+    from sqlalchemy import Column, Integer, String, Table
+
+    from jfastframework.db.framework import ensure_columns, ensure_tables, framework_metadata
+
+    table = Table(
+        "jfast_test_evolving",
+        framework_metadata,
+        Column("id", String(8), primary_key=True),
+    )
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'e.db'}")
+    try:
+        await ensure_tables(engine, "jfast_test_evolving")
+        table.append_column(Column("note", String(20)))
+        assert await ensure_columns(engine, "jfast_test_evolving") == ["note"]
+        assert await ensure_columns(engine, "jfast_test_evolving") == []
+        table.append_column(Column("count", Integer, nullable=False))
+        with pytest.raises(ValueError, match="nullable"):
+            await ensure_columns(engine, "jfast_test_evolving")
+    finally:
+        framework_metadata.remove(table)
+        await engine.dispose()

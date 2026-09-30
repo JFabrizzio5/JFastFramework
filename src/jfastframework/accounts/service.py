@@ -283,8 +283,11 @@ class AccountsService:
         return await self._user(row)
 
     async def touch_login(self, user_id: str) -> None:
+        """A session was issued: the sign-in is complete, so its failures are forgiven."""
         await self.session.execute(
-            update(users).where(users.c.id == user_id).values(last_login_at=datetime.now(UTC))
+            update(users)
+            .where(users.c.id == user_id)
+            .values(last_login_at=datetime.now(UTC), failed_logins=0, locked_until=None)
         )
 
     async def record_failure(self, row: Any) -> datetime | None:
@@ -345,12 +348,16 @@ class AccountsService:
         if not row["is_active"]:
             return LoginResult(reason="inactive")
 
-        # last_login_at is written when a session is actually issued, which
-        # with a second factor or an unverified address is not now.
-        values: dict[str, Any] = {"failed_logins": 0, "locked_until": None}
+        # The failure count is cleared -- and last_login_at written -- when a
+        # session is actually issued (touch_login), not here. With a second
+        # factor still owed, clearing it now would hand whoever has the
+        # password a fresh set of guesses at the code on every sign-in.
         if rehash:
-            values["password_hash"] = await hash_password(password)
-        await self.session.execute(update(users).where(users.c.id == row["id"]).values(**values))
+            await self.session.execute(
+                update(users)
+                .where(users.c.id == row["id"])
+                .values(password_hash=await hash_password(password))
+            )
         return LoginResult(user=await self.get(row["id"], tenant_id=tenant_id))
 
     async def sign_in_federated(

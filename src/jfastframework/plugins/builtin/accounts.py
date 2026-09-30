@@ -1001,7 +1001,6 @@ class AccountsPlugin(Plugin):
                 )
             if await tokens.consume(body.mfa_token, MFA_LOGIN) is None:
                 return problem_response(expired, request)
-            await service.clear_failures(row["id"])
             if kind == "recovery":
                 request.app.state.jfast.logger.info(
                     "signed in with a recovery code", extra={"user": row["id"]}
