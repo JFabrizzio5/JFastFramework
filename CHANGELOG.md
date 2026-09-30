@@ -119,7 +119,55 @@ One addition came with it: enums in `--fields`.
   the shell wins; inside a container, and in the production image (which has
   no compose file to find), nothing changes.
 
+What a help desk built from scratch on this release hit in production
+containers, fixed before it shipped:
+
+- **A local disk other than `public` and `private` was not writable in the
+  image.** The Dockerfile created only the two default roots, so compose's
+  volume on `/app/storage/adjuntos` was root's: `/ready` 503 and every upload
+  a 500 `PermissionError`, while `/health` said 200. `jfast deploy dockerfile`
+  now reads `[plugin.storage.disks]` and creates and hands to `appuser` every
+  local root (and its parents); `jfast add storage` rewrites just that line in
+  an existing Dockerfile, so an edited one keeps its edits. The compose
+  volumes and the Dockerfile come from one resolver, which also stopped
+  skipping a disk that relies on the default `driver` or `root`.
+  `image-cannot-write-local-storage` now names each root the Dockerfile does
+  not create, and docs/storage.md says how to `chown` a volume Docker already
+  created as root. Verified by building the image: the compose smoke declares
+  its own disk and writes an upload to it; by hand, the old line reproduced
+  the 503, and the documented `chown` repaired the existing volume.
+- **`jfast workspace caddy --wildcard-tenants` wrote a Caddyfile Caddy
+  refuses.** `header_up` sat at site level (`unrecognized directive`) and the
+  container restarted in a loop. It is gone -- `reverse_proxy` already passes
+  the Host header and sets `X-Forwarded-Host`, verified behind
+  `caddy:2-alpine` -- and so are on-demand TLS `interval` and `burst`, which
+  Caddy 2.11 no longer accepts, and the blank line that made every start warn
+  the file was unformatted. A test runs `caddy validate` over every variant
+  and shape (skipped without Docker), and requires no warnings.
+- **Caddy served an empty site.** The workspace compose mounted `./dist`; the
+  frontend builds into `<frontend>/dist`. It mounts that now, and `jfast
+  start`'s panel builds the SPA before `docker compose up --build` instead of
+  promising "nothing else to install". The compose smoke asks the running
+  Caddy for `/`, a client-side route and `/api/health`.
+- **`jfast migration check` on the host reported `database: unavailable`.**
+  It read the workspace `.env` as is; it now translates it as `serve`,
+  `worker` and `exec` do. On a real PostgreSQL that also exposed a second
+  cause: on a database nothing had migrated yet, the failed read of
+  `alembic_version` aborted the transaction the row counts ran in.
+- **`from jfastframework.auth import require_auth` failed `mypy --strict`.**
+  The lazy `__getattr__` was typed `-> object`, so `Depends(require_auth)` was
+  an error in every project that followed the docs. The names are declared
+  for the type checker; the import stays lazy. The generated-quality smoke
+  gates the documented imports.
+
 ### Added
+
+- **`[app] cors_origin_regex`**, for origins a list cannot spell -- one per
+  tenant subdomain, when the SPA signs users in at `<tenant>.example.com`.
+  Passed to Starlette's `allow_origin_regex`, matched against the whole
+  origin, in addition to `cors_origins`; a pattern that does not compile
+  stops the boot. Tested against a lookalike (`evil-example.com`) and a suffix
+  (`example.com.evil.com`). Documented in docs/deploy.md, CORS.
 
 - **`--fields` knows enums: `tipo:enum(personal,empresa,otra)`** (with `?` and
   `=personal` like any other type, and allowed in a `--unique` key). It writes
