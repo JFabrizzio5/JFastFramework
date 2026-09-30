@@ -18,6 +18,7 @@ from jfastframework.cli.generate import (
     _write_service_envs,
     _write_workspace_secrets,
     generate_service,
+    write_service_secrets,
 )
 from jfastframework.cli.scaffold import (
     BASE_PLUGINS,
@@ -169,6 +170,9 @@ def start(
         ui.created(".env", f"{secrets_written} generated, gitignored")
     for env_path in _write_service_envs(workspace):
         ui.created(str(env_path), "from the resource graph")
+    minted = write_service_secrets(api_dir, api_context)
+    if minted:
+        ui.created(f"{api_dir}/.env", f"+ {', '.join(minted)}, generated")
 
     ui.summary(
         f"{slug} is ready",

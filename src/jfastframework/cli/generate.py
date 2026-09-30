@@ -469,6 +469,46 @@ def _write_workspace_secrets(workspace: Workspace, *, dry_run: bool = False) -> 
     return generated
 
 
+def _env_lines(path: Path) -> list[str]:
+    """The ``KEY=value`` lines of an env file, comments and blanks dropped."""
+    if not path.is_file():
+        return []
+    return [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    ]
+
+
+def write_service_secrets(destination: Path, context: dict[str, Any]) -> list[str]:
+    """Generate the secrets a service mints with, into its .env, once each.
+
+    `jfast start` writes a .env the service boots from; with `accounts` on,
+    that service signs its own tokens and creates its first admin, and both
+    need a secret nobody has chosen yet. Generated rather than left as
+    CHANGEME, because a placeholder that boots is a placeholder that ships.
+    An existing value is never replaced: rotating a secret is a decision.
+    """
+    import secrets as _secrets
+
+    wanted: dict[str, str] = {}
+    if context.get("has_accounts"):
+        wanted["JFAST_AUTH_SECRET"] = _secrets.token_hex(32)
+        wanted["JFAST_ACCOUNTS_BOOTSTRAP_ADMIN_PASSWORD"] = _secrets.token_urlsafe(18)
+    env_path = destination / ".env"
+    present = {line.partition("=")[0].strip() for line in _env_lines(env_path)}
+    missing = {key: value for key, value in wanted.items() if key not in present}
+    if missing:
+        existing = env_path.read_text(encoding="utf-8") if env_path.is_file() else ""
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        env_path.write_text(
+            existing + "".join(f"{key}={value}\n" for key, value in sorted(missing.items())),
+            encoding="utf-8",
+        )
+    return sorted(missing)
+
+
 def _write_service_envs(workspace: Workspace) -> list[Path]:
     """Write each service's and frontend's .env from the resource graph.
 
@@ -490,6 +530,14 @@ def _write_service_envs(workspace: Workspace) -> list[Path]:
         env_path = Path(backend.path) / ".env"
         body = "# Written by jfast from jfast.workspace.toml.\n"
         body += "".join(f"{key}={value}\n" for key, value in sorted(variables.items()))
+        # Everything the graph does not own is kept: a secret the service
+        # needs for itself (JFAST_AUTH_SECRET) is not a binding, and rewriting
+        # this file used to drop it, so the next start failed on a missing key.
+        kept = [
+            line for line in _env_lines(env_path) if line.partition("=")[0].strip() not in variables
+        ]
+        if kept:
+            body += "".join(f"{line}\n" for line in kept)
         env_path.parent.mkdir(parents=True, exist_ok=True)
         env_path.write_text(body, encoding="utf-8")
         written.append(env_path)
