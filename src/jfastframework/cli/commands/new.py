@@ -332,6 +332,14 @@ def new_service(
             "writes the contract that matches what it generated."
         ),
     ),
+    multitenant: bool = typer.Option(
+        False,
+        "--multitenant",
+        help=(
+            "Several customers: adds tenancy (sources token, user) and auth, per-tenant RAG "
+            "and LLM budget, and routes generated here use current_tenant."
+        ),
+    ),
     port: int | None = typer.Option(
         None, "--port", "-p", help="Base port. Defaults to the next free block in the workspace."
     ),
@@ -379,6 +387,7 @@ def new_service(
             layout=layout,
             force=force,
             dry_run=dry_run,
+            multitenant=multitenant,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc

@@ -75,24 +75,56 @@ class PluginSpec:
     label: str
     # Offered by `jfast init`'s datastore prompt.
     is_datastore: bool = False
+    # Pre-checked in `jfast init` and on in `jfast start`. See RECOMMENDED.
+    recommended: bool = False
+    # Pre-checked when the service serves several customers: a tenant has to
+    # come from somebody signed in.
+    multitenant: bool = False
 
 
 # The menu the installer shows, and the source of the extras a generated
-# service pins. Keep it in step with the entry points in pyproject.toml.
+# service pins. `test_every_shipped_plugin_is_in_the_menu_a_generated_service_shows`
+# compares it with the entry points in pyproject.toml, both ways.
+#
+# Recommended, and why each one earns being on by default:
+#
+#   telemetry  free until OTEL_EXPORTER_OTLP_ENDPOINT is set (it exports
+#              nothing and its overhead is measured inside the performance
+#              budget), and traces are what is missed first when something is
+#              slow in production -- after the fact, when turning it on no
+#              longer helps.
+#   queue      anything slower than a request (a model call, a PDF, an email)
+#              belongs off the request path. The default backend is the
+#              PostgreSQL the service already has, so it costs no new server,
+#              and `jfast worker` / the generated worker service consume it.
+#
+# For a multitenant service, also auth and accounts: the tenant is read from
+# a signed token (`token`) or is the signed-in user (`user`), so something has
+# to sign people in. A service with a separate identity provider unchecks
+# accounts and points auth at the provider's JWKS.
 PLUGIN_CATALOG: dict[str, PluginSpec] = {
     "observability": PluginSpec("", "Structured JSON logging with request ids"),
     "metrics": PluginSpec("metrics", "Prometheus RED metrics at /metrics"),
+    "telemetry": PluginSpec(
+        "telemetry",
+        "Traces (OpenTelemetry), exported once an OTLP endpoint is set",
+        recommended=True,
+    ),
     "database": PluginSpec("db", "PostgreSQL + pgvector (SQLAlchemy, Alembic)", True),
     "cache": PluginSpec("cache", "Redis cache, pub/sub and queue", True),
     "mongo": PluginSpec("mongo", "MongoDB for document-shaped data", True),
     "qdrant": PluginSpec("qdrant", "Qdrant vector database", True),
     "rag": PluginSpec("rag", "Tenant-scoped semantic and hybrid search over pgvector or Qdrant"),
     "llm": PluginSpec("llm", "Chat, vision and embeddings with a spending cap (OpenAI-compatible)"),
-    "queue": PluginSpec("queue", "Background jobs on PostgreSQL, Redis or RabbitMQ"),
+    "queue": PluginSpec(
+        "queue", "Background jobs on PostgreSQL, Redis or RabbitMQ", recommended=True
+    ),
     "outbox": PluginSpec("db", "Jobs and events that commit with the request's rows"),
     "idempotency": PluginSpec("db", "Idempotency-Key: a retried POST gets the first answer"),
-    "auth": PluginSpec("auth", "JWT verification, scopes, rotation, revocation"),
-    "accounts": PluginSpec("accounts", "Users, password login, roles and permissions"),
+    "auth": PluginSpec("auth", "JWT verification, scopes, rotation, revocation", multitenant=True),
+    "accounts": PluginSpec(
+        "accounts", "Users, password login, roles and permissions", multitenant=True
+    ),
     "ratelimit": PluginSpec("cache", "Per-tenant and per-subject rate limits (Redis-backed)"),
     "channels": PluginSpec("", "Declared pub/sub channels over memory, Redis or Kafka"),
     "websocket": PluginSpec("server", "Authenticated WebSocket connections, Redis fan-out"),
@@ -106,6 +138,45 @@ PLUGIN_CATALOG: dict[str, PluginSpec] = {
     "notifications": PluginSpec("fcm", "Push notifications via Firebase (FCM)"),
     "mail": PluginSpec("mail", "Email with templates, queued by default"),
 }
+
+RECOMMENDED = tuple(n for n, s in PLUGIN_CATALOG.items() if s.recommended)
+MULTITENANT_RECOMMENDED = tuple(n for n, s in PLUGIN_CATALOG.items() if s.multitenant)
+
+#: Where a multitenant service reads the tenant from, in order of trust: the
+#: token's tenant claim when an organisation owns the data, the signed-in user
+#: when every account is its own tenant. Both come from a signed token, never
+#: from a header a client can set.
+MULTITENANT_SOURCES = ("token", "user")
+
+
+def plugin_importable(name: str) -> bool:
+    """Whether a catalogued plugin's module is importable in this install.
+
+    Read from the entry point rather than imported: finding the module is
+    enough to know it ships, and importing it would pull in its optional
+    dependencies. A plugin catalogued ahead of its code -- one being written on
+    another branch -- is then skipped by the installer with a note instead of
+    written into a jfast.toml that cannot boot.
+    """
+    import importlib.util
+    from importlib.metadata import entry_points
+
+    modules = [
+        entry.value.partition(":")[0]
+        for entry in entry_points(group="jfastframework.plugins")
+        if entry.name == name
+    ]
+    # An editable install keeps the entry points it was installed with, so a
+    # builtin added since is found by its module path instead.
+    modules.append(f"jfastframework.plugins.builtin.{name}")
+    for module in modules:
+        try:
+            if importlib.util.find_spec(module) is not None:
+                return True
+        except (ImportError, ValueError):
+            continue
+    return False
+
 
 DATASTORE_PLUGINS = tuple(n for n, s in PLUGIN_CATALOG.items() if s.is_datastore)
 
@@ -176,13 +247,16 @@ def _pluralize_es(word: str) -> str:
     return plural + sep + rest
 
 
-def resolve_plugins(kind: str, chosen: Sequence[str]) -> list[str]:
+def resolve_plugins(kind: str, chosen: Sequence[str], *, multitenant: bool = False) -> list[str]:
     """Full, ordered plugin list for a generated service.
 
     Unknown names are rejected here rather than at the service's first boot,
     and `web` is forced on for a `web` service because the kind is meaningless
-    without it.
+    without it. ``multitenant`` adds tenancy and the auth it reads the tenant
+    through -- the one answer sets both, so they cannot disagree.
     """
+    if multitenant:
+        chosen = [*chosen, *(n for n in ("auth", "tenancy") if n not in chosen)]
     unknown = [name for name in chosen if name not in PLUGIN_CATALOG]
     if unknown:
         raise ValueError(
@@ -483,9 +557,11 @@ def service_context(
     sample_module: str = "item",
     agent_docs: bool = False,
     grpc: bool = False,
+    multitenant: bool = False,
+    frontend_accounts: bool = True,
 ) -> dict[str, Any]:
     snake = to_snake(name)
-    enabled = resolve_plugins(kind, plugins)
+    enabled = resolve_plugins(kind, plugins, multitenant=multitenant)
     # Pick the vector store the service can actually reach. Enabling `rag` and
     # `qdrant` but writing `store = "pgvector"` produces a service that boots
     # and then fails on the first search -- the exact trap the plugin's own
@@ -527,6 +603,16 @@ def service_context(
         "queue_backend": queue_backend,
         "datastores": datastores,
         "enabled_plugins": enabled,
+        # One answer, every piece: tenancy, how routes are guarded, whether RAG
+        # and the LLM budget are per tenant. See docs/local-setup.md.
+        "multitenant": "tenancy" in enabled,
+        "tenancy_sources": list(MULTITENANT_SOURCES)
+        if multitenant
+        else (["token"] if "auth" in enabled else []) + ["subdomain"],
+        "route_access": route_access_for(enabled),
+        # Read by the frontend templates: account pages and a private-by-default
+        # router only when some backend in the workspace has `accounts`.
+        "frontend_accounts": frontend_accounts,
         "extras": extras_for(enabled),
         "framework_pin": framework_pin(),
         "available_plugins": [

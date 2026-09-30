@@ -129,6 +129,31 @@ def _sort_mounted_imports(entry: Path, *, first_party: set[str]) -> None:
         entry.write_text("\n".join(rewritten), encoding="utf-8")
 
 
+def workspace_has_accounts(workspace: Workspace | None) -> bool:
+    """Whether any backend in the workspace enables `accounts`.
+
+    A generated frontend draws sign-in, registration and a Security page, and
+    makes its routes private by default, only when something can sign people
+    in; otherwise it stays public with no account pages. Read from each
+    backend's jfast.toml, which is where that is decided.
+    """
+    import tomllib
+
+    if workspace is None:
+        return False
+    for service in workspace.services:
+        if service.is_frontend:
+            continue
+        try:
+            data = tomllib.loads((Path(service.path) / "jfast.toml").read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        plugins = data.get("plugins", {})
+        if isinstance(plugins, dict) and "accounts" in plugins.get("enabled", []):
+            return True
+    return False
+
+
 def generate_service(
     name: str,
     *,
@@ -145,6 +170,8 @@ def generate_service(
     layout: str | None = None,
     force: bool = False,
     dry_run: bool = False,
+    multitenant: bool = False,
+    frontend_accounts: bool | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """Render a service and register it in the workspace, if there is one.
 
@@ -176,6 +203,10 @@ def generate_service(
         agent_docs=agent_docs,
         workspace_name=workspace.name if workspace else slug,
         api_base_url=workspace.api_base_url() if workspace else f"http://localhost:{resolved_port}",
+        multitenant=multitenant,
+        frontend_accounts=(
+            workspace_has_accounts(workspace) if frontend_accounts is None else frontend_accounts
+        ),
     )
     destination = target or Path(slug)
 

@@ -74,6 +74,28 @@ store = "{{ rag_store }}"
 collection = "rag_chunks"
 dimensions = 768        # must match the embedding model
 ollama_model = "nomic-embed-text"
+{% if multitenant %}
+# Every chunk carries its tenant and every search is filtered by it; a read
+# or write with no tenant is refused rather than answered from everyone's.
+tenant_scoped = true
+{% else %}
+# One customer: chunks carry no tenant. Turning tenancy on later means
+# re-keying the chunks to a tenant and setting this to true.
+tenant_scoped = false
+{% endif %}
+{% endif %}
+{% if has_llm %}
+
+[plugin.llm]
+# The key comes from JFAST_LLM_API_KEY. Spending stops at the cap for the
+# period instead of at the end of the month's invoice.
+budget_usd = 10.0
+budget_period = "month"
+{% if multitenant %}
+# Per tenant, within the same period, so one customer cannot spend the
+# others' share. 0 turns the per-tenant cap off.
+tenant_budget_usd = 2.0
+{% endif %}
 {% endif %}
 {% if has_queue %}
 
@@ -85,6 +107,15 @@ max_attempts = 3
 {% if has_auth %}
 
 [plugin.auth]
+{% if has_accounts %}
+# This service signs its own users in (the accounts plugin), so it also mints
+# the tokens. HMAC with one secret is right while one service verifies them;
+# move to an RS256 key pair and jwks once a second service has to.
+# The secret comes from JFAST_AUTH_SECRET, at least 32 bytes.
+mode = "secret"
+algorithms = ["HS256"]
+issue_tokens = true
+{% else %}
 # jwks       : fetch public keys from an identity service. Right for more than
 #              one service -- no shared secret to leak.
 # public_key : a pinned PEM. Same trust model, no network dependency.
@@ -93,7 +124,22 @@ mode = "jwks"
 algorithms = ["RS256"]
 # jwks_url comes from JFAST_AUTH_JWKS_URL.
 issuer = ""
+{% endif %}
 audience = "{{ service_slug }}"   # without this, a token for any sibling service is accepted
+{% endif %}
+{% if has_accounts %}
+
+[plugin.accounts]
+# The first admin is created on the first start; its password comes from
+# JFAST_ACCOUNTS_BOOTSTRAP_ADMIN_PASSWORD and never from this file.
+bootstrap_admin_email = "admin@example.com"
+allow_registration = {{ "true" if multitenant else "false" }}
+{% endif %}
+{% if has_telemetry %}
+
+[plugin.telemetry]
+# Exports nothing until OTEL_EXPORTER_OTLP_ENDPOINT is set, so it is free in
+# development. Point it at a collector, Jaeger, Tempo, Honeycomb or Datadog.
 {% endif %}
 {% if has_events %}
 
@@ -132,10 +178,20 @@ visibility = "private"  # signed URLs that expire
 [plugin.tenancy]
 # Ordered by trust: the first source that yields a tenant wins. "header" is
 # absent on purpose -- X-Tenant-ID is one curl away from another tenant's data.
-sources = [{% if has_auth %}"token", {% endif %}"subdomain"]
+{% if multitenant %}
+# token: the tenant claim of a signed token, when an organisation owns the
+# data. user: the signed-in user is the tenant, when every account owns its
+# own. Both are signed; neither can be chosen by the client.
+{% endif %}
+sources = [{% for source in tenancy_sources %}"{{ source }}"{{ ", " if not loop.last }}{% endfor %}]
+{% if "subdomain" in tenancy_sources %}
 # Required, or every hostname looks like a tenant and the service refuses to
 # start. acme.<base_domain> then resolves to the tenant "acme".
 base_domain = "localhost"
+{% endif %}
+# Routes generated here take the tenant from `current_tenant`, which answers
+# 401/403 without one; this is for everything else, and false keeps /health
+# and the sign-in routes reachable.
 require_tenant = false
 # One deployment, tenants in different countries, each seeing its own day
 # boundaries. A tenant with no entry here uses [app] timezone.
