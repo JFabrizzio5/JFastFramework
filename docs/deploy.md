@@ -278,6 +278,28 @@ An explicit value always wins, including an explicit `0`: the raise fills in a
 setting nobody chose, it never overrules one somebody did. `[plugins] disabled`
 wins too — a service that disables `storage` is back on the plain pair.
 
+### CORS
+
+Off until an origin is listed. `cors_origins` is a list of exact origins;
+`cors_origin_regex` is a pattern for the ones a list cannot spell -- one per
+tenant subdomain, when the SPA on `app.example.com` signs a user in at
+`acme.example.com/api/auth/login`:
+
+```toml
+[app]
+cors_origins = ["https://app.example.com"]
+# A TOML literal string, so the backslashes reach the regex as written.
+cors_origin_regex = 'https://[a-z0-9-]+\.example\.com'
+cors_allow_credentials = true
+```
+
+An origin is allowed when it is in the list **or** matches the pattern. The
+pattern is matched against the whole origin (Starlette's `allow_origin_regex`,
+`fullmatch`), so `https://acme.example.com.evil.com` does not pass on its
+prefix; escape the dots, or `.` also matches the `-` in
+`https://evil-example.com`. A pattern that does not compile stops the boot.
+`JFAST_CORS_ORIGIN_REGEX` sets it from the environment.
+
 ### Trusted proxies
 
 `X-Forwarded-For` is written by whoever sent the request, so it is only

@@ -7,6 +7,7 @@ the first request that touches it.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Sequence
 from datetime import tzinfo
@@ -109,6 +110,12 @@ class JFastSettings(BaseSettings):
     # cors_allow_credentials, because browsers reject that pair anyway and
     # failing at boot beats failing in someone's console.
     cors_origins: list[str] = Field(default_factory=list)
+    # Origins a list cannot spell: one per tenant subdomain, say. Matched
+    # whole (Starlette's allow_origin_regex uses fullmatch), so anchors are
+    # implied; escape the dots, or `.` also matches the `-` in a lookalike
+    # domain. Checked in addition to cors_origins, and compiled at boot.
+    #   cors_origin_regex = 'https://[a-z0-9-]+\.example\.com'   # TOML literal string
+    cors_origin_regex: str | None = None
     cors_allow_credentials: bool = False
     cors_allow_methods: list[str] = Field(default_factory=lambda: ["*"])
     cors_allow_headers: list[str] = Field(default_factory=lambda: ["*"])
@@ -280,6 +287,18 @@ class JFastSettings(BaseSettings):
         reads as an application bug rather than a missing package.
         """
         resolve_zone(value)
+        return value
+
+    @field_validator("cors_origin_regex")
+    @classmethod
+    def _validate_origin_regex(cls, value: str | None) -> str | None:
+        """A pattern that does not compile would fail on the first preflight."""
+        if value is None or not value.strip():
+            return None
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"cors_origin_regex is not a valid pattern: {exc}") from exc
         return value
 
     @field_validator("trusted_proxies")
