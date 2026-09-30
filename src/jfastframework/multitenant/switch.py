@@ -34,7 +34,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from jfastframework.db.rls import tenant_policy_sql
 from jfastframework.multitenant._source import (
     TenantTable,
     enabled_plugins,
@@ -181,6 +180,11 @@ def _rag_statements(table: str, tenant: str) -> list[str]:
         # whose alphabet has no quote -- and this is text written into a revision file.
         f"UPDATE {table} SET tenant_id = '{tenant}' WHERE tenant_id IS NULL; ",  # nosec B608
     ]
+    # Here, not at the top: jfastframework.db needs SQLAlchemy (the `db`
+    # extra), and the CLI imports this module on every `jfast` command --
+    # a top-level import broke `jfast version` on a bare install.
+    from jfastframework.db.rls import tenant_policy_sql
+
     for statement in tenant_policy_sql(table):
         # One clause a line, so the literal stays readable in a diff.
         for clause in re.split(r"(?= USING \(| WITH CHECK \()", statement):
