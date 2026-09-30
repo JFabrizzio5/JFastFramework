@@ -317,9 +317,7 @@ class Worker:
         if not self._tasks:
             return
         running = set(self._tasks)
-        logger.info(
-            "draining %d in-flight job(s), up to %gs", len(running), self.drain_timeout
-        )
+        logger.info("draining %d in-flight job(s), up to %gs", len(running), self.drain_timeout)
         _, unfinished = await asyncio.wait(running, timeout=self.drain_timeout)
         if not unfinished:
             return
@@ -389,6 +387,9 @@ class Worker:
                 tracing.attach(job.trace),
                 tracing.span(
                     f"job {job.task}",
+                    # Reserved: the telemetry backend turns it into the span
+                    # kind rather than recording it as an attribute.
+                    **{"span.kind": "consumer"},
                     job_id=job.id,
                     task=job.task,
                     attempt=job.attempts,

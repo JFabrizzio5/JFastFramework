@@ -179,7 +179,7 @@ class Outbox:
             names = ", ".join(s.name for s in local)
             raise UndeliverableEvent(
                 f"event {event.type!r} has subscribers in this service ({names}) but no "
-                f"queue to run them on. Add \"queue\" to [plugins].enabled in jfast.toml "
+                f'queue to run them on. Add "queue" to [plugins].enabled in jfast.toml '
                 f"(the PostgreSQL backend needs nothing else)."
             )
         if not local and self._events is None:
@@ -396,6 +396,19 @@ class OutboxRelay:
             )
             counts = {str(status): int(count) for status, count in rows}
         return {state: counts.get(state, 0) for state in (PENDING, PUBLISHED, DEAD)}
+
+    async def latest_dead_error(self) -> str | None:
+        """Why the most recent dead row died, for /ready to quote."""
+        async with self._engine.connect() as conn:
+            reason: str | None = (
+                await conn.execute(
+                    select(outbox.c.last_error)
+                    .where(outbox.c.status == DEAD)
+                    .order_by(outbox.c.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        return reason
 
     async def failing(self) -> tuple[int, str | None]:
         """Pending rows that have failed at least once, and the latest reason.

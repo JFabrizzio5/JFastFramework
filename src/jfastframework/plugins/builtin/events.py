@@ -139,7 +139,12 @@ class EventBus:
         try:
             with (
                 tracing.attach(event.trace),
-                tracing.span(f"event {event.type}", topic=topic, event_id=event.id),
+                tracing.span(
+                    f"event {event.type}",
+                    **{"span.kind": "consumer"},
+                    topic=topic,
+                    event_id=event.id,
+                ),
             ):
                 for handler in self._handlers.get(topic, []):
                     await handler(event)

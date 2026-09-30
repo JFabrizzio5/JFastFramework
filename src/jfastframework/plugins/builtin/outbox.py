@@ -135,9 +135,13 @@ class OutboxPlugin(Plugin):
             return HealthReport.fail(f"outbox unreadable: {exc}", critical=False)
         meta: dict[str, Any] = {**stats, "failing": failing, "oldest_pending_seconds": oldest}
         if stats["dead"]:
+            try:
+                reason = await self._relay.latest_dead_error()
+            except Exception:  # noqa: BLE001 - the count is the news; the reason is a bonus
+                reason = None
             return HealthReport.fail(
-                f"{stats['dead']} message(s) failed permanently; the reason is in "
-                f"jfast_outbox.last_error",
+                f"{stats['dead']} message(s) failed permanently; latest: "
+                f"{reason or 'see jfast_outbox.last_error'}",
                 critical=False,
                 **meta,
             )
