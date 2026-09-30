@@ -10,6 +10,7 @@ of it.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -268,18 +269,32 @@ def test_bare_has_the_structure_and_no_example(service: Path) -> None:
         assert example not in everything
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_BOX = re.compile(r"[\u2500-\u257f]")
+
+
+def _plain(rendered: str) -> str:
+    """The words of a CLI message, whatever the terminal did to them.
+
+    Under CI (GITHUB_ACTIONS), Rich colours each option in an error panel and
+    wraps it inside a box, so `--ui api` arrives split by escape codes and
+    borders. Locally it is plain, which is how this passed here and failed there.
+    """
+    return re.sub(r"\s+", " ", _BOX.sub(" ", _ANSI.sub("", rendered)))
+
+
 def test_htmx_pages_are_refused_with_declared_fields(service: Path) -> None:
     result = runner.invoke(
         app, ["new", "module", "pedido", "--ui", "htmx", "--fields", "total:money"]
     )
     assert result.exit_code != 0
-    assert "--ui api" in result.output
+    assert "--ui api" in _plain(result.output)
 
 
 def test_a_bad_field_stops_before_anything_is_written(service: Path) -> None:
     result = runner.invoke(app, ["new", "module", "pedido", "--fields", "total:currency"])
     assert result.exit_code != 0
-    assert "Choose from" in result.output
+    assert "Choose from" in _plain(result.output)
     assert not (service / "modules" / "pedido").exists()
 
 
