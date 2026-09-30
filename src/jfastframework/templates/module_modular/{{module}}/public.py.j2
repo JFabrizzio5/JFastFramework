@@ -26,6 +26,7 @@ A caller declares the dependency in contracts.toml:
 """
 
 {% set read_from = "item" %}
+{% set enum_module = ".enums" %}
 {% set repository_import = "from .repositories import " ~ Module ~ "Repository" %}
 {% set fetch = "item = await " ~ Module ~ "Repository(session, tenant_id=tenant_id).get(" ~ module ~ "_id)" %}
 {% set fetch_note = "# A read with no rule to enforce goes straight to the repository. A write\n    # added here goes through services/, so validations/ hold for every caller." %}

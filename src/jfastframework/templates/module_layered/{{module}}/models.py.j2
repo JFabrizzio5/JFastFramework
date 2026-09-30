@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-{% if spec.stdlib() %}
-{% for line in import_lines(spec.stdlib()) %}
+{% if spec.entity_stdlib() %}
+{% for line in import_lines(spec.entity_stdlib()) %}
 {{ line }}
 {% endfor %}
 
@@ -14,6 +14,10 @@ from __future__ import annotations
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jfastframework.db import Base, TenantMixin, TimestampMixin{{ ", UTCDateTime" if spec.needs_utc_datetime }}, VersionedMixin
+{% if spec.enum_fields %}
+
+{{ spec.enum_import(".enums") }}
+{% endif %}
 {% set entity_class = Module %}
 {% set entity_bases = "Base, VersionedMixin, TimestampMixin, TenantMixin" %}
 {% include "_module_shared/entity_body.j2" %}

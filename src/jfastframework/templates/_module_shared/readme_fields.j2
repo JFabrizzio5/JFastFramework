@@ -5,7 +5,7 @@
 | Field | Type | Null | Default |
 | --- | --- | --- | --- |
 {% for f in fields %}
-| `{{ f.name }}` | {{ f.type }}{% if f.length %}({{ f.length }}){% elif f.precision %}({{ f.precision }},{{ f.scale }}){% endif %}{% if f.type == "money" %} (minor units){% endif %} | {{ "yes" if f.nullable else "no" }} | {{ f.default if f.default is not none else "" }} |
+| `{{ f.name }}` | {{ f.type }}{% if f.length %}({{ f.length }}){% elif f.precision %}({{ f.precision }},{{ f.scale }}){% elif f.members %}({{ f.members|join(", ") }}) -- `{{ f.enum_class }}`{% endif %}{% if f.type == "money" %} (minor units){% endif %} | {{ "yes" if f.nullable else "no" }} | {{ f.default if f.default is not none else "" }} |
 {% endfor %}
 
 Every row also has `id`, `tenant_id` and the timestamps{% if layout == "layered" %}, and `version`{% endif %}.

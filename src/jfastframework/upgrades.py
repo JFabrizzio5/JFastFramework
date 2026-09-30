@@ -2063,6 +2063,29 @@ def _nullable_unique_keys(project: Project) -> list[str]:
     return found
 
 
+def _facades_with_an_optional_tenant(project: Project) -> list[str]:
+    """A multitenant service's module facades that still accept ``tenant_id=None``.
+
+    What 0.1.0a11 generated for every layout, tenancy or not. Only a service
+    with tenancy is told: with one customer, None is the right value (its rows
+    carry no tenant), and ``jfast check --multitenant-ready`` lists the same
+    signatures for the day that changes.
+    """
+    from jfastframework.multitenant.readiness import optional_tenant_parameters
+
+    if "tenancy" not in _active_plugins(project):
+        return []
+    found: list[str] = []
+    for relative, tree in _parsed_files(project.root):
+        parts = relative.split("/")
+        if len(parts) != 3 or parts[0] != "modules" or parts[2] != "public.py":
+            continue
+        for function, argument in optional_tenant_parameters(tree):
+            spelled = ast.unparse(argument.annotation) if argument.annotation else "= None"
+            found.append(f"{relative}:{argument.lineno} {function.name}(tenant_id: {spelled})")
+    return found
+
+
 def _tenant_header_without_tenancy(project: Project) -> list[str]:
     """Code that sends or configures the tenant header, in a service without ``tenancy``.
 
@@ -2389,6 +2412,26 @@ CHANGES: tuple[Change, ...] = (
             "postgresql_nulls_not_distinct=True, postgresql_where=text('field IS NOT NULL')), "
             "return early from the availability rule when the field is None, and write the "
             "migration that drops the constraint and creates the index."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="behaviour",
+        code="facade-tenant-optional",
+        summary="Generated facades accepted tenant_id=None, which reads every tenant's rows.",
+        detail=(
+            "public.py's get_<module>(session, *, tenant_id: str | None, ...) built its "
+            "repository with tenant_id as given, and None means no tenant filter: a task or "
+            "another module passing a variable that happened to be None read every tenant. "
+            "`jfast check --multitenant-ready` only caught the literal None. 0.1.0a12 "
+            "generates tenant_id: str in a service with tenancy, and the readiness report "
+            "flags a facade signature that admits None (facade-tenant-optional)."
+        ),
+        detect=_facades_with_an_optional_tenant,
+        remedy=(
+            "Change each listed parameter to `tenant_id: str` and run mypy: it names every "
+            "caller that can still pass None. Give those the tenant they run for -- "
+            "current_tenant in a route, job.tenant_id in a task."
         ),
     ),
     Change(

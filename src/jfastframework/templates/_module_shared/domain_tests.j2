@@ -22,10 +22,16 @@ import sys
 import pytest
 
 {% endif %}
-from {{ domain_module }} import {{ Module }}{{ ", " ~ Module ~ "RuleViolation" if checked or example or hexagonal }}
+{% set local = [domain_module ~ "." ~ Module] + ([domain_module ~ "." ~ Module ~ "RuleViolation"] if checked or example or hexagonal else []) %}
 {% if hexagonal %}
-from modules.{{ module }}.domain.ports import {{ Module }}Repository
-from modules.{{ module }}.tests import InMemory{{ Module }}Repository
+{% set local = local + ["modules." ~ module ~ ".domain.ports." ~ Module ~ "Repository", "modules." ~ module ~ ".tests.InMemory" ~ Module ~ "Repository"] + spec.enum_dotted("modules." ~ module ~ ".domain.enums") %}
+{% else %}
+{% set local = local + spec.enum_dotted("modules." ~ module ~ ".enums") %}
+{% endif %}
+{% for line in import_lines(local) %}
+{{ line }}
+{% endfor %}
+{% if hexagonal %}
 
 # modules/<name>/tests/this_file.py -> the project root, whatever the cwd is.
 PROJECT_ROOT = Path(__file__).resolve().parents[3]

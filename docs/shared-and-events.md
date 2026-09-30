@@ -22,6 +22,11 @@ Run without a flag it asks, because the placement *is* the decision:
 You do not have to answer it correctly on day one. Start an enum in the module
 that needs it, and the check tells you the day a second one wants it.
 
+An enum that is a column's type is declared with the module instead:
+`jfast new module cartera --fields "tipo:enum(personal,empresa,otra)"` writes
+the same `StrEnum` into the module's enums file and wires it into the column,
+the models and `public.py` ([the field grammar](modules.md#the-grammar)).
+
 ### The rule
 
 **`shared/` is vocabulary, not behaviour.** An enum, a type or a pure function

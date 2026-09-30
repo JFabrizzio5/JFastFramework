@@ -23,6 +23,9 @@ from jfastframework.db import Page
 from jfastframework.errors import ConflictError
 {% endif %}
 
+{% if spec.enum_names(keys=true) %}
+{{ spec.enum_import(".enums", keys=true) }}
+{% endif %}
 from .models import {{ Module }}
 from .repository import {{ Module }}Repository
 from .schemas import {{ Module }}Create, {{ Module }}Update

@@ -25,6 +25,9 @@ from __future__ import annotations
 {{ access_m.framework_imports()|trim }}
 
 from ..application.use_cases import {{ Module }}UseCases
+{% if spec.enum_fields %}
+{{ spec.enum_import("..domain.enums") }}
+{% endif %}
 from ..infrastructure.repository import Sql{{ Module }}Repository
 
 {{ access_m.router()|trim }}

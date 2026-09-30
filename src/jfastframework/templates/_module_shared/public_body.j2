@@ -9,6 +9,9 @@ from __future__ import annotations
 {{ line }}
 {% endfor %}
 
+{% if spec.enum_fields %}
+{{ spec.enum_import(enum_module) }}
+{% endif %}
 {{ repository_import }}
 
 if TYPE_CHECKING:
@@ -30,10 +33,24 @@ class {{ Module }}Summary:
 {% endfor %}
 
 
-async def get_{{ module }}(
-    session: AsyncSession, *, tenant_id: str | None, {{ module }}_id: int
-) -> {{ Module }}Summary | None:
+{% if access == "tenant" %}
+{{ fit("async def get_" ~ module ~ "(", ["session: AsyncSession", "*", "tenant_id: str", module ~ "_id: int"], ") -> " ~ Module ~ "Summary | None:", hug=true) }}
+    """One {{ module }}, or None when it does not exist for this tenant.
+
+    ``tenant_id`` is a ``str`` and never None: None would build the repository
+    with no tenant filter, and this function would answer for every tenant.
+    """
+{% else %}
+# tenant_id accepts None because this service has one customer. Its rows are
+# written with no tenant -- the routes pass request.state's, which is None --
+# so None is the only value that finds them, and it reads every row: here,
+# that one customer's. It is still a required argument, so every caller is
+# already passing one. When tenancy is turned on, make it `tenant_id: str`:
+# mypy then points at each caller that can still pass None, and `jfast check
+# --multitenant-ready` lists this signature (facade-tenant-optional) until then.
+{{ fit("async def get_" ~ module ~ "(", ["session: AsyncSession", "*", "tenant_id: str | None", module ~ "_id: int"], ") -> " ~ Module ~ "Summary | None:", hug=true) }}
     """One {{ module }}, or None when it does not exist for this tenant."""
+{% endif %}
     {{ fetch_note }}
     {{ fetch }}
     if {{ read_from }} is None{{ " or " ~ read_from ~ ".id is None" if read_from == "entity" }}:

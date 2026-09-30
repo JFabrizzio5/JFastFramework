@@ -8,4 +8,5 @@ needs to look at other rows, or at the current state of this one, is not a
 schema concern and belongs in ``validations/``.
 """
 
+{% set enum_module = "..enums" %}
 {% include "_module_shared/pydantic_models.j2" %}

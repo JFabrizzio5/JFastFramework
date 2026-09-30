@@ -207,6 +207,26 @@ def test_the_generated_contract_enforces_the_generated_layout(tmp_path: Path, la
     assert any("sqlalchemy" in v.message for v in violations)
 
 
+@pytest.mark.parametrize("layout", MODULE_LAYOUTS)
+def test_the_generated_contract_lets_scripts_print(tmp_path: Path, layout: str) -> None:
+    """`scripts/` is a terminal's entry point: printing there is the interface.
+
+    The async rules already exempted it and `forbid_call print` did not, so a
+    project's own e2e script failed its contract twelve times.
+    """
+    root = generated_service(tmp_path / "shop", layout)
+    contract = Contract.load(root / "contracts.toml")
+    for relative in ("scripts/e2e.py", "scripts/seed/tenants.py"):
+        (root / relative).parent.mkdir(parents=True, exist_ok=True)
+        (root / relative).write_text('print("ok")\n', encoding="utf-8")
+    assert check(contract, root) == []
+
+    planted = root / HTTP_FILE[layout]
+    planted.write_text(planted.read_text(encoding="utf-8") + '\nprint("debug")\n', "utf-8")
+    violations = [v for v in check(contract, root) if "print" in v.message]
+    assert [v.path for v in violations] == [HTTP_FILE[layout]], violations
+
+
 def test_html_templates_keep_their_runtime_jinja(tmp_path: Path) -> None:
     scaffolder = Scaffolder()
     context = module_context("product", ui="htmx")

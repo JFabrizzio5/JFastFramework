@@ -72,6 +72,30 @@ imagen de producción, el frontend generado en un navegador, una subida.
 - **El cliente de API generado convertía las subidas en JSON.** Forzaba
   `Content-Type: application/json` y axios serializaba un `FormData` como
   `{"archivo":{}}`. Se quitó; axios manda los objetos como JSON por sí solo.
+- **El contrato generado prohibía `print()` también en `scripts/`.** Las reglas
+  async ya exceptuaban `scripts/`, y `forbid_call print` no tenía `except_in`,
+  así que el script e2e del propio proyecto fallaba `jfast contracts check` una
+  vez por cada línea que imprimía. La regla ahora lleva `except_in =
+  ["scripts/**"]`: un comando que alguien corre en una terminal habla por
+  stdout. Los contratos ya escritos conservan su regla; agrega la línea a
+  `[[rules.forbid_call]] pattern = "print"` a mano.
+- **Las fachadas generadas aceptaban `tenant_id=None` en un servicio
+  multitenant.** `get_<modulo>(session, *, tenant_id: str | None, ...)` de
+  `public.py` le pasaba el valor al repositorio, y None significa sin filtro de
+  tenant: una tarea u otro módulo con una variable que resultaba ser None leía
+  las filas de todos los tenants, y `--multitenant-ready` solo detectaba el
+  literal. Un módulo generado con acceso por tenant (lo que implica tenancy)
+  ahora recibe `tenant_id: str`. Un servicio de un solo tenant conserva
+  `str | None` -- sus filas se escriben sin tenant, así que None es el único
+  valor que las encuentra -- con un comentario que lo explica, y `jfast check
+  --multitenant-ready` tiene una regla nueva, `facade-tenant-optional`, que
+  lista cada firma de fachada que admite None (`str | None`, `Optional[str]`,
+  `= None`) como paso previo al cambio. `jfast upgrade --check`:
+  `facade-tenant-optional`, para servicios con tenancy.
+- **`jfast new enum` dejaba el comentario `# None yet: jfast new enum ...` del
+  módulo arriba del enum que escribía.** El marcador se quita cuando llega el
+  primer enum.
+
 - **Un handler de `@task` o `@subscribe` no podía llegar a `llm`, `storage` ni
   al outbox.** Recibía el payload y una `TaskSession`, nada más, y los docs solo
   mostraban `request.app.state.jfast.require(...)` -- que un worker no tiene --,
@@ -96,6 +120,24 @@ imagen de producción, el frontend generado en un navegador, una subida.
   exec --`. Una variable puesta en el shell gana; dentro de un contenedor, y en
   la imagen de producción (que no tiene un compose que encontrar), no cambia
   nada.
+
+### Agregado
+
+- **`--fields` conoce los enums: `tipo:enum(personal,empresa,otra)`** (con `?`
+  y `=personal` como cualquier otro tipo, y permitido en una llave `--unique`).
+  Escribe `class CarteraTipo(StrEnum)` en el archivo de enums del módulo -- la
+  forma que escribe `jfast new enum` -- y lo usa en la columna, en los modelos
+  Create/Update/Read (cualquier otro valor es un 422, y las pruebas generadas
+  lo comprueban), en la entidad de dominio y en el DTO de `public.py`, en los
+  cuatro layouts. La columna es `Enum(native_enum=False)` guardando el valor
+  del miembro, más un CHECK con nombre construido desde el enum: autogenerate
+  lo escribe como una columna y un `CheckConstraint` (con
+  `create_constraint=True` escribía el CHECK dos veces), se lee de vuelta como
+  el enum, y SQLite crea la misma tabla. Verificado en PostgreSQL y SQLite: la
+  migración generada se aplica, un segundo autogenerate no encuentra nada, y
+  un INSERT crudo con otro valor se rechaza. Autogenerate no compara
+  restricciones CHECK, así que un miembro nuevo necesita una migración escrita
+  a mano (docs/modules.md dice cuál).
 
 ## [0.1.0a11] - 2026-09-30
 

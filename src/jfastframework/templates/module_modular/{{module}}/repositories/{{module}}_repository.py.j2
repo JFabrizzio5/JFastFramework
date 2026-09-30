@@ -15,6 +15,9 @@ from __future__ import annotations
 {% endif %}
 from jfastframework.db import BaseRepository
 
+{% if spec.enum_names(keys=true) %}
+{{ spec.enum_import("..enums", keys=true) }}
+{% endif %}
 from ..models import {{ Module }}
 
 

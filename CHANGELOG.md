@@ -71,6 +71,29 @@ generated frontend in a browser, an upload.
 - **The generated API client turned uploads into JSON.** It forced
   `Content-Type: application/json`, and axios then serialised a `FormData` as
   `{"archivo":{}}`. Removed; axios sends objects as JSON by itself.
+- **The generated contract forbade `print()` in `scripts/` too.** The async
+  rules already exempted `scripts/`, and `forbid_call print` had no
+  `except_in`, so a project's own e2e script failed `jfast contracts check`
+  once per line it printed. The rule now carries `except_in = ["scripts/**"]`:
+  a command someone runs in a terminal talks through stdout. Contracts already
+  written keep their rule; add the line to `[[rules.forbid_call]] pattern =
+  "print"` by hand.
+- **Generated facades accepted `tenant_id=None` in a multitenant service.**
+  `public.py`'s `get_<module>(session, *, tenant_id: str | None, ...)` passed
+  the value to the repository, and None means no tenant filter: a task or
+  another module holding a variable that happened to be None read every
+  tenant's rows, and `--multitenant-ready` only caught the literal. A module
+  generated with tenant access (what tenancy implies) now takes `tenant_id:
+  str`. A single-tenant service keeps `str | None` -- its rows are written with
+  no tenant, so None is the only value that finds them -- with a comment saying
+  so, and `jfast check --multitenant-ready` has a new rule,
+  `facade-tenant-optional`, that lists every facade signature admitting None
+  (`str | None`, `Optional[str]`, `= None`) as a step before the switch.
+  `jfast upgrade --check`: `facade-tenant-optional`, for services with tenancy.
+- **`jfast new enum` left the module's `# None yet: jfast new enum ...`
+  comment above the enum it wrote.** The placeholder is removed when the first
+  enum lands.
+
 - **A `@task` or `@subscribe` handler could not reach `llm`, `storage` or the
   outbox.** It received the payload and a `TaskSession`, nothing else, and the
   docs only showed `request.app.state.jfast.require(...)` -- which a worker does
@@ -94,6 +117,23 @@ generated frontend in a browser, an upload.
   every printed `alembic` step goes through `jfast exec --`. A variable set in
   the shell wins; inside a container, and in the production image (which has
   no compose file to find), nothing changes.
+
+### Added
+
+- **`--fields` knows enums: `tipo:enum(personal,empresa,otra)`** (with `?` and
+  `=personal` like any other type, and allowed in a `--unique` key). It writes
+  `class CarteraTipo(StrEnum)` into the module's enums file -- the shape `jfast
+  new enum` writes -- and uses it in the column, the Create/Update/Read models
+  (any other value is a 422, and the generated tests say so), the domain
+  entity and the `public.py` DTO, in all four layouts. The column is
+  `Enum(native_enum=False)` storing the member's value, plus a named CHECK
+  built from the enum: autogenerate renders it as one column and one
+  `CheckConstraint` (with `create_constraint=True` it wrote the CHECK twice),
+  it reads back as the enum, and SQLite creates the same table. Verified on
+  PostgreSQL and SQLite: the rendered migration applies, a second autogenerate
+  finds nothing, and a raw INSERT of another value is refused. Autogenerate
+  does not compare CHECK constraints, so a member added later needs a
+  hand-written migration (docs/modules.md says which).
 
 ## [0.1.0a11] - 2026-09-30
 

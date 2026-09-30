@@ -316,6 +316,13 @@ own repository.
   request to infer it from — a worker, a scheduled task, another module's
   service. An implicit tenant is exactly how a job ends up reading every
   tenant's rows ([Queues and events](queues-and-events.md) has the story).
+  In a multitenant service (`--access tenant`, what tenancy implies) it is
+  `tenant_id: str`: `None` would build the repository with no tenant filter
+  and the facade would answer for every tenant. In a single-tenant service it
+  is `tenant_id: str | None`, because the rows are written with no tenant and
+  `None` is the only value that finds them; `jfast check --multitenant-ready`
+  lists those signatures (`facade-tenant-optional`) to change when tenancy goes
+  on.
 - **DTOs, not entities.** An ORM entity drags its session and lazy relations
   across the boundary, and every column becomes part of the API the day someone
   reads it. A DTO is a promise you chose to make. `public.py` may not import
@@ -539,6 +546,7 @@ field := name ":" type ["?"] ["=" default]
 | `date` | `date` | `DATE` | |
 | `datetime` | `datetime` | `TIMESTAMPTZ` | `AwareDatetime`: a naive one is a 422 |
 | `json` | `dict[str, Any]` | `JSONB` (`JSON` off PostgreSQL) | |
+| `enum(a,b,...)` | a `StrEnum`, `<Module><Field>` | `VARCHAR` + `CHECK (field IN ('a', 'b'))` | the enum: any other value is a 422 |
 
 - `?` makes it nullable, and optional in a create.
 - `=value` is the default, written in the type's own syntax: `=0`, `=false`,
@@ -549,6 +557,22 @@ field := name ":" type ["?"] ["=" default]
   would otherwise share a name.
 - `money` is integers on purpose. Floats do not add up to the cent; a
   `decimal(12,2)` is the alternative when the amount really has a fixed scale.
+- `enum(personal,empresa,otra)` writes `class CarteraTipo(StrEnum)` into the
+  module's enums file (`domain/enums.py` in hexagonal), the same shape `jfast
+  new enum` writes, and uses it everywhere the field appears: the column, the
+  create/update/read models, the domain entity and `public.py`. Values are
+  snake_case, at least two; the member is the value upper-cased
+  (`in_review` is `IN_REVIEW`). The default is one of them (`=personal`), `?`
+  makes it optional, and it may be part of a `--unique` key.
+  The column is SQLAlchemy's `Enum(native_enum=False)` storing the member's
+  *value* -- a `VARCHAR`, so a row reads back as the enum and the in-memory
+  SQLite a test uses creates the same table -- plus a named CHECK
+  (`ck_<table>_<field>`) built from the enum. Not a native PostgreSQL `ENUM`:
+  autogenerate renders this pair as one `sa.Enum(...)` column and one
+  `sa.CheckConstraint`, where `create_constraint=True` wrote the CHECK twice.
+  Autogenerate does not compare CHECK constraints, so a member added later
+  needs a migration that drops `ck_<table>_<field>` and creates it again
+  (and widens the column if the new value is longer than the longest one).
 
 Every mistake is refused before a file is written, with the fix in the
 message: an unknown type lists the ones there are, `id` or `tenant_id` says

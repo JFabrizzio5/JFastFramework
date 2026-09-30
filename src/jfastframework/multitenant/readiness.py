@@ -49,7 +49,7 @@ from jfastframework.multitenant._source import (
 )
 from jfastframework.project import SEVERITY_ORDER, Finding
 
-__all__ = ["RULES", "Readiness", "ReadinessFinding", "readiness"]
+__all__ = ["RULES", "Readiness", "ReadinessFinding", "optional_tenant_parameters", "readiness"]
 
 #: Every rule, its severity, and one line on what it looks for. The table the
 #: docs print, and the `--json` payload's `rules`, come from here.
@@ -57,6 +57,10 @@ RULES: dict[str, tuple[str, str]] = {
     "tenant-none-literal": (
         "high",
         "a call passing `tenant_id=None`: a repository, a facade, `rag` or `llm`",
+    ),
+    "facade-tenant-optional": (
+        "high",
+        "a module facade (`modules/<name>/public.py`) whose `tenant_id` parameter accepts None",
     ),
     "factory-without-tenant": (
         "high",
@@ -267,6 +271,88 @@ def _none_literals(source: SourceFile, report: _Reporter) -> None:
                     line=keyword.value.lineno,
                     span=_span(node),
                 )
+
+
+def _allows_none(annotation: ast.expr) -> bool:
+    """Does this annotation admit None: ``X | None``, ``Optional[X]``, ``Union[X, None]``?
+
+    A quoted annotation is read as the expression it quotes. Anything else --
+    an alias, ``Any`` -- is not guessed at.
+    """
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return False
+    for node in ast.walk(annotation):
+        if isinstance(node, ast.Constant) and node.value is None:
+            return True
+        if isinstance(node, ast.Name | ast.Attribute) and _called(node) == "Optional":
+            return True
+    return False
+
+
+def optional_tenant_parameters(
+    tree: ast.Module,
+) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, ast.arg]]:
+    """The facade functions in *tree* whose ``tenant_id`` accepts None.
+
+    Only the module-level, public functions -- the facade's API -- and only a
+    parameter literally named ``tenant_id`` that is annotated to admit None or
+    defaults to None. One with no annotation and no default says nothing, so
+    nothing is said about it. Shared with ``jfast upgrade --check``.
+    """
+    found: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, ast.arg]] = []
+    for function in tree.body:
+        if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if function.name.startswith("_"):
+            continue
+        arguments = function.args
+        positional = [*arguments.posonlyargs, *arguments.args]
+        defaults: dict[int, ast.expr | None] = {}
+        for argument, default in zip(
+            positional[len(positional) - len(arguments.defaults) :],
+            arguments.defaults,
+            strict=True,
+        ):
+            defaults[id(argument)] = default
+        for argument, kw_default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=True):
+            defaults[id(argument)] = kw_default
+        for argument in [*positional, *arguments.kwonlyargs]:
+            if argument.arg != "tenant_id":
+                continue
+            given = defaults.get(id(argument))
+            none_default = isinstance(given, ast.Constant) and given.value is None
+            annotation = argument.annotation
+            if none_default or (annotation is not None and _allows_none(annotation)):
+                found.append((function, argument))
+    return found
+
+
+def _is_facade(path: str) -> bool:
+    parts = Path(path).parts
+    return len(parts) == 3 and parts[0] == "modules" and parts[2] == "public.py"
+
+
+def _optional_facade_tenants(source: SourceFile, report: _Reporter) -> None:
+    if not _is_facade(source.path):
+        return
+    for function, argument in optional_tenant_parameters(source.tree):
+        report.add(
+            "facade-tenant-optional",
+            f"{function.name}(..., tenant_id) accepts None",
+            (
+                "A facade is how other modules, tasks and scripts read this one, and "
+                "`tenant_id=None` builds its repository with no tenant filter: it answers "
+                "for every tenant. The literal is caught at a call site; a variable that "
+                "happens to be None is not. Make it `tenant_id: str` -- mypy then names "
+                "every caller that can still pass None."
+            ),
+            source=source,
+            line=argument.lineno,
+            span=[function.lineno, argument.lineno],
+        )
 
 
 @dataclass
@@ -771,6 +857,7 @@ def readiness(
     readable = [source for source in files if not source.is_test]
     for source in readable:
         _none_literals(source, report)
+        _optional_facade_tenants(source, report)
         _raw_sql(source, table_names, report)
         _keys(source, report)
         _llm_calls(source, report)

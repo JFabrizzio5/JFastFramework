@@ -21,6 +21,9 @@ from __future__ import annotations
 {% endfor %}
 
 from modules.{{ module }}.domain.entities import {{ Module }}
+{% if spec.enum_names(keys=true) %}
+{{ spec.enum_import("modules." ~ module ~ ".domain.enums", keys=true) }}
+{% endif %}
 from modules.{{ module }}.domain.ports import {{ Module }}Page
 
 

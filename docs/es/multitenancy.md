@@ -472,6 +472,7 @@ upgrade --check` lista lo que rompe una actualización:
 | Regla | Severidad | Busca |
 | --- | --- | --- |
 | `tenant-none-literal` | high | una llamada que pasa `tenant_id=None`: un repositorio, una fachada, `rag`, `llm` |
+| `facade-tenant-optional` | high | una fachada de módulo (`modules/<nombre>/public.py`) cuyo `tenant_id` admite None (`str \| None`, `Optional[str]`, `= None`): una variable que resulta ser None lee todos los tenants, y ningún literal marca la llamada. Las fachadas generadas para un servicio de un solo tenant aparecen aquí a propósito -- cámbialas a `tenant_id: str` al encender tenancy |
 | `route-without-tenant` | high | una ruta que abre una sesión de base de datos y no tiene dependencia de tenant |
 | `factory-without-tenant` | high | lo mismo en una dependencia (`get_service`), reportada una vez con las rutas que la usan |
 | `raw-sql-without-tenant` | high | un string SQL que nombra una tabla de tenant y nunca `tenant_id` |

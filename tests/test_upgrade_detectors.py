@@ -1909,6 +1909,48 @@ def _a_key_over_a_required_field(root: Path) -> None:
     )
 
 
+A11_FACADE = (
+    "from __future__ import annotations\n\n"
+    "from .repositories import InvoiceRepository\n\n\n"
+    "async def get_invoice(\n"
+    "    session: AsyncSession, *, tenant_id: str | None, invoice_id: int\n"
+    ") -> InvoiceSummary | None:\n"
+    "    return await InvoiceRepository(session, tenant_id=tenant_id).get(invoice_id)\n"
+)
+
+
+@affected_by("facade-tenant-optional")
+def _a_multitenant_facade_that_admits_none(root: Path) -> list[str]:
+    service(root, "observability", "database", "auth", "tenancy")
+    write(root / "modules" / "invoice" / "public.py", A11_FACADE)
+    return ["modules/invoice/public.py:7 get_invoice(tenant_id: str | None)"]
+
+
+@unaffected_by("facade-tenant-optional")
+def _the_facade_requiring_the_tenant(root: Path) -> None:
+    _a_multitenant_facade_that_admits_none(root)
+    edit(root / "modules" / "invoice" / "public.py", "tenant_id: str | None", "tenant_id: str")
+
+
+@unaffected_by("facade-tenant-optional")
+def _the_same_facade_in_a_single_tenant_service(root: Path) -> None:
+    # One customer: its rows carry no tenant, so None is the value that finds them.
+    _a_multitenant_facade_that_admits_none(root)
+    edit(root / "jfast.toml", ', "tenancy"', "")
+
+
+@pytest.mark.parametrize("layout", MODULE_LAYOUTS)
+def test_a_facade_generated_for_a_multitenant_service_is_not_told(
+    tmp_path: Path, layout: str
+) -> None:
+    service(tmp_path, "observability", "database", "auth", "tenancy")
+    Scaffolder().render_trees(
+        module_trees(layout, "api", tmp_path / "modules", tmp_path),
+        module_context("orders", layout=layout, access="tenant"),
+    )
+    assert "facade-tenant-optional" not in report(tmp_path)
+
+
 @affected_by("revocation-fail-open")
 def _auth_checking_revocation_against_redis(root: Path) -> list[str]:
     service(root, "observability", "database", "cache", "auth", extra=AUTH_ISSUING)

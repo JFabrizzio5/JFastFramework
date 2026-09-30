@@ -22,7 +22,7 @@ from __future__ import annotations
 {{ line }}
 {% endfor %}
 
-{% if spec.non_nullable or spec.has_limits %}
+{% if spec.non_nullable or spec.has_limits or spec.enum_fields %}
 import pydantic
 {% endif %}
 import pytest
@@ -30,6 +30,9 @@ import pytest
 from jfastframework.db import Page
 from jfastframework.errors import {{ (["NotFoundError"] + (["ConflictError"] if uniques else []) + (["ValidationError"] if example else []))|sort|join(", ") }}
 
+{% if spec.enum_fields %}
+{{ spec.enum_import("modules." ~ module ~ ".enums") }}
+{% endif %}
 from modules.{{ module }}.models import {{ Module }}, {{ Module }}Create{{ ", " ~ Module ~ "Update" if fields }}
 from modules.{{ module }}.services import {{ Module }}Service
 {% if uniques %}
