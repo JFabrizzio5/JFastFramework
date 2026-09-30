@@ -126,6 +126,11 @@ algorithms = ["RS256"]
 issuer = ""
 {% endif %}
 audience = "{{ service_slug }}"   # without this, a token for any sibling service is accepted
+# With the cache plugin, revoked tokens are looked up in Redis. When Redis does
+# not answer: true accepts the token and logs it, so a cache outage does not
+# sign everyone out; false answers 503 -- for when a logout that lags an outage
+# is worse than the outage.
+revocation_fail_open = true
 {% endif %}
 {% if has_accounts %}
 
@@ -134,6 +139,10 @@ audience = "{{ service_slug }}"   # without this, a token for any sibling servic
 # JFAST_ACCOUNTS_BOOTSTRAP_ADMIN_PASSWORD and never from this file.
 bootstrap_admin_email = "admin@example.com"
 allow_registration = {{ "true" if multitenant else "false" }}
+# With the cache plugin: 20 sign-ins per IP and 10 per account every five
+# minutes, then 429. Behind a proxy, trust its X-Forwarded-For, or every user
+# shares one address and one budget.
+rate_limit = true
 {% endif %}
 {% if has_telemetry %}
 

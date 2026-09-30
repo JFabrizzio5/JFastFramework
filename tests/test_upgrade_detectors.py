@@ -247,6 +247,14 @@ _SOURCE_NOTES_ON_GENERATED_CODE = (
     "module-boundaries",
     "screaming-public-layer",
     "naive-datetime-rule",
+    "hexagonal-eager-create-payload",
+    "publish-without-receiver",
+    "contracts-event-rules",
+    "outbox-manual-construction",
+    "worker-drain-timeout",
+    "worker-py-to-module-tasks",
+    "redis-command-timeout",
+    "database-unavailable-503",
 )
 
 
@@ -1120,6 +1128,819 @@ def _a_service_with_no_compose_file(root: Path) -> None:
     # Nothing stale: the next `jfast deploy compose` writes the current shape.
     _a_compose_file_from_before_0_1_0a7(root)
     (root / "docker-compose.yml").unlink()
+
+
+# ---------------------------------------------------------------------------
+# 0.1.0a11: the hexagonal package init
+# ---------------------------------------------------------------------------
+
+HEX_INIT = "modules/orders/__init__.py"
+
+HEX_INIT_A10 = '''\
+"""Orders module (hexagonal layout)."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .application.use_cases import OrdersUseCases
+
+# The payload type is part of the module's public surface.
+from .adapters.http import OrdersCreate as CreatePayload
+
+__all__ = ["CreatePayload", "build_service", "router"]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "router":
+        from .adapters.http import router
+
+        return router
+    raise AttributeError(name)
+'''
+
+
+@affected_by("hexagonal-eager-create-payload")
+def _a_hexagonal_init_from_0_1_0a10(root: Path) -> list[str]:
+    service(root, "observability", "database", extra='\n[modules.orders]\nlayout = "hexagonal"\n')
+    write(root / HEX_INIT, HEX_INIT_A10)
+    return [f"{HEX_INIT}:11 from .adapters.http import OrdersCreate as CreatePayload"]
+
+
+@unaffected_by("hexagonal-eager-create-payload")
+def _the_same_init_deferring_the_payload(root: Path) -> None:
+    # The remedy: the import moves under TYPE_CHECKING and into __getattr__,
+    # which is where 0.1.0a11's template keeps it.
+    _a_hexagonal_init_from_0_1_0a10(root)
+    edit(root / HEX_INIT, "from .adapters.http import OrdersCreate as CreatePayload\n", "")
+    edit(
+        root / HEX_INIT,
+        "    from .application.use_cases import OrdersUseCases\n",
+        "    from .adapters.http import OrdersCreate as CreatePayload\n"
+        "    from .application.use_cases import OrdersUseCases\n",
+    )
+    edit(
+        root / HEX_INIT,
+        "    raise AttributeError(name)",
+        '    if name == "CreatePayload":\n'
+        "        from .adapters.http import OrdersCreate\n\n"
+        "        return OrdersCreate\n"
+        "    raise AttributeError(name)",
+    )
+
+
+def test_the_smoke_scripts_remedy_is_one_the_detector_accepts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`scripts/smoke_upgrade.sh` carries a project through this note by script.
+
+    The same regex, applied to the 0.1.0a10 init, must leave nothing to report
+    -- or the smoke would pass on a remedy the report still rejects.
+    """
+    _a_hexagonal_init_from_0_1_0a10(tmp_path)
+    script = (Path(__file__).parents[1] / "scripts" / "smoke_upgrade.sh").read_text()
+    body = script.split("<<'PYEOF'\n", 1)[1].split("PYEOF\n", 1)[0]
+    monkeypatch.chdir(tmp_path)
+    exec(compile(body, "smoke_upgrade.sh", "exec"), {})
+    assert "hexagonal-eager-create-payload" not in report(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# 0.1.0a11: tasks, events, workers
+# ---------------------------------------------------------------------------
+
+TASKS_LAYER = """
+[layers.tasks]
+paths = ["modules/*/tasks.py", "modules/*/tasks/*.py"]
+may_import = ["domain", "shared"]
+"""
+
+TASKS = "modules/invoice/tasks.py"
+
+
+@affected_by("contracts-tasks-layer")
+def _a_tasks_file_under_the_screaming_catch_all(root: Path) -> list[str]:
+    service(root, "observability", extra='\n[modules.invoice]\nlayout = "screaming"\n')
+    write(root / "contracts.toml", SCREAMING_A9 + PUBLIC_LAYER)
+    write(root / TASKS, '"""Work this module owns."""\n')
+    return [f"{TASKS}  ->  layer 'domain'"]
+
+
+@affected_by("contracts-tasks-layer")
+def _a_tasks_file_no_layer_of_a_0_1_0a3_contract_claims(root: Path) -> list[str]:
+    service(root, "observability")
+    write(root / "contracts.toml", CONTRACTS_A3)
+    write(root / TASKS, '"""Work this module owns."""\n')
+    return [f"{TASKS}  ->  no layer"]
+
+
+@unaffected_by("contracts-tasks-layer")
+def _the_same_contract_with_a_tasks_layer(root: Path) -> None:
+    _a_tasks_file_under_the_screaming_catch_all(root)
+    write(root / "contracts.toml", SCREAMING_A9 + PUBLIC_LAYER + TASKS_LAYER)
+
+
+@unaffected_by("contracts-tasks-layer")
+def _a_contract_with_no_tasks_file_to_misplace(root: Path) -> None:
+    _a_tasks_file_under_the_screaming_catch_all(root)
+    (root / TASKS).unlink()
+
+
+QUEUES_BY_NAME = "modules/comprobante/service.py"
+
+
+def modules_with_a_task_queued_by_name(root: Path, *, declared: bool) -> None:
+    """Cuadra's shape: `comprobante` queues a job whose handler `alerta` owns."""
+    service(root, "observability", "database", "queue")
+    deps = '["alerta"]' if declared else "[]"
+    write(
+        root / "contracts.toml",
+        PLACEMENT_CONTRACT + f"\n[modules.comprobante]\ndepends_on = {deps}\n",
+    )
+    write(root / "modules" / "alerta" / "__init__.py", "")
+    write(
+        root / "modules" / "alerta" / "public.py",
+        "def nothing() -> None:\n    return None\n",
+    )
+    write(
+        root / QUEUES_BY_NAME,
+        "from jfastframework.queues.base import Job\n\n\n"
+        "def revisar() -> Job:\n"
+        '    return Job(task="alerta.revisar_presupuesto", payload={})\n',
+    )
+
+
+@affected_by("contracts-event-rules")
+def _a_job_queued_by_name_for_another_modules_task(root: Path) -> list[str]:
+    modules_with_a_task_queued_by_name(root, declared=False)
+    return [f"{QUEUES_BY_NAME}:5 undeclared-dependency: module 'comprobante' queues task"]
+
+
+SUBSCRIBER = "modules/alerta/tasks.py"
+
+
+@affected_by("contracts-event-rules")
+def _a_subscription_to_an_event_nobody_declares(root: Path) -> list[str]:
+    service(root, "observability", "database", "queue")
+    write(root / "contracts.toml", PLACEMENT_CONTRACT)
+    write(root / "modules" / "alerta" / "__init__.py", "")
+    write(
+        root / SUBSCRIBER,
+        "from jfastframework.events import subscribe\n\n\n"
+        '@subscribe("comprobante.registrado")\n'
+        "async def revisar(event: object) -> None:\n"
+        "    return None\n",
+    )
+    return [f"{SUBSCRIBER}:4 orphan-subscription: "]
+
+
+@unaffected_by("contracts-event-rules")
+def _the_task_owner_declared_in_depends_on(root: Path) -> None:
+    modules_with_a_task_queued_by_name(root, declared=True)
+
+
+@unaffected_by("contracts-event-rules")
+def _the_event_declared_by_its_publisher(root: Path) -> None:
+    _a_subscription_to_an_event_nobody_declares(root)
+    write(
+        root / "contracts.toml",
+        PLACEMENT_CONTRACT + '\n[modules.comprobante]\npublishes = ["comprobante.registrado"]\n',
+    )
+    write(root / "modules" / "comprobante" / "__init__.py", "")
+
+
+PUBLISHER = "modules/comprobante/service.py"
+
+
+@affected_by("publish-without-receiver")
+def _an_event_with_no_subscriber_and_no_bus(root: Path) -> list[str]:
+    service(root, "observability", "database", "queue", "outbox")
+    write(
+        root / PUBLISHER,
+        "from jfastframework.events import Event\n\n\n"
+        "def registrado() -> Event:\n"
+        '    return Event(type="comprobante.registrado", data={})\n',
+    )
+    return [f'{PUBLISHER}:5 Event(type="comprobante.registrado")']
+
+
+@unaffected_by("publish-without-receiver")
+def _the_same_event_with_a_local_subscriber(root: Path) -> None:
+    _an_event_with_no_subscriber_and_no_bus(root)
+    write(
+        root / SUBSCRIBER,
+        "from jfastframework.events import subscribe\n\n\n"
+        '@subscribe("comprobante.registrado")\n'
+        "async def revisar(event: object) -> None:\n"
+        "    return None\n",
+    )
+
+
+@unaffected_by("publish-without-receiver")
+def _the_same_event_with_a_bus_for_other_services(root: Path) -> None:
+    _an_event_with_no_subscriber_and_no_bus(root)
+    edit(root / "jfast.toml", '"outbox"]', '"outbox", "events"]')
+
+
+BUS = "shared/bus.py"
+
+
+@affected_by("outbox-manual-construction")
+def _an_outbox_built_with_only_a_queue(root: Path) -> list[str]:
+    service(root, "observability", "database", "queue")
+    write(
+        root / BUS,
+        "from jfastframework.outbox import Outbox\n\n"
+        "def build(queue):\n"
+        "    return Outbox(queue=queue)\n",
+    )
+    return [f"{BUS}:4 Outbox(...) without events="]
+
+
+@unaffected_by("outbox-manual-construction")
+def _the_same_outbox_given_the_bus(root: Path) -> None:
+    _an_outbox_built_with_only_a_queue(root)
+    edit(root / BUS, "Outbox(queue=queue)", "Outbox(queue=queue, events=None)")
+
+
+@unaffected_by("outbox-manual-construction")
+def _a_class_of_the_projects_own_named_outbox(root: Path) -> None:
+    _an_outbox_built_with_only_a_queue(root)
+    edit(root / BUS, "from jfastframework.outbox import Outbox", "from shared.mail import Outbox")
+
+
+ROOT_WORKER = (
+    "from jfastframework.queues.worker import Worker\n\n"
+    "from main import app\n\n\n"
+    "async def main(ctx) -> None:\n"
+    "    tareas = ctx.require('tasks')\n\n"
+    '    @tareas.task("alerta.revisar_presupuesto")\n'
+    "    async def revisar(payload: dict) -> None:\n"
+    "        return None\n\n"
+    "    await Worker(ctx.require('queue'), tareas, concurrency=2).run()\n"
+)
+
+
+@affected_by("worker-py-to-module-tasks")
+def _a_root_worker_py_like_cuadras(root: Path) -> list[str]:
+    service(root, "observability", "database", "queue")
+    write(root / "worker.py", ROOT_WORKER)
+    return ["worker.py:9 tareas.task(...)", "worker.py:13 Worker(...)"]
+
+
+@unaffected_by("worker-py-to-module-tasks")
+def _the_handler_moved_into_the_module(root: Path) -> None:
+    service(root, "observability", "database", "queue")
+    write(
+        root / "modules" / "alerta" / "tasks.py",
+        "from jfastframework.tasks import task\n\n\n"
+        '@task("alerta.revisar_presupuesto")\n'
+        "async def revisar(payload: dict) -> None:\n"
+        "    return None\n",
+    )
+
+
+@unaffected_by("worker-py-to-module-tasks")
+def _a_root_script_that_runs_no_worker(root: Path) -> None:
+    service(root, "observability", "database", "queue")
+    write(root / "manage.py", "import sys\n\nprint(sys.argv)\n")
+
+
+@affected_by("worker-drain-timeout")
+def _a_worker_on_the_default_drain_window(root: Path) -> list[str]:
+    service(root, "observability", "queue")
+    write(root / "worker.py", ROOT_WORKER)
+    return ["worker.py:13 Worker(...) drains for 25s"]
+
+
+@unaffected_by("worker-drain-timeout")
+def _the_same_worker_with_a_window_of_its_own(root: Path) -> None:
+    _a_worker_on_the_default_drain_window(root)
+    edit(root / "worker.py", "concurrency=2)", "concurrency=2, drain_timeout=120)")
+
+
+@unaffected_by("worker-drain-timeout")
+def _a_worker_class_of_the_projects_own(root: Path) -> None:
+    _a_worker_on_the_default_drain_window(root)
+    edit(
+        root / "worker.py",
+        "from jfastframework.queues.worker import Worker",
+        "from shared.pool import Worker",
+    )
+
+
+QUEUE_COMPOSE = STALE_COMPOSE + "    environment:\n      JFAST_DB_DSN: postgresql://db/app\n"
+
+
+@affected_by("regenerate-deploy-for-worker")
+def _a_compose_file_with_a_queue_and_no_worker(root: Path) -> list[str]:
+    service(root, "observability", "database", "queue")
+    write(root / "docker-compose.yml", QUEUE_COMPOSE)
+    return ["docker-compose.yml: no worker container"]
+
+
+@affected_by("regenerate-deploy-for-worker")
+def _kubernetes_manifests_with_no_worker(root: Path) -> list[str]:
+    service(root, "observability", "database", "queue")
+    write(root / "k8s" / "api.yaml", "kind: Deployment\nmetadata:\n  name: billing-api\n")
+    return ["k8s/: no worker container"]
+
+
+@unaffected_by("regenerate-deploy-for-worker")
+def _the_same_compose_file_with_a_worker(root: Path) -> None:
+    _a_compose_file_with_a_queue_and_no_worker(root)
+    write(
+        root / "docker-compose.yml",
+        QUEUE_COMPOSE + "  worker:\n    build: .\n    command: [jfast, worker, --grace=25]\n",
+    )
+
+
+@unaffected_by("regenerate-deploy-for-worker")
+def _a_compose_file_for_a_service_without_a_queue(root: Path) -> None:
+    _a_compose_file_with_a_queue_and_no_worker(root)
+    edit(root / "jfast.toml", ', "queue"]', "]")
+
+
+def workspace_file(root: Path, *services: tuple[str, str, str]) -> None:
+    """`jfast.workspace.toml` listing `(name, kind, path)` services."""
+    blocks = "".join(
+        f'\n[[workspace.services]]\nname = "{name}"\nkind = "{kind}"\npath = "{path}"\n'
+        + f"port = {8000 + 10 * index}\n"
+        + ('frontend = "vue"\n' if kind == "spa" else "")
+        for index, (name, kind, path) in enumerate(services)
+    )
+    write(
+        root / "jfast.workspace.toml",
+        '[workspace]\nname = "shop"\nbase_port = 7990\n' + blocks,
+    )
+
+
+@affected_by("workspace-compose-client-env")
+def _a_workspace_compose_without_the_database_address(root: Path) -> list[str]:
+    service(root, "observability", "database")
+    workspace_file(root, ("billing", "api", "."))
+    write(root / "docker-compose.yml", "services:\n  billing:\n    build: .\n")
+    return ["docker-compose.yml: no internal address for JFAST_DB_DSN"]
+
+
+@unaffected_by("workspace-compose-client-env")
+def _the_same_workspace_compose_regenerated(root: Path) -> None:
+    _a_workspace_compose_without_the_database_address(root)
+    write(
+        root / "docker-compose.yml",
+        "services:\n  billing:\n    build: .\n    environment:\n"
+        "      JFAST_DB_DSN: postgresql+asyncpg://app:app@billing-database:5432/app\n",
+    )
+
+
+@unaffected_by("workspace-compose-client-env")
+def _a_workspace_that_does_not_list_this_service(root: Path) -> None:
+    # A workspace file above an unrelated checkout says nothing about it.
+    _a_workspace_compose_without_the_database_address(root)
+    workspace_file(root, ("other", "api", "other"))
+
+
+MIGRATION = "migrations/versions/0001_grants.py"
+
+
+@affected_by("framework-tables-altered-at-startup")
+def _migrations_that_manage_the_queue_table(root: Path) -> list[str]:
+    service(root, "observability", "database", "queue")
+    write(
+        root / MIGRATION,
+        'def upgrade() -> None:\n    op.execute("GRANT SELECT, INSERT ON jfast_jobs TO app")\n',
+    )
+    return [f"{MIGRATION}:2 names jfast_jobs"]
+
+
+@affected_by("framework-tables-altered-at-startup")
+def _sql_that_creates_the_users_table(root: Path) -> list[str]:
+    service(root, "observability", "database", "auth", "accounts")
+    write(root / "db" / "schema.sql", "-- owned by the migrator\nCREATE TABLE jfast_users ();\n")
+    return ["db/schema.sql:2 names jfast_users"]
+
+
+@unaffected_by("framework-tables-altered-at-startup")
+def _the_queue_on_redis(root: Path) -> None:
+    _migrations_that_manage_the_queue_table(root)
+    edit(
+        root / "jfast.toml",
+        "disabled = []\n",
+        'disabled = []\n\n[plugin.queue]\nbackend = "redis"\n',
+    )
+
+
+@unaffected_by("framework-tables-altered-at-startup")
+def _migrations_that_never_name_a_framework_table(root: Path) -> None:
+    _migrations_that_manage_the_queue_table(root)
+    edit(root / MIGRATION, "jfast_jobs", "invoices")
+
+
+# ---------------------------------------------------------------------------
+# 0.1.0a11: accounts and the frontend
+# ---------------------------------------------------------------------------
+
+
+def accounts_service(root: Path, *plugins: str, settings: str = "") -> None:
+    service(
+        root,
+        "observability",
+        "database",
+        "auth",
+        "accounts",
+        *plugins,
+        extra=f"\n[plugin.accounts]\n{settings}",
+    )
+
+
+def vite_project(root: Path, files: Mapping[str, str]) -> None:
+    write(root / "package.json", '{"name": "web", "private": true}\n')
+    for name, text in files.items():
+        write(root / name, text)
+
+
+STORE_A10 = """\
+export const useAuthStore = defineStore('auth', {
+  actions: {
+    async login(credentials) {
+      const { data } = await api.post('/auth/login', credentials)
+      this.$patch({ token: data.access_token, user: data.user ?? null })
+    },
+  },
+})
+"""
+
+
+@affected_by("frontend-login-without-account")
+def _a_store_that_takes_the_user_from_login(root: Path) -> list[str]:
+    accounts_service(root)
+    vite_project(root / "web", {"src/stores/auth.store.js": STORE_A10})
+    return ["web/src/stores/auth.store.js:5 reads data.user from /auth/login"]
+
+
+@unaffected_by("frontend-login-without-account")
+def _the_same_store_asking_for_the_account(root: Path) -> None:
+    _a_store_that_takes_the_user_from_login(root)
+    edit(
+        root / "web" / "src" / "stores" / "auth.store.js",
+        "user: data.user ?? null })",
+        "user: (await api.get('/auth/account')).data })",
+    )
+
+
+@unaffected_by("frontend-login-without-account")
+def _the_same_store_over_a_service_without_accounts(root: Path) -> None:
+    # Without accounts the login endpoint is the project's own, and may well
+    # return the user.
+    _a_store_that_takes_the_user_from_login(root)
+    edit(root / "jfast.toml", ', "accounts"]', "]")
+
+
+def test_a_frontend_beside_the_service_in_its_workspace_is_read(tmp_path: Path) -> None:
+    """`jfast start` puts the frontend next to the API, not inside it."""
+    accounts_service(tmp_path / "shop")
+    workspace_file(tmp_path, ("shop", "api", "shop"), ("shop_web", "spa", "shop-web"))
+    vite_project(tmp_path / "shop-web", {"src/stores/auth.store.js": STORE_A10})
+    assert report(tmp_path / "shop")["frontend-login-without-account"] == [
+        "../shop-web/src/stores/auth.store.js:5 reads data.user from /auth/login"
+    ]
+
+
+ROUTER_A10 = "const PUBLIC_BY_DEFAULT = true\n\nexport default router\n"
+
+
+@affected_by("frontend-public-by-default")
+def _a_router_open_by_default_over_accounts(root: Path) -> list[str]:
+    accounts_service(root)
+    vite_project(root / "web", {"src/router/index.js": ROUTER_A10})
+    return ["web/src/router/index.js:1 PUBLIC_BY_DEFAULT = true"]
+
+
+@unaffected_by("frontend-public-by-default")
+def _the_same_router_closed_by_default(root: Path) -> None:
+    _a_router_open_by_default_over_accounts(root)
+    edit(root / "web" / "src" / "router" / "index.js", "= true", "= false")
+
+
+@unaffected_by("frontend-public-by-default")
+def _an_open_router_over_a_service_without_accounts(root: Path) -> None:
+    _a_router_open_by_default_over_accounts(root)
+    edit(root / "jfast.toml", ', "accounts"]', "]")
+
+
+API_A10 = "const config = {\n  baseURL: import.meta.env.VITE_API_URL,\n  timeout: 30000,\n}\n"
+
+
+@affected_by("frontend-api-timeout")
+def _a_thirty_second_client_over_an_upload_service(root: Path) -> list[str]:
+    service(root, "observability", "database", "storage")
+    vite_project(root / "web", {"src/services/api.js": API_A10})
+    return [
+        "web/src/services/api.js:3 timeout: 30000 -- "
+        f"this API answers for up to {UPLOAD_REQUEST_TIMEOUT:g}s"
+    ]
+
+
+@unaffected_by("frontend-api-timeout")
+def _the_same_client_reading_the_timeout_from_the_env(root: Path) -> None:
+    _a_thirty_second_client_over_an_upload_service(root)
+    edit(
+        root / "web" / "src" / "services" / "api.js",
+        "timeout: 30000",
+        "timeout: Number(import.meta.env.VITE_API_TIMEOUT) || 60000",
+    )
+
+
+@unaffected_by("frontend-api-timeout")
+def _a_thirty_second_client_over_a_thirty_second_api(root: Path) -> None:
+    # The two agree: the client gives up when the server does.
+    _a_thirty_second_client_over_an_upload_service(root)
+    edit(root / "jfast.toml", ', "storage"]', "]")
+
+
+@affected_by("accounts-verification-required")
+def _verification_switched_on_as_required(root: Path) -> list[str]:
+    accounts_service(root, settings='email_verification = "required"\n')
+    return ['[plugin.accounts] email_verification = "required"']
+
+
+@unaffected_by("accounts-verification-required")
+def _verification_optional(root: Path) -> None:
+    # Optional never refuses a sign-in, so nobody is locked out.
+    accounts_service(root, settings='email_verification = "optional"\n')
+
+
+@affected_by("accounts-mfa-login-challenge")
+def _mfa_on_and_required_for_a_role(root: Path) -> list[str]:
+    accounts_service(root, settings='mfa = true\nmfa_required_roles = ["admin"]\n')
+    return ["[plugin.accounts] mfa = true", "[plugin.accounts] mfa_required_roles = ['admin']"]
+
+
+@unaffected_by("accounts-mfa-login-challenge")
+def _mfa_left_off(root: Path) -> None:
+    accounts_service(root, settings="mfa = false\n")
+
+
+@affected_by("accounts-sign-in-rate-limit")
+def _accounts_with_redis_to_count_in(root: Path) -> list[str]:
+    accounts_service(root, "cache")
+    from jfastframework.plugins.builtin.accounts import AccountsSettings
+
+    per_ip = AccountsSettings.model_fields["login_limit_per_ip"].default
+    return [f"[plugin.accounts] rate_limit defaults to true: {per_ip} sign-ins per IP"]
+
+
+@unaffected_by("accounts-sign-in-rate-limit")
+def _accounts_that_chose_no_rate_limit(root: Path) -> None:
+    accounts_service(root, "cache", settings="rate_limit = false\n")
+
+
+@unaffected_by("accounts-sign-in-rate-limit")
+def _accounts_with_no_cache(root: Path) -> None:
+    # The limiter counts in Redis; without one it does not run.
+    accounts_service(root)
+
+
+# ---------------------------------------------------------------------------
+# 0.1.0a11: settings, tenancy, resilience
+# ---------------------------------------------------------------------------
+
+
+@affected_by("settings-refused-at-boot")
+def _database_settings_that_never_worked(root: Path) -> list[str]:
+    service(
+        root,
+        "observability",
+        "database",
+        extra='\n[plugin.database]\npool_size = 0\nsession_timezone = "Mars/Olympus"\n'
+        'tenant_dsn_template = "postgresql://db/app"\n',
+    )
+    return [
+        "[plugin.database] pool_size = 0",
+        '[plugin.database] session_timezone = "Mars/Olympus"',
+        "[plugin.database] tenant_dsn_template has no {tenant}",
+    ]
+
+
+@affected_by("settings-refused-at-boot")
+def _plugin_settings_that_fail_on_first_use(root: Path) -> list[str]:
+    service(
+        root,
+        "observability",
+        "database",
+        "queue",
+        "auth",
+        "mail",
+        "storage",
+        extra='\n[plugin.storage.disks.files]\ndriver = "s3"\nbucket = "b"\naccess_key = "k"\n'
+        'visibility = "internal"\n'
+        '\n[plugin.queue]\nname = "jobs-queue"\n'
+        '\n[plugin.auth]\nmode = "public_key"\nissue_tokens = true\nalgorithms = ["RS999"]\n'
+        '\n[plugin.mail]\nfrom_email = "noreply"\n',
+    )
+    return [
+        '[plugin.storage.disks.files] visibility = "internal"',
+        "[plugin.storage.disks.files] sets one of access_key and secret_key",
+        '[plugin.queue] name = "jobs-queue"',
+        '[plugin.auth] mode = "public_key" with issue_tokens = true',
+        "[plugin.auth] algorithms has RS999",
+        '[plugin.mail] from_email = "noreply"',
+    ]
+
+
+@affected_by("settings-refused-at-boot")
+def _production_values_from_the_file(root: Path) -> list[str]:
+    service(
+        root,
+        "observability",
+        "auth",
+        extra='\n[plugin.auth]\nmode = "jwks"\njwks_url = "http://idp.internal/jwks"\n',
+    )
+    edit(root / "jfast.toml", 'env = "local"', 'env = "prod"')
+    return ["[plugin.auth] jwks_url is plain http, in production"]
+
+
+@unaffected_by("settings-refused-at-boot")
+def _the_same_values_corrected(root: Path) -> None:
+    _plugin_settings_that_fail_on_first_use(root)
+    path = root / "jfast.toml"
+    edit(path, 'access_key = "k"\n', "")
+    edit(path, '"internal"', '"private"')
+    edit(path, '"jobs-queue"', '"jobs_queue"')
+    edit(path, 'mode = "public_key"\nissue_tokens = true', 'mode = "secret"\nissue_tokens = true')
+    edit(path, '["RS999"]', '["HS256"]')
+    edit(path, '"noreply"', '"noreply@example.com"')
+
+
+@unaffected_by("settings-refused-at-boot")
+def _plain_http_jwks_outside_production(root: Path) -> None:
+    # A laptop talks to a local identity service over http; only prod refuses.
+    _production_values_from_the_file(root)
+    edit(root / "jfast.toml", 'env = "prod"', 'env = "local"')
+
+
+def _config_line(root: Path, text: str) -> int:
+    lines = (root / "jfast.toml").read_text(encoding="utf-8").splitlines()
+    return next(number for number, line in enumerate(lines, start=1) if line.strip() == text)
+
+
+@affected_by("tenancy-consistency-check")
+def _a_tenant_scoped_rag_with_nothing_to_resolve_a_tenant(root: Path) -> list[str]:
+    rag_service(root)
+    line = _config_line(root, "[plugin.rag]")
+    return [f"jfast.toml:{line} tenancy-rag-scoped-without-tenancy (medium)"]
+
+
+@unaffected_by("tenancy-consistency-check")
+def _the_same_rag_declared_single_tenant(root: Path) -> None:
+    rag_service(root, "tenant_scoped = false\n")
+
+
+@unaffected_by("tenancy-consistency-check")
+def _the_same_rag_with_tenancy_on(root: Path) -> None:
+    _a_tenant_scoped_rag_with_nothing_to_resolve_a_tenant(root)
+    edit(root / "jfast.toml", '"rag"]', '"rag", "auth", "tenancy"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text() + '\n[plugin.tenancy]\nsources = ["token"]\n',
+    )
+
+
+@affected_by("revocation-fail-open")
+def _auth_checking_revocation_against_redis(root: Path) -> list[str]:
+    service(root, "observability", "database", "cache", "auth", extra=AUTH_ISSUING)
+    return ["[plugin.auth] revocation_fail_open is not set"]
+
+
+@unaffected_by("revocation-fail-open")
+def _auth_that_chose_to_fail_closed(root: Path) -> None:
+    _auth_checking_revocation_against_redis(root)
+    edit(
+        root / "jfast.toml",
+        "issue_tokens = true",
+        "issue_tokens = true\nrevocation_fail_open = false",
+    )
+
+
+@unaffected_by("revocation-fail-open")
+def _auth_on_a_store_that_cannot_go_down(root: Path) -> None:
+    # In memory, per process: there is no outage to fail open through.
+    _auth_checking_revocation_against_redis(root)
+    edit(root / "jfast.toml", '"cache", ', "")
+
+
+LIMITER = "shared/limiter.py"
+
+
+@affected_by("redis-command-timeout")
+def _a_lua_script_on_the_cache_client(root: Path) -> list[str]:
+    service(root, "observability", "cache")
+    write(
+        root / LIMITER,
+        "def hit(ctx, key: str) -> int:\n"
+        '    client = ctx.require("cache.client")\n'
+        "    return client.eval(SCRIPT, 1, key)\n",
+    )
+    return [f"{LIMITER}:3 .eval(...)"]
+
+
+@unaffected_by("redis-command-timeout")
+def _the_deadline_raised_for_it(root: Path) -> None:
+    _a_lua_script_on_the_cache_client(root)
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text() + "\n[plugin.cache]\ncommand_timeout = 5.0\n",
+    )
+
+
+@unaffected_by("redis-command-timeout")
+def _an_eval_that_is_not_redis(root: Path) -> None:
+    # `eval` is an ordinary method name; a file that never reaches Redis is
+    # not guessed at.
+    _a_lua_script_on_the_cache_client(root)
+    edit(root / LIMITER, 'ctx.require("cache.client")', "ctx.rules")
+
+
+HANDLERS = "main.py"
+
+
+@affected_by("database-unavailable-503")
+def _a_handler_of_the_projects_own_for_operational_errors(root: Path) -> list[str]:
+    service(root, "observability", "database")
+    write(
+        root / HANDLERS,
+        "from sqlalchemy.exc import OperationalError\n\n"
+        "from jfastframework import create_app\n\n"
+        "app = create_app()\n"
+        "app.add_exception_handler(OperationalError, on_database_error)\n",
+    )
+    return [f"{HANDLERS}:6 handles OperationalError"]
+
+
+@unaffected_by("database-unavailable-503")
+def _a_handler_for_something_else(root: Path) -> None:
+    _a_handler_of_the_projects_own_for_operational_errors(root)
+    edit(
+        root / HANDLERS, "add_exception_handler(OperationalError", "add_exception_handler(KeyError"
+    )
+
+
+@affected_by("database-behind-pgbouncer")
+def _a_dsn_through_pgbouncer(root: Path) -> list[str]:
+    service(root, "observability", "database")
+    write(
+        root / ".env",
+        "# local\nJFAST_DB_DSN=postgresql+asyncpg://app:app@pgbouncer:6432/app\n",
+    )
+    return [".env:2 a DSN through a pooler"]
+
+
+@unaffected_by("database-behind-pgbouncer")
+def _the_same_dsn_with_the_setting_on(root: Path) -> None:
+    _a_dsn_through_pgbouncer(root)
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text() + "\n[plugin.database]\npgbouncer = true\n",
+    )
+
+
+@unaffected_by("database-behind-pgbouncer")
+def _a_dsn_straight_to_postgres(root: Path) -> None:
+    _a_dsn_through_pgbouncer(root)
+    edit(root / ".env", "pgbouncer:6432", "db:5432")
+
+
+# ---------------------------------------------------------------------------
+# 0.1.0a11: a project this release generates is told nothing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tenancy", ["--single-tenant", "--multitenant"])
+def test_a_project_jfast_start_generates_is_told_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tenancy: str
+) -> None:
+    """Every layout, the workspace compose and the frontend, pinned to 0.1.0a10.
+
+    Everything on disk is what this release writes, so every note in range --
+    all of 0.1.0a11's -- must stay quiet: a note that fires on the generator's
+    own output is one nobody can act on.
+    """
+    from typer.testing import CliRunner
+
+    from jfastframework.cli.main import app
+
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["start", "shop", tenancy])
+    assert result.exit_code == 0, result.output
+    api = tmp_path / "shop"
+    monkeypatch.chdir(api)
+    for layout in MODULE_LAYOUTS:
+        made = runner.invoke(app, ["new", "module", f"m_{layout}", "--layout", layout])
+        assert made.exit_code == 0, made.output
+    write(api / "requirements.txt", "jfastframework[db,server]==0.1.0a10\n")
+    assert report(api) == {}
 
 
 # ---------------------------------------------------------------------------
