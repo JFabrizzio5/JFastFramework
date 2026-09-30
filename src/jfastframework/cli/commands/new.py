@@ -147,7 +147,7 @@ def new_module(
     language: str | None = typer.Option(
         None,
         "--language",
-        help="en or es: how the table name is pluralised. Defaults to [scaffold] language.",
+        help="en or es: how the table name is pluralised. Defaults to \\[scaffold] language.",
     ),
     target: Path = typer.Option(Path("modules"), "--target", "-t", help="Modules directory."),
     root: Path = typer.Option(

@@ -57,7 +57,8 @@ jfast worker                    # --concurrency 4, --grace 25
 ```
 
 `GET /queue/stats` reporta las profundidades y los nombres de tasks
-registradas.
+registradas, a cualquiera que pregunte: está encendido en desarrollo y cerrado
+en producción, salvo que `[plugin.queue] expose_stats = true` diga otra cosa.
 
 ### Las tasks viven en su módulo
 

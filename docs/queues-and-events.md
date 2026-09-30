@@ -55,7 +55,9 @@ And run the worker next to the API:
 jfast worker                    # --concurrency 4, --grace 25
 ```
 
-`GET /queue/stats` reports depths and registered task names.
+`GET /queue/stats` reports depths and registered task names, to anyone who asks:
+it is on in development and closed in production unless `[plugin.queue]
+expose_stats = true` says otherwise.
 
 ### Tasks live in their module
 

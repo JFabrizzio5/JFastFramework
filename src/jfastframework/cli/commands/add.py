@@ -375,9 +375,9 @@ def remove_plugin(
         False, "--force", help="Remove it even though an enabled plugin requires it."
     ),
 ) -> None:
-    """Take a plugin out of a service: [plugins].enabled, and its extra if nothing else uses it.
+    r"""Take a plugin out of a service: \[plugins].enabled, and its extra if nothing else uses it.
 
-    Its [plugin.<name>] settings stay in jfast.toml, so enabling it again later
+    Its \[plugin.<name>] settings stay in jfast.toml, so enabling it again later
     finds them where they were; delete the block if it is gone for good.
     """
     if plugin not in PLUGIN_CATALOG:

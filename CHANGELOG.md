@@ -35,6 +35,15 @@ generated frontend in a browser, an upload.
 
 ### Fixed
 
+- **CLI help dropped every `[section]` it named.** Rich reads `[scaffold]` as a
+  style tag, so "Defaults to [scaffold] language." printed "Defaults to
+  language." Escaped in `new module`, `remove` and `tenancy enable`; a test now
+  walks all 61 commands' help. The same walk exposed that the bare-install test
+  added in 0.1.0a11 checked the root command only: it now reaches every one.
+- **`GET /queue/stats` answered anyone, in every environment.** It lists the
+  service's task names and queue depths without authentication. Unset,
+  `expose_stats` now follows `/docs`: on in development, closed in production;
+  set it to choose.
 - **The generated image could not write local storage, so it stopped at
   boot.** It runs as `appuser`, but `WORKDIR` created `/app` as root and
   `--chown` only reached the copied files. The Dockerfile now creates
