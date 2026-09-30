@@ -117,6 +117,20 @@ Caddyfile              one hostname in front of both
 jfast.workspace.toml   ports, and what the frontend should call
 ```
 
+`jfast start` asks nothing, so two decisions are flags:
+
+- **Customers.** `--single-tenant` (the default) or `--multitenant`. Multitenant
+  turns on `tenancy` (reading the tenant from the signed token or the
+  signed-in user), `auth` and `accounts`, generates routes that take the tenant
+  from `current_tenant`, and writes a `JFAST_AUTH_SECRET` and a first-admin
+  password into `shop/.env`. Single-tenant is the default because a
+  multitenant service needs a user system and a signed-in caller before its
+  first `curl` works -- the right shape for a SaaS, too much for anything else.
+  Every table keeps its `tenant_id` column either way, so switching later is a
+  backfill, not a schema rewrite.
+- **Traces.** `telemetry` is on and exports nothing until
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set. `--no-telemetry` leaves it out.
+
 ### Run the backend
 
 ```bash
@@ -176,14 +190,66 @@ docker compose up --build
 jfast init
 ```
 
-Asks what you are building, which datastores you want and on which port, then
-generates exactly what the flags would have:
+Asks what you are building, which datastores you want, whether the app serves
+several customers, which capabilities, and on which port -- then generates
+exactly what the flags would have.
+
+**"Does this app serve several customers (multitenant)?"** One answer sets
+every piece that has to agree, so they cannot contradict each other:
+
+| | Yes | No |
+| --- | --- | --- |
+| `tenancy` | on, `sources = ["token", "user"]` | off |
+| generated routes | `current_tenant` (401/403 without one) | `require_auth` with auth, open without |
+| `[plugin.rag] tenant_scoped` | `true` | `false` |
+| `[plugin.llm] tenant_budget_usd` | set | absent |
+| pre-checked | + `auth`, `accounts` | |
+| `tenant_id` columns | kept | kept |
+
+**Capabilities** are listed from the plugin catalog, so a plugin added to the
+framework cannot be missing from the menu. The recommended ones are
+pre-checked, labelled *recommended* and listed first -- pressing Enter keeps
+them:
+
+- `telemetry` -- traces cost nothing until an endpoint is set, and they are
+  what you need first when something is slow in production, when turning them
+  on no longer helps.
+- `queue` -- anything slower than a request belongs off it; the backend is the
+  PostgreSQL the service already has, and `jfast worker` consumes it.
+- `auth` and `accounts`, when the answer above is yes: a tenant comes from
+  somebody signed in.
+
+A plugin the installed framework does not have is skipped with a note rather
+than written into a `jfast.toml` that would not boot.
+
+The same, with flags:
 
 ```bash
 jfast new service billing --with database,cache,queue
 jfast new service edge --language go
 jfast new service admin --kind spa --frontend vue
+jfast new service saas --with database,queue,telemetry --multitenant
 ```
+
+A frontend draws sign-in, registration and a security page, and keeps its
+routes private by default, only when some backend in the workspace enables
+`accounts`; otherwise it stays public with no account pages.
+
+### Adding and removing a plugin later
+
+```bash
+jfast add telemetry          # [plugins].enabled, the extra, its settings block
+jfast add accounts           # also enables auth (and database), which it requires
+jfast remove telemetry       # refuses while another enabled plugin requires it
+```
+
+`jfast add` edits `[plugins].enabled` in `jfast.toml` -- keeping every comment
+-- pins the plugin's extra in `requirements.txt`, appends the settings block a
+new service would have been generated with, and prints what is left: the
+variables it reads and the step after (`alembic upgrade head`, `jfast worker`).
+`jfast remove` drops the extra when nothing else enabled uses it and leaves
+the `[plugin.<name>]` block for the day it comes back. `jfast add` with no
+argument lists plugins and capabilities together.
 
 ---
 

@@ -102,6 +102,29 @@ atrapan código generado:
 
 ---
 
+## Genera el módulo que querías, y construye encima
+
+Un agente al que se le daba `jfast new module invoice` gastaba sus primeras
+ediciones borrando el ejemplo -- `name`, `description`, `is_active` y sus
+tests --, y el diff que leía el revisor era sobre todo eso. Dale los campos al
+generador y el primer borrador no tiene nada que borrar:
+
+```bash
+jfast new module invoice --fields "customer_id:int, number:str(20), total:money, paid:bool=false" \
+  --unique "number"
+```
+
+Lo que escribe ya pasa `ruff check .`, `ruff format --check .`, `mypy .`
+(estricto) y `pytest`, en todos los layouts, así que un control en rojo después
+de la edición de un agente es la edición del agente. Las rutas quedan
+protegidas según esté configurado el servicio (`current_tenant` con tenancy,
+`require_auth` con auth), y el módulo trae un `tasks.py` para su trabajo en
+segundo plano. La gramática está en
+[Módulos](modules.md#campos-genera-el-modulo-que-querias); `--bare` es la
+estructura sin ningún campo.
+
+---
+
 ## Exime una línea, no borres la regla
 
 ```python
