@@ -199,6 +199,7 @@ outbox = "jfastframework.plugins.builtin.outbox:OutboxPlugin"
 idempotency = "jfastframework.plugins.builtin.idempotency:IdempotencyPlugin"
 accounts = "jfastframework.plugins.builtin.accounts:AccountsPlugin"
 http = "jfastframework.plugins.builtin.http:HttpPlugin"
+telemetry = "jfastframework.plugins.builtin.telemetry:TelemetryPlugin"
 
 [project.urls]
 Homepage = "https://github.com/JFabrizzio5/JFastFramework"

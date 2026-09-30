@@ -1,0 +1,88 @@
+<template>
+  <AuthShell v-if="!checkEmail" title="Create an account" eyebrow="New account" hero="Get started."
+    hero-faded="It takes a minute." hero-text="Your email address is your sign-in.">
+    <form novalidate class="flex flex-col gap-4" @submit.prevent="submit">
+      <BaseInput v-model="displayName" label="Name" autocomplete="name" />
+      <BaseInput v-model="email" label="Email" type="email" autocomplete="email" required />
+      <BaseInput v-model="password" label="Password" type="password" autocomplete="new-password" required
+        :hint="`At least ${minLength} characters.`" :error="error" />
+      <BaseButton type="submit" class="mt-2 w-full" :loading="pending">Create account</BaseButton>
+    </form>
+    <template #footer>
+      <RouterLink :to="{ path: LOGIN_ROUTE, query: route.query }" class="hover:text-ink">
+        Already have an account? Sign in
+      </RouterLink>
+    </template>
+  </AuthShell>
+
+  <AuthShell v-else title="Check your email" eyebrow="Almost there" hero="Check your email."
+    :lead="`We sent a link to ${email}. Open it to confirm the address, then sign in.`">
+    <BaseButton variant="outline" class="w-full" :loading="pending" :disabled="resent" @click="resend">
+      {{ resent ? 'Sent again' : 'Send the link again' }}
+    </BaseButton>
+    <template #footer>
+      <RouterLink :to="LOGIN_ROUTE" class="hover:text-ink">Back to sign in</RouterLink>
+    </template>
+  </AuthShell>
+</template>
+
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+
+import AuthShell from '@/components/AuthShell.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import BaseInput from '@/components/BaseInput.vue'
+import { LOGIN_ROUTE, safeNext, useAuthStore } from '@/stores/auth.store.js'
+
+const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
+
+const displayName = ref('')
+const email = ref('')
+const password = ref('')
+const error = ref(null)
+const pending = ref(false)
+const checkEmail = ref(false)
+const resent = ref(false)
+const features = ref(null)
+const minLength = computed(() => features.value?.min_password_length ?? 10)
+
+onMounted(async () => {
+  features.value = await auth.loadFeatures()
+})
+
+async function submit() {
+  error.value = null
+  pending.value = true
+  try {
+    const result = await auth.register({
+      email: email.value,
+      password: password.value,
+      display_name: displayName.value || null,
+    })
+    if (result.status === 'check-email') {
+      checkEmail.value = true
+    } else if (result.status === 'enrol') {
+      await router.push({ name: 'mfa-enrol', query: route.query, state: { mfaToken: result.mfaToken } })
+    } else {
+      await router.replace(safeNext(route.query.next))
+    }
+  } catch (failure) {
+    error.value = failure.message
+  } finally {
+    pending.value = false
+  }
+}
+
+async function resend() {
+  pending.value = true
+  try {
+    await auth.resendVerification(email.value)
+    resent.value = true
+  } finally {
+    pending.value = false
+  }
+}
+</script>

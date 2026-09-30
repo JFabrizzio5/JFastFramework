@@ -34,6 +34,8 @@ from typing import Any
 from jfastframework.contracts.checker import check_coverage
 from jfastframework.contracts.model import CONTRACTS_FILE, Contract
 from jfastframework.contracts.placement import is_facade
+from jfastframework.contracts.wiring import facade_functions
+from jfastframework.contracts.wiring import scan as scan_wiring
 
 __all__ = [
     "SEVERITY_ORDER",
@@ -223,6 +225,16 @@ class Module:
     An import of another module's `public.py` is how modules are meant to talk;
     anything else of theirs is private, and only these are findings.
     """
+    facade: tuple[str, ...] = ()
+    """The functions its `public.py` offers other modules."""
+    tasks: tuple[str, ...] = ()
+    """Task names declared with `@task` inside it -- the tasks it owns."""
+    subscribes: tuple[str, ...] = ()
+    """Event types it reacts to with `@subscribe`."""
+    publishes: tuple[str, ...] = ()
+    """Event types its `[modules.<name>]` block declares under `publishes`."""
+    depends_on: tuple[str, ...] = ()
+    """What its `[modules.<name>]` block declares under `depends_on`."""
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -239,6 +251,11 @@ class Module:
             "has_readme": self.has_readme,
             "tables": list(self.tables),
             "private_imports": list(self.private_imports),
+            "facade": list(self.facade),
+            "tasks": list(self.tasks),
+            "subscribes": list(self.subscribes),
+            "publishes": list(self.publishes),
+            "depends_on": list(self.depends_on),
         }
 
 
@@ -438,6 +455,22 @@ def _scan_module(
     )
 
 
+def _declared_modules(root: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """``(depends_on, publishes)`` per module from contracts.toml, or empty.
+
+    A contract that does not parse is `contracts check`'s error to report; here
+    it only means nothing is declared.
+    """
+    source = root / CONTRACTS_FILE
+    if not source.is_file():
+        return {}, {}
+    try:
+        contract = Contract.load(source)
+    except (OSError, ValueError, KeyError, tomllib.TOMLDecodeError):
+        return {}, {}
+    return contract.module_deps, contract.module_publishes
+
+
 def load(root: Path) -> Project:
     """Read *root* into a `Project`. Never imports project code."""
     root = root.resolve()
@@ -459,6 +492,8 @@ def load(root: Path) -> Project:
     )
     module_names = frozenset(entry.name for entry in directories)
     registered = _registered_modules(root)
+    declared_deps, declared_publishes = _declared_modules(root)
+    wiring = scan_wiring(root)
 
     modules: list[Module] = []
     for directory in directories:
@@ -483,6 +518,11 @@ def load(root: Path) -> Project:
                 has_readme=(directory / "README.md").is_file(),
                 tables=tables,
                 private_imports=private,
+                facade=tuple(facade_functions(root, directory.name)),
+                tasks=tuple(wiring.of(directory.name)["tasks"]),
+                subscribes=tuple(wiring.of(directory.name)["subscribes"]),
+                publishes=tuple(declared_publishes.get(directory.name, [])),
+                depends_on=tuple(declared_deps.get(directory.name, [])),
             )
         )
 
@@ -563,13 +603,20 @@ def module_edges(project: Project) -> list[tuple[str, str]]:
 
 
 def _cycles(project: Project) -> list[tuple[str, ...]]:
-    """Every import cycle between modules, each reported once.
+    """Every cycle between modules, each reported once.
+
+    The graph is the one `contracts check` judges: what the modules import
+    *plus* what contracts.toml declares under depends_on. Two commands that
+    disagree about whether a project has a cycle is one command too many.
 
     Depth-first with an explicit stack rather than recursion: a project with a
     thousand modules is unlikely, a recursion limit blowing up inside a
     diagnostic command is embarrassing either way.
     """
-    graph = {module.name: list(module.imports) for module in project.modules}
+    graph = {
+        module.name: sorted(set(module.imports) | set(module.depends_on))
+        for module in project.modules
+    }
     found: list[tuple[str, ...]] = []
     seen: set[frozenset[str]] = set()
     colour: dict[str, int] = dict.fromkeys(graph, 0)
@@ -671,7 +718,7 @@ def analyze(project: Project, *, known_plugins: frozenset[str] | None = None) ->
             Finding(
                 severity="critical",
                 code="module-cycle",
-                message=f"import cycle: {chain}",
+                message=f"module dependency cycle (imports and depends_on): {chain}",
                 why=(
                     "Modules in a cycle are one module with folders between them: neither can "
                     "be extracted into a service, and a change to one breaks the other in a "

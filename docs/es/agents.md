@@ -140,16 +140,16 @@ servicio, así que escala con tu servicio. Medido sobre servicios generados —
 
 | módulos | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 8,909 | 2,910 |
-| 3 | 10,613 | 4,196 |
-| 5 | 12,333 | 5,494 |
+| 1 | 9,078 | 3,001 |
+| 3 | 11,108 | 4,563 |
+| 5 | 13,156 | 6,139 |
 
 Un servicio recién generado es el piso, porque todavía no hay nada mal en él. El
 mismo servicio de cinco módulos después de trabajarlo un rato — dos módulos que
 `main.py` nunca levantó, un archivo fuera de todo módulo, dos violaciones de
 contrato — mide unos **3.3 KB más que el piso de arriba completo, y 0.8 KB más
 con `--brief`** (medido en 0.1.0a9, cuando los pisos eran 11.5 KB y 5.4 KB).
-Aproximadamente +800 bytes por módulo; el resto es `next` y `checks`
+Aproximadamente +1,000 bytes por módulo (0.1.0a11 agregó la fachada, los eventos y las tareas de cada módulo); el resto es `next` y `checks`
 creciendo con lo que realmente está pendiente.
 
 Dónde se va el payload completo en ese servicio de cinco módulos, en bytes:

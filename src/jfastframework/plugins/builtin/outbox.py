@@ -92,7 +92,13 @@ class OutboxPlugin(Plugin):
             max_attempts=settings.max_attempts,
             retention=timedelta(days=settings.retention_days),
         )
-        ctx.provide("outbox", Outbox(queue=queue))
+        # The modules' `tasks.py`, so `publish` knows every local subscriber
+        # even in a service whose queue plugin is off -- and can say that is
+        # the problem, instead of that nobody is listening.
+        from jfastframework.tasks import discover
+
+        discover(ctx)
+        ctx.provide("outbox", Outbox(queue=queue, events=events))
         ctx.provide("outbox.relay", self._relay)
 
     async def startup(self, ctx: AppContext) -> None:
@@ -124,12 +130,26 @@ class OutboxPlugin(Plugin):
         try:
             stats = await self._relay.stats()
             oldest = await self._relay.oldest_pending_seconds()
+            failing, reason = await self._relay.failing()
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             return HealthReport.fail(f"outbox unreadable: {exc}", critical=False)
-        meta: dict[str, Any] = {**stats, "oldest_pending_seconds": oldest}
+        meta: dict[str, Any] = {**stats, "failing": failing, "oldest_pending_seconds": oldest}
         if stats["dead"]:
+            try:
+                reason = await self._relay.latest_dead_error()
+            except Exception:  # noqa: BLE001 - the count is the news; the reason is a bonus
+                reason = None
             return HealthReport.fail(
-                f"{stats['dead']} message(s) failed permanently", critical=False, **meta
+                f"{stats['dead']} message(s) failed permanently; latest: "
+                f"{reason or 'see jfast_outbox.last_error'}",
+                critical=False,
+                **meta,
+            )
+        if failing:
+            # Degraded from the first failed attempt, not the twentieth: a
+            # relay that cannot send is news now, while it still can be fixed.
+            return HealthReport.fail(
+                f"{failing} message(s) failing to send: {reason}", critical=False, **meta
             )
         if oldest is not None and oldest > settings.stale_after_seconds:
             return HealthReport.fail(

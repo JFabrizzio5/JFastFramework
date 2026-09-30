@@ -4,9 +4,9 @@
 jfast dev
 ```
 
-Containers up and waited for, migrations applied, then the API and the frontend
-together. One command for the four things somebody does every morning, in the
-order that makes the failures land where they belong.
+Containers up and waited for, migrations applied, then the API, the queue
+worker and the frontend together. One command for the things somebody does
+every morning, in the order that makes the failures land where they belong.
 
 ---
 
@@ -17,7 +17,14 @@ order that makes the failures land where they belong.
 | 1. Infrastructure | `docker compose up -d <db> <cache>`, then waits for health | says why, and stops |
 | 2. Migrations | `alembic upgrade head` | **stops** |
 | 3. API | `uvicorn main:app --reload --no-proxy-headers` | — |
-| 4. Frontend | `npm run dev` in the frontend project | says why, and carries on |
+| 4. Worker | `jfast worker`, when the `queue` plugin is enabled | says why, and carries on |
+| 5. Frontend | `npm run dev` in the frontend project | says why, and carries on |
+
+The worker is there because the queue is on in every generated service, and a
+queue nobody consumes is jobs piling up in `jfast_jobs` -- and event
+subscribers that never run -- while the API answers 201. It boots the same
+`main:app`, so it runs the same modules' `@task` and `@subscribe`. It does
+**not** reload: restart `jfast dev` after changing a task or a subscriber.
 
 > `--no-proxy-headers` is not optional decoration. uvicorn ships its own
 > forwarded-header resolver **on**, trusting `127.0.0.1` -- which is exactly
@@ -32,6 +39,7 @@ Every stage is skippable and every skip is announced:
 jfast dev --no-infra      # the containers are already up
 jfast dev --no-migrate    # you are mid-migration and know it
 jfast dev --no-web        # backend only
+jfast dev --no-worker     # no queue worker (run `jfast worker` yourself)
 jfast dev --port 9000     # override the port in jfast.toml
 ```
 
@@ -117,6 +125,7 @@ next `jfast dev` then fails with `address already in use` and a confusing hunt.
 | Backend | yes | yes |
 | Containers | no | brings them up |
 | Migrations | no | applies them |
+| Queue worker | no (`jfast worker`) | starts it |
 | Frontend | no | starts it |
 | `.env` translated for the host | no | yes |
 

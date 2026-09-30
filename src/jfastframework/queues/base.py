@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 
+from jfastframework import tracing
+
 #: The job the current handler is running. A handler receives only its
 #: payload; this is how it reaches the job id to deduplicate on
 #: (``claim_once(session, current_job().id)``) without every handler in every
@@ -71,6 +73,13 @@ class Job:
     # outside a request carries neither unless it is given them.
     request_id: str | None = field(default_factory=lambda: _context("request_id_var"))
     tenant_id: str | None = field(default_factory=lambda: _context("tenant_id_var"))
+    # W3C trace context of the code that queued it; {} without telemetry. The
+    # worker attaches it, so the handler's spans join that request's trace
+    # instead of starting an orphan one.
+    trace: dict[str, str] = field(default_factory=tracing.inject)
+    # Why the last attempt failed. Written by the worker before a nack, and
+    # what `jfast jobs dead` shows next to each dead letter.
+    error: str | None = None
     # Backend-specific handle needed to ack/nack this exact delivery.
     receipt: Any = field(default=None, repr=False, compare=False)
 
@@ -84,6 +93,8 @@ class Job:
                 "max_attempts": self.max_attempts,
                 "request_id": self.request_id,
                 "tenant_id": self.tenant_id,
+                "trace": dict(self.trace),
+                "error": self.error,
             },
             default=str,
         )
@@ -99,6 +110,8 @@ class Job:
             max_attempts=int(data.get("max_attempts", 3)),
             request_id=data.get("request_id"),
             tenant_id=data.get("tenant_id"),
+            trace=dict(data.get("trace") or {}),
+            error=data.get("error"),
             receipt=receipt,
         )
 
@@ -155,3 +168,53 @@ class QueueBackend(Protocol):
     async def health(self) -> tuple[bool, str]: ...
 
     async def close(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class DeadJob:
+    """A dead letter, as ``jfast jobs dead`` lists it."""
+
+    id: str
+    task: str
+    attempts: int
+    max_attempts: int
+    tenant_id: str | None = None
+    error: str | None = None
+    created_at: datetime | None = None
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "task": self.task,
+            "attempts": self.attempts,
+            "max_attempts": self.max_attempts,
+            "tenant_id": self.tenant_id,
+            "error": self.error,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+@runtime_checkable
+class DeadLetters(Protocol):
+    """Optional: a backend whose dead letters can be listed and replayed.
+
+    Kept out of :class:`QueueBackend` so a custom backend written before it
+    existed still satisfies the protocol; ``jfast jobs`` checks for it and says
+    so when a backend lacks it.
+    """
+
+    async def dead(self, *, limit: int = 100) -> list[DeadJob]: ...
+
+    async def retry_dead(self, ids: list[str] | None = None) -> int:
+        """Return dead jobs to the queue with their attempts reset.
+
+        ``None`` means every dead job. Returns how many were returned.
+        """
+        ...
+
+
+# A third optional method, ``release(job)``, returns a claimed job to the
+# queue *without* spending an attempt: the worker calls it for a job it
+# stopped on shutdown, which did not fail and must not creep towards the
+# dead-letter queue because a deploy happened. Backends without it get a
+# plain ``nack(retry=True)``.
