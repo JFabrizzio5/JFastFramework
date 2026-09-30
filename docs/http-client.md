@@ -167,6 +167,14 @@ the caller has something better to say -- a cached value, a degraded page.
   request across services. Inside a queue job it is the job's, which the
   worker restores from the request that queued it; in a script, none is
   invented.
+- **W3C `traceparent` and `tracestate`**, when the `telemetry` plugin is
+  exporting. Each call is a client span (`GET billing`, with the upstream,
+  the status and the number of retries), and the header carries that span, so
+  the upstream's server span is its child and one trace covers both services.
+  Retries share the span. The path is not recorded -- it can hold an id per
+  call; the upstream's span names the route template. With telemetry off
+  nothing is added. The gateway does the same for what it proxies. See
+  [telemetry.md](telemetry.md).
 - **The caller's bearer token**, only to upstreams with
   `forward_authorization = true`. A token is issued for an audience; sending
   it to a service outside that audience hands the caller's identity to it,
