@@ -291,7 +291,8 @@ rls = true
 
 Es `set_config('jfast.tenant_id', ..., true)` al empezar cada transacción: local
 a la transacción, así que una conexión del pool nunca lleva un tenant a la
-siguiente request, y funciona detrás de PgBouncer en modo transacción.
+siguiente request, y funciona detrás de PgBouncer en modo transacción --
+verificado, no supuesto: ver [Detrás de PgBouncer](#detrás-de-pgbouncer).
 
 **3. Conéctate con un rol al que apliquen las políticas.** Un superusuario, o un
 rol con `BYPASSRLS`, ignora toda política -- y el compose generado se conecta
@@ -406,6 +407,8 @@ que se le escapó a la de arriba:
 | Trabajo en segundo plano | los jobs llevan el tenant; el worker lo restaura | un job que corre como "nadie" y lo ve todo |
 | Recuperación | el store de `rag` rechaza llamadas sin tenant ([RAG](rag.md)) | una búsqueda en los documentos de todos los clientes |
 | Gasto | `tenant_budget_usd` en el [plugin `llm`](llm.md) | un tenant gastándose el presupuesto de IA de todos |
+| Configuración | el check `tenancy` de `jfast check` | dos de los ajustes de arriba contradiciéndose |
+| El cambio | `jfast check --multitenant-ready` | código que todavía supone un solo cliente, antes de que llegue el segundo |
 
 Actívalas de arriba hacia abajo. Las tres primeras no cuestan nada y vienen con
 el framework; row-level security es un setting, una migración y un rol de base
@@ -415,6 +418,248 @@ Lo que ninguna atrapa: **un id de tenant equivocado pero bien formado.** Si tu
 propio código asigna un usuario a la organización equivocada, cada capa va a
 hacer cumplir fielmente la respuesta equivocada. Ese mapeo -- dónde vive, quién
 lo puede cambiar -- merece la revisión más cuidadosa del servicio.
+
+## Pasar a multitenant después
+
+La mayoría de los servicios empieza con un cliente, y está bien: tenancy que no
+necesitas es configuración que tienes que mantener consistente. Lo que abarata
+el cambio posterior se decide el primer día y no cuesta nada: **conserva la
+columna `tenant_id`**. Toda entidad generada lleva `TenantMixin` (un
+`tenant_id` nullable) y llaves únicas que consideran el tenant aunque el
+servicio sea de un solo cliente, así que pasar a multitenant es rellenar datos,
+no reescribir el esquema.
+
+Lo demás son tres herramientas, en el orden en que se usan.
+
+### Ajustes que se contradicen
+
+El aislamiento se configura pieza por pieza, y cada pieza es válida por sí
+sola. Las fallas están entre ellas, y ninguna impide que el servicio arranque.
+El check `tenancy` de `jfast check` las lee juntas:
+
+| Código | Severidad | Qué está mal | El arreglo que nombra |
+| --- | --- | --- | --- |
+| `tenancy-rag-scoped-without-tenancy` | medium | `[plugin.rag] tenant_scoped` es true (el default) y el plugin tenancy está apagado: toda llamada a rag necesita un tenant que nada resuelve | `tenant_scoped = false` para un cliente; `jfast tenancy enable` para varios |
+| `tenancy-budget-without-tenancy` | medium | `tenant_budget_usd > 0` sin tenancy: solo aplica el tope global | quitarlo y dimensionar `budget_usd`, o activar tenancy |
+| `tenancy-rls-without-tenancy` | high (medium si un claim `tenant_id` de auth lo puede poner) | `rls = true` y nada resuelve un tenant: toda tabla con política se lee vacía | `rls = false`, o activar tenancy |
+| `tenancy-policies-without-rls` | high | una revisión llama `enable_tenant_rls` y `rls = false`: ninguna sesión pone el tenant, así que esas tablas se leen vacías para el rol del propio servicio | `rls = true`, o quitar la política |
+| `tenancy-current-tenant-without-source` | high | el código depende de `current_tenant` y no hay ni plugin tenancy ni claim de auth: todo request recibe 401/403 | `require_auth` para un cliente; activar tenancy para varios |
+| `tenancy-source-unresolvable` | high | una fuente que aquí nunca puede responder: `subdomain` sin `base_domain`, `token`/`user` sin el plugin auth | poner el dominio base, activar auth, o cambiar las fuentes |
+
+Lee los ajustes de los plugins ya construidos cuando el grafo resuelve, así que
+lo que se juzga es un override del entorno (`JFAST_RAG_TENANT_SCOPED=false`).
+
+### Qué rompería el cambio: `jfast check --multitenant-ready`
+
+Un servicio de un solo cliente tiene razón en suponer un solo cliente, y lo
+hace en lugares que nada marca. Esto los lista con archivo y línea, como `jfast
+upgrade --check` lista lo que rompe una actualización:
+
+```
+  shop: what a switch to multitenant would break
+  tenant tables: customers, invoices
+
+  ✗ modules/invoice/api/routes.py:26  factory-without-tenant  [high]
+      get_service() opens a database session with no tenant dependency;
+      used by create_invoice(), delete_invoice(), get_invoice(),
+      list_invoice() and 1 more
+      → fix
+        The generated factory reads `getattr(request.state,
+        "tenant_id", None)`, and `None` builds a repository with no
+        tenant filter. Take the tenant as a dependency ...
+```
+
+| Regla | Severidad | Busca |
+| --- | --- | --- |
+| `tenant-none-literal` | high | una llamada que pasa `tenant_id=None`: un repositorio, una fachada, `rag`, `llm` |
+| `route-without-tenant` | high | una ruta que abre una sesión de base de datos y no tiene dependencia de tenant |
+| `factory-without-tenant` | high | lo mismo en una dependencia (`get_service`), reportada una vez con las rutas que la usan |
+| `raw-sql-without-tenant` | high | un string SQL que nombra una tabla de tenant y nunca `tenant_id` |
+| `storage-key-without-tenant` | high | `storage.put(f"invoices/{id}.pdf", ...)`: una llave armada sin el tenant |
+| `cache-key-without-tenant` | high | `cache.get(f"report:{month}")`: una llave armada sin el tenant |
+| `rag-unscoped` | high | `[plugin.rag] tenant_scoped = false` |
+| `scheduled-job-without-tenant` | medium | una tarea programada con `every=`/`cron=` (o `tasks.schedule`) que arma un `Job` sin `tenant_id`: un tick corre sin tenant |
+| `llm-call-without-tenant` | medium | `llm.chat(...)` sin `tenant_id`: no aplica ningún presupuesto por tenant |
+
+**Son heurísticas**, leídas del código sin importarlo, y están hechas para
+callarse cuando no pueden decidir en vez de adivinar:
+
+- Una dependencia de tenant es `current_tenant`, `TenantSession`, o un alias
+  `Annotated` de cualquiera de las dos declarado en el proyecto. Una
+  dependencia se sigue hacia funciones del mismo archivo o del mismo
+  `modules/<nombre>/`; una importada de otro lado no se sigue.
+- Una llamada a storage o cache se reconoce por el nombre de quien la recibe
+  (`storage`, `disk`, `cache`), y su llave tiene que carecer *visiblemente* del
+  tenant: un literal, un f-string, un `.format()` o una variable local
+  asignada con uno. Una llave que llega como parámetro no se juzga: quien la
+  armó no está a la vista.
+- SQL crudo es un literal (o f-string, o `+` de ellos) con
+  `SELECT`/`INSERT`/`UPDATE`/`DELETE` y una tabla de tenant después de `FROM`,
+  `JOIN`, `UPDATE` o `INTO`, y sin `tenant` en ningún lado. Los docstrings son
+  prosa y se saltan.
+- Las tablas de tenant son los modelos cuya cadena de bases incluye
+  `TenantMixin` o que declaran `tenant_id`.
+- No se leen los tests ni `migrations/`: un test que pasa `tenant_id=None`
+  ejercita a propósito el comportamiento de un solo cliente, y una revisión es
+  historia.
+
+Lo que se reporta y es deliberado se exime en línea con el comentario que
+`jfast contracts check` ya respeta, en la línea del hallazgo o en una línea de
+comentario justo arriba:
+
+```python
+rates = await cache.get("fx:usd")  # contracts: allow exchange rates are global
+```
+
+Un hallazgo eximido se lista como eximido, con su razón, para que la decisión
+siga siendo revisable. `--json` trae `findings`, `waived`, `tenant_tables` y la
+tabla `rules`. Sale con 1 mientras quede algo por arreglar, 0 cuando no.
+
+Es un flag de `jfast check` y no un check de su batería porque sus hallazgos
+son sobre una hipótesis: un servicio correcto de un solo cliente fallaría
+`jfast check` para siempre. El flag reemplaza la batería por este reporte.
+
+### El cambio: `jfast tenancy enable`
+
+```bash
+jfast tenancy enable --tenant acme --dry-run   # imprime todo, no escribe nada
+jfast tenancy enable --tenant acme             # escribe la revisión y jfast.toml
+alembic upgrade head                           # el paso que cambia datos
+```
+
+Escribe **una revisión de Alembic**, sobre el head actual, con una sentencia
+por tabla que quien revisa puede tachar:
+
+1. todo `tenant_id` NULL pasa a ser `--tenant`, el cliente atendido hasta ahora;
+2. con `--not-null`, la columna pasa a NOT NULL (decláralo también en los
+   modelos, o el siguiente autogenerate lo revierte);
+3. `enable_tenant_rls` en cada tabla, **después** de su relleno, porque
+   `FORCE ROW LEVEL SECURITY` aplica también al rol de la migración y una
+   migración no pone tenant;
+4. la tabla de chunks de RAG, cuando `[plugin.rag]` guarda los chunks en
+   pgvector: su `tenant_id` NULL re-asignado al mismo tenant y la misma
+   política aplicada, dentro de un bloque `DO` que primero revisa que la tabla
+   exista (el plugin rag la crea al arrancar, así que un servicio migrado puede
+   no tenerla todavía).
+
+Y edita `jfast.toml` en su lugar, conservando los comentarios: `tenancy` en
+`[plugins].enabled`, `[plugin.tenancy] sources = ["token", "user"]` (o
+`--sources`, con `--base-domain` para `subdomain`), `[plugin.database] rls =
+true`, `[plugin.rag] tenant_scoped = true`.
+
+Luego imprime lo que no puede hacer, en orden: aplicar la revisión como dueño
+de las tablas; crear el rol al que aplican las políticas (el SQL de arriba);
+decidir quién ve las filas rellenadas; arreglar lo que el reporte todavía
+encuentra. Se niega, con el arreglo en el mensaje, cuando todavía no hay
+revisiones, cuando las revisiones tienen varios heads (`alembic merge heads`),
+cuando ya existe una revisión del cambio, y cuando las fuentes elegidas nunca
+podrían resolver (`token`/`user` sin auth).
+
+**Elegir `--tenant`.** Las filas existentes le pertenecen, así que un request
+las ve solo cuando resuelve a ese tenant: un token cuyo claim `tenant_id` lo
+diga, o, con la fuente `user`, el usuario cuyo id es. Si hasta ahora la app era
+de una sola persona, el id de usuario de esa persona es el valor correcto.
+
+El downgrade quita las políticas y deja el tenant rellenado en su lugar: un
+servicio de un solo cliente lee esas filas sin filtro de cualquier forma, y
+adivinar cuáles eran NULL antes sería un segundo cambio de datos, silencioso.
+
+### Row-level security es la red de seguridad
+
+El reporte es una lista de heurísticas y algo se le va a escapar. El cambio
+activa row-level security para que lo que se escape falle *cerrado*: una query
+cruda que nadie pasó al tenant no devuelve filas en vez de devolver las de otro
+cliente, y una escritura para el tenant equivocado la rechaza la base. Un bug
+visible, no una fuga. `tests/test_tenancy_enable_pg.py` lo prueba sobre un
+servicio generado, con un rol sin SUPERUSER ni BYPASSRLS: después de `jfast
+tenancy enable` y `alembic upgrade head`, un segundo tenant lee cero filas de
+cada tabla -- chunks incluidos -- sin ningún `WHERE`, su `UPDATE` y su `DELETE`
+no tocan nada, y un `INSERT` con el id del primer tenant falla en la política.
+
+### Detrás de PgBouncer
+
+El pooling por transacción le da una conexión del servidor a muchos clientes,
+una transacción a la vez. Lo que `tests/test_rls_pgbouncer.py` verifica ahí
+(PgBouncer 1.25, `pool_mode = transaction`, `default_pool_size = 1`, así que
+toda transacción cae en el mismo backend):
+
+- **El tenant es local a la transacción.** Después de una transacción para
+  `acme`, la transacción del siguiente cliente en la misma conexión del
+  servidor lee `current_setting('jfast.tenant_id', true)` vacío y no ve filas.
+- **Tenants intercalados nunca se ven.** Cincuenta transacciones concurrentes,
+  dos tenants, un backend: cada una ve solo sus filas, y una transacción sin
+  tenant después no ve ninguna.
+- **Row-level security no le pide nada al pooler.** Ni `SET` ni
+  `server_reset_query`: `set_config(..., true)` termina con la transacción.
+
+**asyncpg necesita un ajuste.** asyncpg cachea prepared statements por conexión
+del cliente; detrás de un pool por transacción la siguiente transacción puede
+correr en otra conexión del servidor, donde el statement nunca se preparó:
+
+```
+prepared statement "__asyncpg_stmt_7__" does not exist
+```
+
+Medido: con `max_prepared_statements = 0` y más de una conexión del servidor
+en el pool, ocho workers concurrentes fallan antes de veinte transacciones con
+los defaults de asyncpg. El arreglo es un ajuste:
+
+```toml
+[plugin.database]
+pgbouncer = true   # por conexión: [plugin.database.connections.x] pgbouncer = true
+```
+
+Pone `statement_cache_size = 0` (asyncpg), `prepared_statement_cache_size = 0`
+(SQLAlchemy) y un nombre único por statement, para que dos procesos que
+comparten una conexión del servidor tampoco choquen en `__asyncpg_stmt_1__`. En
+PgBouncer 1.21+ con `max_prepared_statements > 0` (200 por defecto en la 1.25
+que corrimos) los defaults de asyncpg también funcionaron en la misma prueba,
+porque PgBouncer lleva los statements por su cuenta; ahí el ajuste no estorba, y
+es el correcto donde ese seguimiento está apagado.
+
+**Parámetros de arranque.** El plugin de base de datos fija `timezone` como
+parámetro de arranque, y PgBouncer lo reenvía de forma nativa. El
+`default_transaction_read_only` de una réplica no es uno que PgBouncer conozca:
+la conexión se rechaza con `unsupported startup parameter` salvo que PgBouncer
+(1.20+) tenga `track_extra_parameters = default_transaction_read_only` --
+verificado: dos clientes, uno de solo lectura, alternando en un backend, cada
+uno vio su propio valor. No lo pongas en `ignore_startup_parameters`: eso quita
+la protección de la réplica sin avisar.
+
+CI, para GitHub Actions (las dos URLs que lee el test):
+
+```yaml
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    env: { POSTGRES_USER: jfast, POSTGRES_PASSWORD: jfast, POSTGRES_DB: jfast }
+    ports: ["5499:5432"]
+    options: >-
+      --health-cmd "pg_isready -U jfast" --health-interval 5s --health-retries 10
+  pgbouncer:
+    image: edoburu/pgbouncer:latest   # fija el tag que verificaste
+    env:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: jfast
+      DB_USER: jfast_bouncer          # lo crea el test, NOSUPERUSER NOBYPASSRLS
+      DB_PASSWORD: jfast_bouncer
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      DEFAULT_POOL_SIZE: "1"          # toda transacción en un backend
+      MAX_PREPARED_STATEMENTS: "0"    # el caso estricto
+    ports: ["6435:5432"]
+env:
+  JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
+  JFAST_TEST_PGBOUNCER_URL: postgresql+asyncpg://jfast_bouncer:jfast_bouncer@localhost:6435/jfast
+```
+
+Las mismas variables de entorno se probaron contra un contenedor local. La
+imagen de PgBouncer se conecta a PostgreSQL cuando entra el primer cliente, que
+es después de que el test creó el rol, así que no hace falta ordenar los dos
+servicios. `JFAST_TEST_PGBOUNCER_MULTI_URL` -- una base de PgBouncer con varias
+conexiones del servidor y `max_prepared_statements = 0` -- corre además el test
+que reproduce la falla de asyncpg y muestra que el ajuste la arregla.
 
 ## Ver también
 

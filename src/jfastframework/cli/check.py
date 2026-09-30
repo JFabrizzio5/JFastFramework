@@ -33,7 +33,7 @@ Against `doctor`
 
 Against `workspace validate`
     That one reads a single file, the workspace resource graph, and is scoped
-    to a workspace rather than to a service. `check` runs it as one of six.
+    to a workspace rather than to a service. `check` runs it as part of `deploy`.
 
 Nothing here starts a container, opens a socket or talks to a database. Every
 check is static, so the command runs in a pre-commit hook and gives the same

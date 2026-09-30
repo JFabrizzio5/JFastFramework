@@ -236,6 +236,7 @@ jfast check --json                   # todo, como datos
 jfast check --ci                     # estricto: cualquier hallazgo falla, y también cualquier skip
 jfast check --only contracts,analyze # un subconjunto
 jfast check --fail-on critical       # el mismo umbral que `jfast analyze`
+jfast check --multitenant-ready      # en lugar de la batería: qué rompería pasar a multitenant
 jfast check --path ../shop           # desde afuera
 ```
 
@@ -257,7 +258,7 @@ dentro de `deploy`.
 
 En CI va solo `check`.
 
-### Los seis checks
+### Los siete checks
 
 Cada uno lleva el nombre del comando que ya lo corría. No hay un segundo
 vocabulario, y el nombre es lo que recibe `--only`.
@@ -267,6 +268,7 @@ vocabulario, y el nombre es lo que recibe `--only`.
 | `config` | `JFastConfig.load`, la misma carga que hace `doctor` | `2` |
 | `plugins` | `registry.discover()`, `registry.build()` y la lista de no importables | `3` |
 | `analyze` | `jfast analyze`: la estructura entre archivos | `1` |
+| `tenancy` | ajustes de tenant que se contradicen entre sí o con el código ([multitenancy](multitenancy.md#ajustes-que-se-contradicen)) | `1` |
 | `contracts` | `jfast contracts check`: las reglas que declaraste | `5` |
 | `migrations` | `jfast migration check`, en estático: sin base de datos | `4` |
 | `deploy` | `workspace.validate()` y renderizar `docker-compose` | `1` |
