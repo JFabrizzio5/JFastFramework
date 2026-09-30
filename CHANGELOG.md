@@ -26,6 +26,43 @@ before depending on any single part of this.
 ## [Unreleased]
 
 
+## [0.1.0a12] - 2026-09-30
+
+Fixes only. Five defects that building a new SaaS from scratch on 0.1.0a11 hit
+in its first hour, none of which the test suite saw, because each needed the
+path a new user takes: an optional unique field, a production image, the
+generated frontend in a browser, an upload.
+
+### Fixed
+
+- **The generated image could not write local storage, so it stopped at
+  boot.** It runs as `appuser`, but `WORKDIR` created `/app` as root and
+  `--chown` only reached the copied files. The Dockerfile now creates
+  `/app/storage` and the default disks owned by `appuser` (a volume mounted on
+  them starts out writable), and a disk that still cannot create its root says
+  which line to add. Found by the compose smoke's new upload step, which runs
+  `jfast add storage` on a generated project and uploads a file to the built
+  image. `jfast upgrade --check`: `image-cannot-write-local-storage`.
+- **`--unique` on an optional field allowed one row without a value.** The
+  generated key was `NULLS NOT DISTINCT` and the rule looked `None` up, so the
+  second receipt without a UUID answered 409. A key with a `?` field is now a
+  partial unique index (`WHERE field IS NOT NULL`), the rule skips a missing
+  value, and the generated tests cover it. Verified on PostgreSQL. Tables
+  already created keep their constraint: `jfast upgrade --check` lists them
+  (`unique-key-on-optional-field`) with the migration to write.
+- **The `storage` extra lacked `python-multipart`.** FastAPI refuses to import a
+  route with `UploadFile` without it; development worked because the `dev`
+  extra pulls it, and a production image built from `requirements.txt` did not
+  start. The compose smoke now uploads a file to that image.
+- **The generated frontend could not call its API in development.** Two
+  origins (:8610 and :8600) and no `cors_origins`: the browser blocked the first
+  request. `jfast start`, `jfast new service` and `jfast workspace env` add the
+  frontends' dev origins to the API's `[app] cors_origins`, never removing one
+  somebody configured.
+- **The generated API client turned uploads into JSON.** It forced
+  `Content-Type: application/json`, and axios then serialised a `FormData` as
+  `{"archivo":{}}`. Removed; axios sends objects as JSON by itself.
+
 ## [0.1.0a11] - 2026-09-30
 
 Built from two real services on 0.1.0a10, Cuadra and Dictamen, and from what

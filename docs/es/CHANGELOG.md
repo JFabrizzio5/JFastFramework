@@ -25,6 +25,44 @@ archivo para leer antes de depender de cualquier parte de esto.
 
 ## [Unreleased]
 
+## [0.1.0a12] - 2026-09-30
+
+Solo correcciones. Cinco defectos que se encontraron en la primera hora de
+construir un SaaS nuevo desde cero sobre 0.1.0a11, y que la suite no vio porque
+cada uno necesitaba el camino de un usuario nuevo: un campo único opcional, una
+imagen de producción, el frontend generado en un navegador, una subida.
+
+### Corregido
+
+- **La imagen generada no podía escribir en el storage local, así que se
+  detenía al arrancar.** Corre como `appuser`, pero `WORKDIR` creó `/app` como
+  root y `--chown` solo alcanzó a los archivos copiados. El Dockerfile ahora crea
+  `/app/storage` y los discos por defecto a nombre de `appuser` (un volumen
+  montado encima empieza con permisos de escritura), y un disco que aun así no
+  puede crear su raíz dice qué línea agregar. Lo encontró el paso nuevo del
+  smoke de compose, que corre `jfast add storage` en un proyecto generado y sube
+  un archivo a la imagen construida. `jfast upgrade --check`:
+  `image-cannot-write-local-storage`.
+- **`--unique` sobre un campo opcional permitía una sola fila sin valor.** La
+  llave generada era `NULLS NOT DISTINCT` y la regla buscaba `None`, así que el
+  segundo comprobante sin UUID respondía 409. Una llave con un campo `?` ahora
+  es un índice único parcial (`WHERE campo IS NOT NULL`), la regla ignora el
+  valor vacío y las pruebas generadas lo cubren. Verificado en PostgreSQL. Las
+  tablas ya creadas conservan su restricción: `jfast upgrade --check` las lista
+  (`unique-key-on-optional-field`) con la migración que hay que escribir.
+- **Al extra `storage` le faltaba `python-multipart`.** FastAPI no importa una
+  ruta con `UploadFile` sin él; en desarrollo funcionaba porque el extra `dev`
+  lo trae, y la imagen de producción construida desde `requirements.txt` no
+  arrancaba. El smoke de compose ahora sube un archivo a esa imagen.
+- **El frontend generado no podía llamar a su API en desarrollo.** Dos orígenes
+  (:8610 y :8600) y ningún `cors_origins`: el navegador bloqueaba la primera
+  petición. `jfast start`, `jfast new service` y `jfast workspace env` agregan
+  los orígenes de desarrollo de los frontends a `[app] cors_origins` de la API,
+  sin quitar nunca uno que alguien configuró.
+- **El cliente de API generado convertía las subidas en JSON.** Forzaba
+  `Content-Type: application/json` y axios serializaba un `FormData` como
+  `{"archivo":{}}`. Se quitó; axios manda los objetos como JSON por sí solo.
+
 ## [0.1.0a11] - 2026-09-30
 
 Sale de construir dos servicios reales sobre 0.1.0a10, Cuadra y Dictamen, y de

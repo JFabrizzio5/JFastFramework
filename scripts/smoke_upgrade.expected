@@ -7,8 +7,7 @@
 # The project: jfast new service shop --with database,auth,tenancy,metrics,rag,queue
 # and one module per layout (modular, screaming, hexagonal, layered).
 #
-# 0.1.0a10 -> 0.1.0a11. The a10-generated hexagonal module's own test fails
-# (its package init imports FastAPI through CreatePayload); 0.1.0a11's
-# template defers the import. upgrades.py needs an entry for it -- proposed
-# code below -- or this smoke fails at the expected-codes step, on purpose.
-hexagonal-eager-create-payload
+# 0.1.0a11 -> 0.1.0a12: nothing. That project has no local storage disk and
+# no --unique key over an optional field, the two shapes 0.1.0a12's notes are
+# about -- so a code here would be a detector firing on a case that is not
+# there. (0.1.0a10 -> 0.1.0a11 expected hexagonal-eager-create-payload.)

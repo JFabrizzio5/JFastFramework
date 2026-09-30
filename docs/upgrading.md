@@ -164,6 +164,18 @@ the real `packaging`, which is installed for development.
 
 ---
 
+## What changes in `0.1.0a12`
+
+Fixes only; nothing stops a correct `0.1.0a11` service. Two notes point at
+files `0.1.0a11` generated that need a hand:
+
+- `image-cannot-write-local-storage` -- a service with `storage` whose
+  Dockerfile runs as `appuser` without owning `/app`. The production image
+  stops at boot. `jfast deploy dockerfile` regenerates it.
+- `unique-key-on-optional-field` -- a `--unique` key over a `?` field, still a
+  `NULLS NOT DISTINCT` constraint: the second row without a value is a 409.
+  Replace it with the partial index the note quotes, in a migration.
+
 ## What changes in `0.1.0a11`
 
 Nothing in this release stops a correct `0.1.0a10` service from booting. What

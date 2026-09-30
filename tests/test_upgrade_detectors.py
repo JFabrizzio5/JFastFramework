@@ -1844,6 +1844,71 @@ def _the_header_only_in_a_comment_or_a_test(root: Path) -> None:
     write(root / "tests" / "test_x.py", GATEWAY_CLIENT)
 
 
+OLD_DOCKERFILE = (
+    "FROM python:3.12-slim\nWORKDIR /app\n"
+    "RUN useradd --create-home --uid 10001 appuser\n"
+    "COPY --chown=appuser:appuser . /app\nUSER appuser\n"
+)
+
+
+@affected_by("image-cannot-write-local-storage")
+def _a_local_disk_in_an_image_that_leaves_app_to_root(root: Path) -> list[str]:
+    service(root, "observability", "storage")
+    write(root / "Dockerfile", OLD_DOCKERFILE)
+    return ["Dockerfile: USER appuser"]
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _the_regenerated_dockerfile(root: Path) -> None:
+    from jfastframework.deploy.compose import render_dockerfile
+
+    service(root, "observability", "storage")
+    write(root / "Dockerfile", render_dockerfile())
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _only_object_storage_disks(root: Path) -> None:
+    service(
+        root,
+        "observability",
+        "storage",
+        extra='\n[plugin.storage.disks.files]\ndriver = "s3"\nbucket = "b"\n',
+    )
+    write(root / "Dockerfile", OLD_DOCKERFILE)
+
+
+NULLABLE_UNIQUE_ENTITY = (
+    "from sqlalchemy import UniqueConstraint\n"
+    "from sqlalchemy.orm import Mapped, mapped_column\n\n\n"
+    "class Gasto(Base):\n"
+    "    __tablename__ = 'gastos'\n"
+    "    __table_args__ = (\n"
+    "        UniqueConstraint('tenant_id', 'folio', name='uq_gastos_folio',\n"
+    "                         postgresql_nulls_not_distinct=True),\n"
+    "    )\n"
+    "    folio: Mapped[str | None] = mapped_column(nullable=True)\n"
+    "    total: Mapped[int] = mapped_column()\n"
+)
+
+
+@affected_by("unique-key-on-optional-field")
+def _a_generated_key_over_an_optional_field(root: Path) -> list[str]:
+    service(root, "observability", "database")
+    write(root / "modules" / "gasto" / "models.py", NULLABLE_UNIQUE_ENTITY)
+    return ["modules/gasto/models.py:8 Gasto: folio"]
+
+
+@unaffected_by("unique-key-on-optional-field")
+def _a_key_over_a_required_field(root: Path) -> None:
+    service(root, "observability", "database")
+    write(
+        root / "modules" / "gasto" / "models.py",
+        NULLABLE_UNIQUE_ENTITY.replace(
+            "Mapped[str | None] = mapped_column(nullable=True)", "Mapped[str] = mapped_column()"
+        ),
+    )
+
+
 @affected_by("revocation-fail-open")
 def _auth_checking_revocation_against_redis(root: Path) -> list[str]:
     service(root, "observability", "database", "cache", "auth", extra=AUTH_ISSUING)

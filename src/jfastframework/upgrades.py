@@ -2001,6 +2001,68 @@ def _own_database_error_handlers(project: Project) -> list[str]:
     return found
 
 
+def _image_cannot_write_local_storage(project: Project) -> list[str]:
+    """A local storage disk, and a generated Dockerfile that leaves /app to root."""
+    if "storage" not in _active_plugins(project):
+        return []
+    dockerfile = project.root / "Dockerfile"
+    if not dockerfile.is_file():
+        return []
+    text = dockerfile.read_text(encoding="utf-8", errors="replace")
+    if "USER appuser" not in text or "chown appuser:appuser /app " in text:
+        return []
+    disks = _table(_config(project), "plugin", "storage").get("disks")
+    if (
+        isinstance(disks, dict)
+        and disks
+        and not any(
+            isinstance(spec, dict) and spec.get("driver", "local") == "local"
+            for spec in disks.values()
+        )
+    ):
+        return []
+    return ["Dockerfile: USER appuser, and /app is still owned by root"]
+
+
+def _nullable_unique_keys(project: Project) -> list[str]:
+    """A generated unique key over an optional column, still NULLS NOT DISTINCT."""
+    found: list[str] = []
+    for relative, tree in _parsed_files(project.root):
+        if not relative.startswith("modules/") or "/tests/" in relative:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            optional = {
+                item.target.id
+                for item in node.body
+                if isinstance(item, ast.AnnAssign)
+                and isinstance(item.target, ast.Name)
+                and "None" in ast.unparse(item.annotation)
+            }
+            for call in ast.walk(node):
+                if not (
+                    isinstance(call, ast.Call)
+                    and ast.unparse(call.func).split(".")[-1] == "UniqueConstraint"
+                    and any(
+                        k.arg == "postgresql_nulls_not_distinct"
+                        and isinstance(k.value, ast.Constant)
+                        and k.value.value is True
+                        for k in call.keywords
+                    )
+                ):
+                    continue
+                columns = [
+                    a.value
+                    for a in call.args
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str)
+                ]
+                nullable = [c for c in columns if c in optional and c != "tenant_id"]
+                if nullable:
+                    found.append(f"{relative}:{call.lineno} {node.name}: {', '.join(nullable)}")
+    return found
+
+
 def _tenant_header_without_tenancy(project: Project) -> list[str]:
     """Code that sends or configures the tenant header, in a service without ``tenancy``.
 
@@ -2289,6 +2351,44 @@ CHANGES: tuple[Change, ...] = (
             "Make sure the client address is the real one (trusted proxies), then raise "
             "login_limit_per_ip for a shared egress. Set [plugin.accounts] rate_limit = false "
             "to keep 0.1.0a10's behaviour."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="breaking",
+        code="image-cannot-write-local-storage",
+        summary="The generated image cannot create its local storage directory; it stops at boot.",
+        detail=(
+            "The Dockerfile runs as appuser, but WORKDIR created /app as root and --chown only "
+            "reached the copied files, so local storage could not create storage/ and the "
+            "service failed to start. A volume mounted on a path the image never created is "
+            "created as root too. Development on the host never sees it."
+        ),
+        detect=_image_cannot_write_local_storage,
+        remedy=(
+            "Regenerate it with `jfast deploy dockerfile`, or add after the COPY lines: "
+            "RUN mkdir -p /app/storage/public /app/storage/private && chown appuser:appuser "
+            "/app /app/storage /app/storage/public /app/storage/private -- plus one directory "
+            "per other local disk root."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="behaviour",
+        code="unique-key-on-optional-field",
+        summary="A unique key over an optional field allowed one row without a value.",
+        detail=(
+            "`jfast new module --unique` generated NULLS NOT DISTINCT for every key, so two "
+            "rows with the optional field empty collided, and the rule looked None up: the "
+            "second receipt without a UUID answered 409. 0.1.0a12 generates a partial unique "
+            "index (WHERE field IS NOT NULL) and skips the rule when the value is missing."
+        ),
+        detect=_nullable_unique_keys,
+        remedy=(
+            "Replace the UniqueConstraint with Index(name, 'tenant_id', 'field', unique=True, "
+            "postgresql_nulls_not_distinct=True, postgresql_where=text('field IS NOT NULL')), "
+            "return early from the availability rule when the field is None, and write the "
+            "migration that drops the constraint and creates the index."
         ),
     ),
     Change(

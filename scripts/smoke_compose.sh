@@ -116,6 +116,24 @@ mkdir workspace && cd workspace
 
 [ -f demo/Dockerfile ] || fail "no demo/Dockerfile: \`build:\` in the compose file has nothing to read"
 
+# The first thing most services add is an upload. `jfast add storage` edits
+# requirements.txt, which is all the production image installs: in 0.1.0a11
+# the storage extra lacked python-multipart, so dev worked and this image
+# failed to import main.py at its first UploadFile route.
+(cd demo && "${JFAST}" add storage --no-install > /dev/null) \
+  || fail "jfast add storage failed on a project nobody had touched"
+cat >> demo/main.py <<'PY'
+
+
+# smoke_compose: one real upload through the production image.
+from fastapi import UploadFile  # noqa: E402
+
+
+@app.post("/_smoke/upload")
+async def _smoke_upload(file: UploadFile) -> dict[str, int]:
+    return {"bytes": len(await file.read())}
+PY
+
 # Not in a subshell: the wheel server it may start has to be stopped by cleanup.
 cd demo && pin_to_checkout_wheel && cd ..
 
@@ -136,6 +154,25 @@ step "the module jfast start generated is actually served"
 # the routes are absent because nothing mounted the router.
 inside "${WORKSPACE_PROJECT}" demo "${BASE_PORT}" /openapi.json | grep -q '"/items"' \
   || fail "/items is not in the schema: the generated module was never mounted"
+
+step "a file uploaded to the production image arrives as a file"
+docker compose -p "${WORKSPACE_PROJECT}" exec -T demo python - "${BASE_PORT}" <<'PY' \
+  || fail "the upload did not arrive: the image lacks what an UploadFile route needs"
+import json, sys, urllib.request
+boundary = "jfastsmoke"
+body = (
+    f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"t.pdf\"\r\n"
+    "Content-Type: application/pdf\r\n\r\n%PDF-1.4 smoke\r\n"
+    f"--{boundary}--\r\n"
+).encode()
+request = urllib.request.Request(
+    f"http://127.0.0.1:{sys.argv[1]}/_smoke/upload", data=body, method="POST",
+    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+)
+with urllib.request.urlopen(request, timeout=10) as response:
+    answer = json.load(response)
+assert answer == {"bytes": 14}, answer
+PY
 
 docker compose -p "${WORKSPACE_PROJECT}" down -v > /dev/null 2>&1 || true
 

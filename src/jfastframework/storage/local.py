@@ -53,7 +53,18 @@ class LocalStorage:
         self._signing_key = signing_key
         self._signer = UrlSigner(signing_key) if signing_key else None
         self._pipeline = pipeline or UploadPipeline()
-        self._root.mkdir(parents=True, exist_ok=True)
+        try:
+            self._root.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            # The ordinary cause is a container running as a non-root user in
+            # a directory root owns -- or a volume mounted on a path the image
+            # never created, which Docker then creates as root.
+            raise PermissionError(
+                f"local storage cannot create {self._root}: this user cannot write there. "
+                f"In a container, create it owned by the app user before USER in the "
+                f"Dockerfile, e.g. `RUN mkdir -p {self._root} && chown appuser:appuser "
+                f"{self._root}`, so a volume mounted on it starts out writable."
+            ) from exc
 
     def _path(self, key: str) -> Path:
         safe = normalise_key(key)

@@ -374,6 +374,13 @@ RUN useradd --create-home --uid 10001 appuser
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder --chown=appuser:appuser /app /app
+# WORKDIR created /app as root, and --chown only reaches what was copied into
+# it: without this, local storage cannot create its directory and the service
+# stops at boot. The default disks exist in the image so the volume compose
+# mounts on each starts out owned by appuser; another disk's root needs its
+# own line here.
+RUN mkdir -p /app/storage/public /app/storage/private \\
+ && chown appuser:appuser /app /app/storage /app/storage/public /app/storage/private
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\
