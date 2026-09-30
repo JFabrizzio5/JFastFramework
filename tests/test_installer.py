@@ -366,3 +366,49 @@ def test_remove_names_the_plugins_that_exist(service: Path) -> None:
     result = runner.invoke(app, ["remove", "telemetri"])
     assert result.exit_code != 0
     assert "telemetry" in result.output
+
+
+# -- the frontend's dev server may call the API --------------------------------
+
+
+def test_start_lets_the_frontend_dev_server_call_the_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Found building a receipts SaaS from scratch: the generated frontend on
+    # :8610 called the API on :8600 and the browser blocked everything (the
+    # preflight answered 405) -- nothing wrote cors_origins.
+    from fastapi.testclient import TestClient
+
+    from jfastframework import create_app
+
+    api = _start(tmp_path, monkeypatch)
+    workspace = Workspace.load(tmp_path / "jfast.workspace.toml")
+    port = workspace.frontends[0].port
+    origins = _toml(api / "jfast.toml")["app"]["cors_origins"]
+    assert origins == [f"http://localhost:{port}", f"http://127.0.0.1:{port}"]
+
+    monkeypatch.chdir(api)
+    client = TestClient(create_app(config_path="jfast.toml"))
+    allowed = client.options(
+        "/health",
+        headers={"Origin": origins[0], "Access-Control-Request-Method": "GET"},
+    )
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == origins[0]
+
+
+def test_dev_cors_keeps_configured_origins_and_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jfastframework.cli.generate import write_dev_cors
+
+    api = _start(tmp_path, monkeypatch)
+    config = api / "jfast.toml"
+    text = config.read_text(encoding="utf-8").replace(
+        "cors_origins = [", 'cors_origins = ["https://app.example.com", ', 1
+    )
+    config.write_text(text, encoding="utf-8")
+    workspace = Workspace.load(tmp_path / "jfast.workspace.toml")
+    assert write_dev_cors(workspace) == []
+    origins = _toml(config)["app"]["cors_origins"]
+    assert origins[0] == "https://app.example.com" and len(origins) == 3

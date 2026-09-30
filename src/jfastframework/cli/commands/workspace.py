@@ -388,6 +388,12 @@ def workspace_env(
     if not workspace.frontends:
         raise typer.Exit(0)
 
+    if not dry_run:
+        from jfastframework.cli.generate import write_dev_cors
+
+        for config in write_dev_cors(workspace):
+            typer.echo(f"  wrote             {config}  ([app] cors_origins)")
+
     for frontend in workspace.frontends:
         env_path = Path(frontend.path) / ".env"
         body = (
