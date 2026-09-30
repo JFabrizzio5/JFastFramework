@@ -447,6 +447,33 @@ def test_schedule_by_name_reaches_the_handler(tmp_path: Path) -> None:
     assert [f.line for f in found] == [5]  # purge, not per_request
 
 
+def test_a_filter_built_elsewhere_is_undecidable_and_stays_quiet(tmp_path: Path) -> None:
+    # Cuadra's shape: a repository helper returns "c.tenant_id = :t AND ...",
+    # interpolated after WHERE. Only the helper knows; the rule must not guess.
+    _write(
+        tmp_path,
+        {
+            **CLEAN,
+            "modules/invoice/report.py": """
+                from sqlalchemy import text
+
+                async def totals(session, where, params):
+                    return await session.execute(
+                        text(f"SELECT count(*) FROM invoices c WHERE {where} AND c.x"), params
+                    )
+
+                async def top(session, limit):
+                    return await session.execute(
+                        text(f"SELECT * FROM invoices WHERE is_active LIMIT {limit}")
+                    )
+            """,
+        },
+    )
+    found = [f for f in readiness(tmp_path).open if f.code == "raw-sql-without-tenant"]
+    # The interpolated filter is quiet; a literal filter with no tenant is not.
+    assert [f.line for f in found] == [10]
+
+
 def test_a_waiver_sets_a_finding_aside_and_keeps_it_visible(tmp_path: Path) -> None:
     _write(
         tmp_path,

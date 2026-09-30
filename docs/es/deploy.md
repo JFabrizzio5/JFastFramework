@@ -473,10 +473,24 @@ modelo ni se nota.
   ocho. El throughput escala con ellos hasta que la base de datos es el
   límite, que casi siempre llega primero.
 
+**Desde 0.1.0a11 lo sostiene un presupuesto en CI.** `scripts/bench_overhead.py`
+mide los mismos escenarios en proceso, en tiempo de CPU, como proporción
+contra FastAPI solo en la misma máquina -- JFast por defecto 2.48x, auth +
+tenancy + métricas 5.43x en la laptop de referencia -- y
+`tests/test_performance_budget.py` falla cuando una proporción crece más de
+20 %. Las rutas propias del framework (`/health`, `/ready`, `/info`,
+`/metrics`, la documentación) ahora se prueban después de las de la
+aplicación, lo que ahorra de 2 a 4 us de CPU en cada petición a la
+aplicación. La tabla de `ab` de arriba no se volvió a medir para 0.1.0a11: la
+máquina estaba compartida con otras suites de pruebas, y las proporciones en
+proceso, que sí se midieron, no se movieron. El método, los números y el
+resto del trabajo de escala -- `jfast bench`, varias réplicas, MinIO, RAG y
+agregados -- están en [Escalar](scaling.md).
+
 Para medir tu propio servicio, arráncalo con un worker y sin access log, y
-apunta `ab`, `wrk` u `oha` a un endpoint real con un token real; compara con el
-mismo endpoint en una app de FastAPI sin nada antes de creerle a cualquier
-número, incluidos los de esta página.
+apunta `jfast bench` (o `ab`, `wrk`, `oha`) a un endpoint real con un token
+real; compara con el mismo endpoint en una app de FastAPI sin nada antes de
+creerle a cualquier número, incluidos los de esta página.
 
 ## Checklist antes de producción
 

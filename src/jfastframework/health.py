@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse
 
 if TYPE_CHECKING:
@@ -82,10 +82,24 @@ async def _probe(plugin: Plugin, ctx: AppContext, timeout: float) -> dict[str, A
 
 
 def build_system_router(ctx: AppContext, plugins: list[Plugin]) -> APIRouter:
-    router = APIRouter(tags=["system"])
+    """The system endpoints on a router of their own, for mounting elsewhere."""
+    router = APIRouter()
+    add_system_routes(router, ctx, plugins)
+    return router
+
+
+def add_system_routes(target: APIRouter | FastAPI, ctx: AppContext, plugins: list[Plugin]) -> None:
+    """Register ``/health``, ``/ready`` and ``/info`` on ``target``.
+
+    ``create_app`` passes the application itself rather than including a
+    router: each endpoint is then one plain route in ``app.routes``, which is
+    what lets it be moved behind the application's routes (see
+    ``jfastframework.app.order_framework_routes_last``). An included router
+    is one opaque entry that every request has to match its way through.
+    """
     settings = ctx.settings
 
-    @router.get("/health", summary="Liveness probe")
+    @target.get("/health", summary="Liveness probe", tags=["system"])
     async def health() -> dict[str, Any]:
         return {
             "status": "ok",
@@ -94,7 +108,7 @@ def build_system_router(ctx: AppContext, plugins: list[Plugin]) -> APIRouter:
             "env": settings.env,
         }
 
-    @router.get("/ready", summary="Readiness probe")
+    @target.get("/ready", summary="Readiness probe", tags=["system"])
     async def ready() -> JSONResponse:
         timeout = settings.readiness_timeout
         results = await asyncio.gather(*(_probe(plugin, ctx, timeout) for plugin in plugins))
@@ -111,7 +125,7 @@ def build_system_router(ctx: AppContext, plugins: list[Plugin]) -> APIRouter:
 
     if not settings.is_production:
 
-        @router.get("/info", summary="Build and plugin inventory")
+        @target.get("/info", summary="Build and plugin inventory", tags=["system"])
         async def info() -> dict[str, Any]:
             return {
                 "service": settings.app_name,
@@ -120,5 +134,3 @@ def build_system_router(ctx: AppContext, plugins: list[Plugin]) -> APIRouter:
                 "providers": list(ctx.providers),
                 "plugins": [plugin.describe() for plugin in plugins],
             }
-
-    return router

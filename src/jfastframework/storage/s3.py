@@ -392,19 +392,30 @@ class S3Storage:
         safe_prefix = normalise_key(prefix) if prefix else ""
 
         def _list() -> list[StoredFile]:
-            response = self.client.list_objects_v2(
-                Bucket=self._bucket, Prefix=safe_prefix, MaxKeys=limit
-            )
-            return [
-                StoredFile(
-                    key=item["Key"],
-                    size=int(item.get("Size", 0)),
-                    content_type=guess_content_type(item["Key"]),
-                    modified_at=item.get("LastModified"),
-                    etag=(item.get("ETag") or "").strip('"') or None,
+            # S3 returns at most 1,000 keys per request whatever MaxKeys
+            # asks for, so a larger limit has to follow the continuation
+            # token; one request silently cut every listing at 1,000.
+            files: list[StoredFile] = []
+            kwargs: dict[str, Any] = {"Bucket": self._bucket, "Prefix": safe_prefix}
+            while len(files) < limit:
+                response = self.client.list_objects_v2(
+                    **kwargs, MaxKeys=min(limit - len(files), 1000)
                 )
-                for item in response.get("Contents", [])
-            ]
+                files.extend(
+                    StoredFile(
+                        key=item["Key"],
+                        size=int(item.get("Size", 0)),
+                        content_type=guess_content_type(item["Key"]),
+                        modified_at=item.get("LastModified"),
+                        etag=(item.get("ETag") or "").strip('"') or None,
+                    )
+                    for item in response.get("Contents", [])
+                )
+                token = response.get("NextContinuationToken")
+                if not response.get("IsTruncated") or not token:
+                    break
+                kwargs["ContinuationToken"] = token
+            return files[:limit]
 
         return await self._call(_list)
 

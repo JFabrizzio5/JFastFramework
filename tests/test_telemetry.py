@@ -220,6 +220,29 @@ async def test_a_request_is_one_server_span_named_by_its_route() -> None:
     assert resource["deployment.environment.name"] == "local"
 
 
+async def test_fastapis_own_telemetry_never_exports_beside_ours(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Found tracing Cuadra to Jaeger: FastAPI 0.14x read the same endpoint
+    # variable, configured a second global provider ("unknown_service"),
+    # duplicated every server span and would have exported exception logs.
+    from opentelemetry import trace
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.invalid:4318")
+    provider_before = trace.get_tracer_provider()
+    app = traced_app(routers=(users_router(),))
+    native = getattr(app, "_telemetry", None)
+    if native is None:
+        pytest.skip("this FastAPI has no native telemetry")
+    assert native["auto_configure"] is False
+    assert not (native["tracing"] or native["logs"] or native["metrics"])
+    async with client_for(app) as client:
+        assert (await client.get("/users/42")).status_code == 200
+    assert trace.get_tracer_provider() is provider_before
+    servers = [s for s in spans_of(app) if s.kind is SpanKind.SERVER]
+    assert [s.name for s in servers] == ["GET /users/{user_id}"]
+
+
 async def test_an_incoming_traceparent_is_continued() -> None:
     app = traced_app(routers=(users_router(),))
     async with client_for(app) as client:
