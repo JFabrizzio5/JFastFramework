@@ -13,17 +13,17 @@ Two rules worth keeping:
 JSON and read by a frontend. Renaming a member is free; changing its value is a
 data migration.
 
-**`str, Enum`, not `Enum`.** A plain Enum serialises as `Status.DRAFT` in some
-paths and `"DRAFT"` in others. Inheriting from `str` makes it a string
-everywhere, including in JSON and in SQL.
+**`StrEnum`, not `Enum`.** A plain Enum serialises as `Status.DRAFT` in some
+paths and `"DRAFT"` in others. A `StrEnum` member is its value everywhere,
+including in JSON, in SQL and in an f-string.
 """
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class {{ Module }}Stage(str, Enum):
+class {{ Module }}Stage(StrEnum):
     """Example, named so it does not collide with the enum you meant to add.
 
     Replace it: `jfast new enum {{ Module }}Status --module {{ module }}`.

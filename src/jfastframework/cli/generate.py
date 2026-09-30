@@ -9,6 +9,7 @@ and so that no command module imports another to reuse one.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -71,12 +72,61 @@ def _register_module(root: Path, modules_dir: str, module: str, *, htmx: bool) -
             cli_ui.note(f"    {line}")
         return
 
+    if changed:
+        _sort_mounted_imports(entry, first_party={modules_dir, "web", "shared"})
+
     # Say which of the two happened. Reporting a mount that did not occur is
     # the same lie as reporting a file written that was already there.
     if changed:
         cli_ui.created("main.py", f"{module}_router mounted")
     else:
         cli_ui.note(f"main.py already mounts {module}_router")
+
+
+_IMPORTS_MARKER = "# [jfast:imports]"
+_FROM_IMPORT = re.compile(r"^from ([\w.]+) import ")
+
+
+def _sort_mounted_imports(entry: Path, *, first_party: set[str]) -> None:
+    """Keep the router imports above the marker sorted, and apart from it.
+
+    The marker splices each import in where the marker sits, so imports land in
+    the order modules were created: `jfast new module alerta` after `item`
+    wrote them unsorted, and the marker right under the last import is one
+    blank line short of what isort wants. Either one fails `ruff check .` in a
+    project the generator itself just wrote.
+
+    Only the run of this project's own imports directly above the marker is
+    touched -- a line that is anything else ends the run -- so a hand-edited
+    main.py keeps whatever else it has.
+    """
+    lines = entry.read_text(encoding="utf-8").split("\n")
+    try:
+        marker = next(i for i, line in enumerate(lines) if line.strip() == _IMPORTS_MARKER)
+    except StopIteration:
+        return
+
+    start = marker
+    while start > 0:
+        previous = lines[start - 1]
+        found = _FROM_IMPORT.match(previous)
+        if previous.strip() == "" or (found and found.group(1).split(".")[0] in first_party):
+            start -= 1
+            continue
+        break
+
+    run = [line for line in lines[start:marker] if line.strip()]
+    if not run:
+        return
+
+    def module_of(line: str) -> str:
+        found = _FROM_IMPORT.match(line)
+        return found.group(1).lower() if found else line
+
+    ordered = sorted(dict.fromkeys(run), key=module_of)
+    rewritten = [*lines[:start], *ordered, "", *lines[marker:]]
+    if rewritten != lines:
+        entry.write_text("\n".join(rewritten), encoding="utf-8")
 
 
 def generate_service(

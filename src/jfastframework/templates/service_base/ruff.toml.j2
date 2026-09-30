@@ -1,0 +1,50 @@
+# Lint and format rules for {{ service_title }}.
+#
+# Written out rather than left to ruff's defaults, because the defaults move:
+# ruff 0.16.x selects bugbear and isort out of the box where earlier releases
+# did not, so a project generated clean on one ruff failed on the next with
+# nothing in it changed. With the rule
+# set named here, `ruff check .` means the same thing on every machine and in
+# CI. The generator checks its own output against this file on every release.
+line-length = 100
+target-version = "py311"
+# Revisions are written by Alembic and read by a person before they run; they
+# are reviewed as migrations, not linted as code, and reformatting one makes its
+# diff against what autogenerate proposed harder to read.
+extend-exclude = ["migrations/versions"]
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC"]
+
+[lint.flake8-bugbear]
+# FastAPI declares dependencies and parameters as a call in the default --
+# `service: X = Depends(get_service)`, `limit: int = Query(50)`. That is the
+# framework's API, not the mutable-default bug B008 exists to catch.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+    "fastapi.Security",
+]
+
+[lint.isort]
+# The framework gets a block of its own between third-party libraries and this
+# project's code, so a reader sees at a glance which imports are the framework
+# and which are yours.
+known-first-party = ["modules", "shared"]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "framework",
+    "first-party",
+    "local-folder",
+]
+
+[lint.isort.sections]
+framework = ["jfastframework"]

@@ -6,6 +6,7 @@ What a new service shares with `jfast init` and `jfast start` is in
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import typer
@@ -321,21 +322,47 @@ ENUM_HEADER = (
     "and read by a frontend. Renaming a member is free; changing its value is a\n"
     "data migration.\n"
     "\n"
-    "`str, Enum` rather than `Enum`, so a member is a string everywhere -- in\n"
+    "`StrEnum` rather than `Enum`, so a member is its value everywhere -- in\n"
     "JSON, in SQL, and in a log line -- instead of `Status.DRAFT` in some paths\n"
     'and `"DRAFT"` in others.\n'
     '"""\n'
     "\n"
     "from __future__ import annotations\n"
     "\n"
-    "from enum import Enum\n"
+    "from enum import StrEnum\n"
     "\n"
     "\n"
 )
 
 
+def _import_str_enum(source: str) -> str:
+    """Make sure a file the new enum is appended to imports ``StrEnum``.
+
+    A file written before the generator moved to ``StrEnum`` imports ``Enum``
+    only, and appending a ``StrEnum`` class to it would be a NameError at the
+    first import. The existing import line is extended rather than a second one
+    added, which is also the form isort accepts.
+    """
+    if re.search(r"^from enum import .*\bStrEnum\b", source, flags=re.MULTILINE):
+        return source
+    extended, count = re.subn(
+        r"^from enum import (.+)$",
+        lambda match: "from enum import "
+        + ", ".join(sorted({*(n.strip() for n in match.group(1).split(",")), "StrEnum"})),
+        source,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if count:
+        return extended
+    future = "from __future__ import annotations\n"
+    if future in source:
+        return source.replace(future, future + "\nfrom enum import StrEnum\n", 1)
+    return "from enum import StrEnum\n\n" + source
+
+
 def _render_enum(class_name: str, members: list[str]) -> str:
-    lines = [f"class {class_name}(str, Enum):", f'    """{class_name}."""', ""]
+    lines = [f"class {class_name}(StrEnum):", f'    """{class_name}."""', ""]
     for member in members:
         lines.append(f'    {to_snake(member).upper()} = "{to_snake(member)}"')
     return "\n".join(lines) + "\n"
@@ -418,6 +445,7 @@ def new_enum(
         if f"class {class_name}(" in existing:
             typer.echo(f"{class_name} is already in {target}.")
             raise typer.Exit(1)
+        existing = _import_str_enum(existing)
         target.write_text(existing.rstrip("\n") + "\n\n\n" + body, encoding="utf-8")
     else:
         target.write_text(ENUM_HEADER + body, encoding="utf-8")
