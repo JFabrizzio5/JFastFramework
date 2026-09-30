@@ -525,10 +525,11 @@ async def pg_dsn() -> Any:
     return dsn
 
 
-def _pg_app(dsn: str) -> Any:
+def _pg_app(dsn: str, **overrides: Any) -> Any:
     return build_test_app(
         plugins=["observability", "database", "queue", "outbox"],
         raw={"plugin": {"database": {"dsn": dsn}, "outbox": {"relay": False}}},
+        **overrides,
     )
 
 
@@ -739,7 +740,10 @@ async def test_publish_in_a_request_with_no_receiver_is_a_500_that_names_the_fix
 
 
 async def test_ready_is_degraded_while_an_outbox_message_is_failing(pg_dsn: str) -> None:
-    app = _pg_app(pg_dsn)
+    # A generous readiness deadline: under a loaded full-suite run the database
+    # check could pass the 2 s default, turn "unavailable", and hide what this
+    # asserts -- that a failing outbox message degrades readiness, no more.
+    app = _pg_app(pg_dsn, readiness_timeout=15.0)
     ctx = app.state.jfast
     async with app.router.lifespan_context(app):
         engine = ctx.require("db.engine")
