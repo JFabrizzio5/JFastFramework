@@ -91,6 +91,10 @@ A `storage` disk with `driver = "local"` gets a named volume, mounted under the
 image's WORKDIR. Without one the uploads live in the container's own filesystem
 and the next `docker build` throws them away, while the rows referencing them
 stay. Both generators emit it and name it the same way, `<service>_<disk>_data`.
+The Dockerfile has to create the same roots for `appuser`, or Docker creates
+the mount point as root and the disk cannot write: `jfast deploy dockerfile`
+reads them from `[plugin.storage.disks]` -- see
+[Storage](storage.md#local-disks-in-the-production-image).
 
 ### Container names
 

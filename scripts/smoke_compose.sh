@@ -131,16 +131,40 @@ mkdir workspace && cd workspace
 # failed to import main.py at its first UploadFile route.
 (cd demo && "${JFAST}" add storage --no-install > /dev/null) \
   || fail "jfast add storage failed on a project nobody had touched"
+
+# Then a disk of its own, declared by hand the way the docs show. 0.1.0a12's
+# image created only public/ and private/, so compose's volume on this one was
+# root's: /ready 503 and every upload a PermissionError. Running `jfast add
+# storage` again rewrites the Dockerfile's storage line; `jfast workspace
+# compose` gives the disk its volume.
+cat >> demo/jfast.toml <<'TOML'
+
+[plugin.storage.disks.adjuntos]
+driver = "local"
+root = "storage/adjuntos"
+visibility = "private"
+TOML
+(cd demo && "${JFAST}" add storage --no-install > /dev/null) \
+  || fail "jfast add storage did not refresh the Dockerfile"
+grep -q '/app/storage/adjuntos' demo/Dockerfile \
+  || fail "the Dockerfile does not create the adjuntos disk"
+"${JFAST}" workspace compose > /dev/null
+grep -q 'demo_adjuntos_data:/app/storage/adjuntos' docker-compose.yml \
+  || fail "the compose file has no volume for the adjuntos disk"
+
 cat >> demo/main.py <<'PY'
 
 
-# smoke_compose: one real upload through the production image.
-from fastapi import UploadFile  # noqa: E402
+# smoke_compose: one real upload through the production image, written to the
+# disk the project declared -- a volume the image had to create for appuser.
+from fastapi import Request, UploadFile  # noqa: E402
 
 
 @app.post("/_smoke/upload")
-async def _smoke_upload(file: UploadFile) -> dict[str, int]:
-    return {"bytes": len(await file.read())}
+async def _smoke_upload(request: Request, file: UploadFile) -> dict[str, int]:
+    storage = request.app.state.jfast.require("storage")
+    await storage.disk("adjuntos").put("smoke/t.pdf", await file.read())
+    return {"bytes": len(await storage.disk("adjuntos").get("smoke/t.pdf"))}
 PY
 
 # Not in a subshell: the wheel server it may start has to be stopped by cleanup.
@@ -171,9 +195,9 @@ step "the module jfast start generated is actually served"
 inside "${WORKSPACE_PROJECT}" demo "${BASE_PORT}" /openapi.json | grep -q '"/items"' \
   || fail "/items is not in the schema: the generated module was never mounted"
 
-step "a file uploaded to the production image arrives as a file"
+step "a file uploaded to the production image is written to its own disk"
 docker compose -p "${WORKSPACE_PROJECT}" exec -T demo python - "${BASE_PORT}" <<'PY' \
-  || fail "the upload did not arrive: the image lacks what an UploadFile route needs"
+  || fail "the upload was not written: the image lacks what an UploadFile route needs, or appuser cannot write the adjuntos volume"
 import json, sys, urllib.request
 boundary = "jfastsmoke"
 body = (
@@ -191,15 +215,30 @@ assert answer == {"bytes": 14}, answer
 PY
 
 step "Caddy serves the built SPA and proxies /api"
+# Brought up only now: `up ... demo` above starts the API and what it depends
+# on, and Caddy depends on the API, not the other way round.
+up_built "${WORKSPACE_PROJECT}" demo caddy > /dev/null 2>&1 \
+  || fail "docker compose up caddy failed on the generated file"
 caddy_get() {
-  docker compose -p "${WORKSPACE_PROJECT}" exec -T caddy wget -qO- "http://127.0.0.1$1"
+  # By the hostname the Caddyfile serves: a request for 127.0.0.1 matches no
+  # site and Caddy answers an empty 200.
+  docker compose -p "${WORKSPACE_PROJECT}" exec -T caddy wget -qO- "http://localhost$1"
 }
 for _ in $(seq 1 15); do caddy_get / > /dev/null 2>&1 && break; sleep 1; done
-caddy_get / | grep -q jfast-smoke-spa \
-  || fail "Caddy does not serve demo-web/dist: the compose file mounts another directory"
+caddy_get / | grep -q jfast-smoke-spa || {
+  docker compose -p "${WORKSPACE_PROJECT}" ps -a caddy || true
+  docker compose -p "${WORKSPACE_PROJECT}" logs --tail 20 caddy || true
+  fail "Caddy does not serve demo-web/dist: the compose file mounts another directory"
+}
 # try_files: a client-side route on a hard refresh is the SPA, not a 404.
 caddy_get /items/42 | grep -q jfast-smoke-spa || fail "a client-side route is not index.html"
-caddy_get /api/health | grep -q '"status"' || fail "Caddy does not proxy /api to the service"
+# `up caddy` may have recreated the API it depends on; give it its start.
+for _ in $(seq 1 30); do caddy_get /api/health > /dev/null 2>&1 && break; sleep 2; done
+caddy_get /api/health | grep -q '"status"' || {
+  docker compose -p "${WORKSPACE_PROJECT}" logs --tail 10 caddy | grep -i error || true
+  docker compose -p "${WORKSPACE_PROJECT}" ps -a || true
+  fail "Caddy does not proxy /api to the service"
+}
 
 step "Caddy accepts every Caddyfile jfast workspace caddy writes"
 # The plain one is already running above. The tenant variants are not, and

@@ -553,6 +553,48 @@ sigue verificando después de que el objeto se mudó a un disco que no firma nad
 por su cuenta. La regla de visibilidad no cambia: decide el disco al que
 resuelve la clave.
 
+## Discos locales en la imagen de producción
+
+La imagen generada corre como `appuser` (uid 10001), y el compose generado
+monta un volumen con nombre en la raíz de cada disco local
+(`<servicio>_<disco>_data`). Docker crea el punto de montaje de un volumen como
+root cuando la imagen no tiene ya ese directorio, así que cada raíz local tiene
+que existir en la imagen y ser de `appuser`. `jfast deploy dockerfile` escribe
+una línea `mkdir`/`chown` con cada disco local de `[plugin.storage.disks]`, y
+`jfast add storage` reescribe solo esa línea en un Dockerfile que ya editaste.
+Después de declarar un disco:
+
+```bash
+jfast add storage          # el Dockerfile crea la raíz nueva para appuser
+jfast workspace compose    # su volumen (`jfast deploy compose` en un servicio suelto)
+docker compose up --build
+```
+
+Sin el primero, `/ready` responde 503 (`/app/storage/adjuntos is not
+writable`) mientras `/health` sigue en 200, y la primera subida es un 500
+`PermissionError`. `jfast upgrade --check` nombra cada raíz que el Dockerfile
+no crea (`image-cannot-write-local-storage`).
+
+### Un volumen creado como root
+
+Docker copia el directorio de la imagen, dueño incluido, en un volumen con
+nombre que está vacío al montarse. Así que un volumen creado como root antes de
+que la imagen tuviera el directorio se arregla con la imagen reconstruida solo
+mientras sigue vacío; en cuanto guarda un archivo se queda de root, `/ready`
+sigue en 503 y reconstruir no cambia nada. Entrégalo una vez, como root, con
+los datos en su lugar:
+
+```bash
+docker compose run --rm --no-deps --user root <servicio> \
+  chown -R appuser:appuser /app/storage/adjuntos
+```
+
+`<servicio>` es el servicio de compose de la API -- `api` con `jfast deploy
+compose`, el nombre del servicio en un workspace. El worker monta el mismo
+volumen, así que basta una vez. Un volumen vacío se puede borrar en su lugar
+(`docker volume rm <proyecto>_<servicio>_adjuntos_data`); el siguiente `up` lo
+crea desde la imagen.
+
 ## Salud
 
 `/ready` reporta cada disco: un disco local que falta o es de solo lectura, un

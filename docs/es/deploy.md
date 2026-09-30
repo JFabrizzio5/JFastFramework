@@ -92,7 +92,11 @@ Un disco de `storage` con `driver = "local"` recibe un volumen nombrado,
 montado bajo el WORKDIR de la imagen. Sin él los archivos subidos viven en el
 filesystem del propio contenedor y el siguiente `docker build` los tira,
 mientras las filas que los referencian se quedan. Los dos generadores lo emiten
-y lo nombran igual, `<service>_<disk>_data`.
+y lo nombran igual, `<service>_<disk>_data`. El Dockerfile tiene que crear las
+mismas raíces para `appuser`, o Docker crea el punto de montaje como root y el
+disco no puede escribir: `jfast deploy dockerfile` las lee de
+`[plugin.storage.disks]` -- ver
+[Storage](storage.md#discos-locales-en-la-imagen-de-producción).
 
 ### Nombres de contenedor
 
