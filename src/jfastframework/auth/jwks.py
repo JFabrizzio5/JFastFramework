@@ -187,16 +187,20 @@ class JWKSClient:
                 if self._keys and not force:
                     return
                 raise JWKSError(f"cannot fetch JWKS from {self.url}: {self._last_error}")
-            self._attempts += 1
             try:
                 await self._fetch_guarded()
                 self._generation += 1
             except Exception as exc:
-                self._last_error = str(exc)
+                self._last_error = str(exc) or type(exc).__name__
                 if force or not self._keys:
                     # Nothing cached to fall back on: this request cannot be
                     # verified, and saying so beats guessing.
                     raise JWKSError(f"cannot fetch JWKS from {self.url}: {exc}") from exc
+            finally:
+                # Counted when the attempt ends, not when it starts: a caller
+                # that read the counter while this fetch was in flight must
+                # see it move, and take this outcome instead of asking again.
+                self._attempts += 1
 
     async def key_for(self, kid: str | None) -> Any:
         """The signing key for this ``kid``, fetching the set if needed."""
