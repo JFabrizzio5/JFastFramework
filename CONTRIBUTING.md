@@ -56,6 +56,35 @@ shipped defect:
 - **Prove the fix fails without the fix.** Break it back, watch the test go
   red, restore it. A test that passes either way is documentation.
 
+### Running the suite with a Windows clock
+
+On Windows (before Python 3.13) `time.monotonic()` moves in 15.625 ms steps,
+and asyncio fires every timer due within that resolution of now -- early, and
+in batches. Code that compares two clock readings to decide whether something
+happened in between passes on macOS and Linux and fails there: the JWKS
+single-flight bug fixed in 0.1.0a10 did exactly that for months.
+
+`tests/windows_clock.py` reproduces that clock on any OS. It floors
+`time.monotonic`/`monotonic_ns` to 1/64 s and reports that resolution through
+`time.get_clock_info("monotonic")`, so every event loop created afterwards
+behaves like one on Windows. Against the pre-fix JWKS client it fails the
+concurrency tests in about half the runs; with a normal clock, never.
+
+```bash
+JFAST_TEST_WINDOWS_CLOCK=1 python -m pytest -q \
+  tests/test_auth.py tests/test_cache.py tests/test_ratelimit.py \
+  tests/test_queue.py tests/test_redis_queue.py tests/test_scheduler.py \
+  tests/test_http_client.py tests/test_outbox.py tests/test_idempotency.py
+```
+
+The report header says `windows clock: ...` when it is on. Unset, the plugin
+does nothing. `JFAST_TEST_WINDOWS_CLOCK_STEP=0.05` makes the step coarser, which
+makes the same races easier to hit while you chase one. Wall time
+(`time.time`, `datetime.now`) and `perf_counter` are left alone; the module
+docstring says why. A test that fails only under the plugin is either
+clock-fragile (fix the test, and say why in a comment) or a real Windows bug
+(fix the code) -- never loosen the assertion to make it pass.
+
 ## Security
 
 `pip-audit` and `bandit` are hard gates. When a finding lands, upgrade the

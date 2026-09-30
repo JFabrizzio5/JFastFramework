@@ -32,9 +32,12 @@ What is deliberately left alone:
   not exist anywhere. The queue backends schedule on wall time; this plugin
   does not cover them.
 
-What it cannot reach: a module that bound the function at import time
-(``from time import monotonic``, or ``clock=time.monotonic`` as a default
-argument) keeps the real clock. Patch those per test.
+What it cannot reach: a function bound at import time -- ``from time import
+monotonic``, or ``clock=time.monotonic`` as a default argument, which is how
+``jfastframework.http`` takes its clock -- keeps whichever clock existed when
+its module was imported. The patch lands in ``pytest_configure``, before test
+collection imports anything, so today every such binding in ``src/`` sees the
+coarse clock; a module imported earlier (by a plugin, or ``-p``) would not.
 
 ``JFAST_TEST_WINDOWS_CLOCK_STEP`` overrides the step in seconds, for
 experiments -- a larger step makes the same races easier to hit.
