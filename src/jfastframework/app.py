@@ -40,6 +40,32 @@ from jfastframework.settings import DEFAULT_CONFIG_FILE, JFastConfig, JFastSetti
 logger = logging.getLogger("jfast")
 
 
+def _native_telemetry_off() -> dict[str, Any]:
+    """Turn off FastAPI's own OpenTelemetry (0.14x+), where it exists.
+
+    Found tracing a real service to Jaeger: on seeing
+    ``OTEL_EXPORTER_OTLP_ENDPOINT`` -- the variable the ``telemetry`` plugin
+    reads -- FastAPI configured a second, global provider with no service
+    name, exported a duplicate server span for every request, and would have
+    exported logs carrying exception messages and the rejected input values.
+    Traces here come from the ``telemetry`` plugin alone, which never exports
+    content. FastAPI's documented switch when another component owns export.
+    """
+    import inspect
+
+    if "telemetry" not in inspect.signature(FastAPI.__init__).parameters:
+        return {}
+    return {
+        "telemetry": {
+            "auto_configure": False,
+            "tracing": False,
+            "metrics": False,
+            "logs": False,
+            "operation_spans": False,
+        }
+    }
+
+
 def create_app(
     *,
     config: JFastConfig | None = None,
@@ -71,6 +97,7 @@ def create_app(
         docs_url=settings.effective_docs_url,
         openapi_url=settings.effective_openapi_url,
         lifespan=_build_lifespan(resolved),
+        **_native_telemetry_off(),
     )
 
     # Before plugins, so their middleware runs inside these. A body that is too
