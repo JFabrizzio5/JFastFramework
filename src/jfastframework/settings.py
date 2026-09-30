@@ -7,7 +7,6 @@ the first request that touches it.
 
 from __future__ import annotations
 
-import os
 import re
 import tomllib
 from collections.abc import Sequence
@@ -18,6 +17,7 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from jfastframework.deployment_keys import owned_in_file, without_environment_owned
 from jfastframework.middleware import (
     DEFAULT_PERMISSIONS_POLICY,
     DEFAULT_REFERRER_POLICY,
@@ -43,29 +43,11 @@ UPLOAD_MAX_BODY_BYTES = 25 * 1024 * 1024
 UPLOAD_REQUEST_TIMEOUT = 120.0
 
 
-# `[app]` keys that describe the deployment rather than the code, with the
-# variable that sets each. Everywhere else `jfast.toml` wins over the
-# environment -- it is the committed description of the service -- but these
-# two are what a deployment flips: `docs/deploy.md` promises that
-# `JFAST_ENV=prod` alone turns production on, and a `debug = true` committed
-# for a laptop must be switchable off by the environment that runs it. When
-# the variable is set in the process environment, it wins over the file.
-DEPLOYMENT_KEYS: dict[str, str] = {"env": "JFAST_ENV", "debug": "JFAST_DEBUG"}
-
-
-def _process_environment(variable: str) -> str | None:
-    """The variable from the process environment, as pydantic-settings reads it.
-
-    Case-insensitive, like the settings themselves. Only the process
-    environment: a `.env` file is a developer convenience -- the generated
-    `.env.example` carries `JFAST_ENV=local` -- and letting a copied one beat
-    the committed file would turn a `[app] env = "prod"` off without anyone
-    deciding it. An empty value counts as unset.
-    """
-    for key, value in os.environ.items():
-        if key.upper() == variable and value.strip():
-            return value
-    return None
+# Which settings the process environment wins over `jfast.toml` for -- `[app]
+# env`, `debug`, the CORS and proxy lists, and every plugin setting that
+# depends on where the service runs -- is declared once, as data, in
+# `deployment_keys.DEPLOYMENT_KEYS`. Everywhere else the file wins: it is the
+# committed description of the service.
 
 
 def raises_request_limits(enabled: Sequence[str], disabled: Sequence[str]) -> bool:
@@ -373,9 +355,9 @@ class JFastConfig:
     ) -> None:
         self.settings = settings
         self.raw: dict[str, Any] = raw or {}
-        # One sentence per `[app]` value the environment replaced: the app
-        # factory logs them at boot, so a file and a deployment that disagree
-        # about whether this is production are never silent.
+        # One sentence per owned value the environment replaced with a
+        # different one (secrets masked): the app factory logs them at boot, so
+        # a file and a deployment that disagree are never silent.
         self.overridden: tuple[str, ...] = tuple(overridden)
 
     @classmethod
@@ -397,14 +379,11 @@ class JFastConfig:
         if "name" in app_section:
             app_section.setdefault("app_name", app_section.pop("name"))
 
-        # A deployment property set in the environment beats the file. Popped
+        # A setting the environment owns, set there, beats the file. Left out
         # rather than overwritten, so pydantic-settings reads and validates the
         # variable itself: `JFAST_ENV=production` fails the boot exactly as it
         # would with no `[app] env` at all.
-        from_file: dict[str, Any] = {}
-        for key, variable in DEPLOYMENT_KEYS.items():
-            if key in app_section and _process_environment(variable) is not None:
-                from_file[key] = app_section.pop(key)
+        app_section = without_environment_owned("app", app_section)
 
         plugins_section = raw.get("plugins", {})
         if "enabled" in plugins_section:
@@ -415,11 +394,14 @@ class JFastConfig:
             app_section.update(overrides)
 
         settings = JFastSettings(**app_section)
+        # Every table, not only the plugins that run: a disagreement in a
+        # table nobody loads is still a file that says one thing while the
+        # deployment says another, and it costs one line.
+        forced = set(overrides or {})
         overridden = [
-            f"[app] {key} = {value!r} in jfast.toml is overridden by "
-            f"{DEPLOYMENT_KEYS[key]}={getattr(settings, key)!r} from the environment"
-            for key, value in from_file.items()
-            if key not in (overrides or {}) and getattr(settings, key) != value
+            owned.sentence()
+            for owned in owned_in_file(raw)
+            if owned.disagrees and not (owned.spec.table == "app" and owned.key in forced)
         ]
         # Published here rather than in the field validator: a validator runs
         # on every JFastSettings a test constructs, and a process-wide default
@@ -428,5 +410,12 @@ class JFastConfig:
         return cls(settings=settings, raw=raw, overridden=overridden)
 
     def plugin_config(self, name: str) -> dict[str, Any]:
-        """Raw config block for one plugin (``[plugin.<name>]`` in jfast.toml)."""
-        return dict(self.raw.get("plugin", {}).get(name, {}))
+        """One plugin's ``[plugin.<name>]`` block, as it applies to this process.
+
+        A key the environment owns (``deployment_keys.DEPLOYMENT_KEYS``) is
+        left out when the process environment sets its variable, so the
+        plugin's settings read the variable instead of the file's default.
+        Read at every call rather than frozen at ``load``: a plugin built from
+        this is built for the environment it runs in.
+        """
+        return without_environment_owned(name, self.raw.get("plugin", {}).get(name, {}))
