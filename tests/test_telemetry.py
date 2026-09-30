@@ -347,7 +347,9 @@ def sql_router() -> APIRouter:
     router = APIRouter()
 
     @router.post("/notes")
-    async def create(session: Any = Depends(session_dependency, scope="function")) -> dict[str, int]:
+    async def create(
+        session: Any = Depends(session_dependency, scope="function"),
+    ) -> dict[str, int]:
         await session.execute(
             text("create temporary table if not exists telemetry_notes (label text)")
         )
@@ -428,9 +430,7 @@ async def test_shutdown_removes_the_sql_listener() -> None:
     from sqlalchemy import event
     from sqlalchemy.engine import Engine
 
-    app = traced_app(
-        plugins=("database", "telemetry"), plugin_config={"database": {"dsn": PG_DSN}}
-    )
+    app = traced_app(plugins=("database", "telemetry"), plugin_config={"database": {"dsn": PG_DSN}})
     async with client_for(app):
         sql = app.state.jfast.require("telemetry").sql
         assert event.contains(Engine, "before_cursor_execute", sql._before)
