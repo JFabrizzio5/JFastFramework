@@ -78,6 +78,17 @@ llamada a un modelo desde un worker. Llegó con ello una adición: enums en
   `/docs`, `/openapi.json`, `/info` y `/queue/stats` dan 404, `/health` dice
   `prod` y el correo por consola detiene el arranque. `jfast upgrade --check`:
   `jfast-env-wins-over-the-file`.
+- **El primer `jfast dev` de un proyecto nuevo se caía: la API y el worker
+  creaban el administrador de arranque a la vez.** Los dos veían que no había
+  administrador e insertaban el rol `admin`; el que perdía moría en
+  `uq_jfast_roles_tenant_name` con un traceback de 400 líneas y `jfast dev`
+  detenía todo. La imagen de producción, con un worker de uvicorn por CPU,
+  competía igual. El arranque ahora sostiene un advisory lock de PostgreSQL
+  (`serialize_setup`, como el resto del trabajo de arranque) hasta que su
+  transacción hace commit, así que el siguiente proceso espera y encuentra al
+  administrador. Probado contra PostgreSQL con seis arranques simultáneos en un
+  event loop y cuatro procesos separados que arrancan en el mismo instante: un
+  administrador, un rol, ninguna falla (los dos fallaban antes del arreglo).
 - **La ayuda de la CLI se comía cada `[sección]` que nombraba.** Rich lee
   `[scaffold]` como etiqueta de estilo, así que "Defaults to [scaffold]
   language." salía "Defaults to  language." Escapado en `new module`, `remove` y

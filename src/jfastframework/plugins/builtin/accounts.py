@@ -471,8 +471,16 @@ class AccountsPlugin(Plugin):
         if not settings.bootstrap_admin_email:
             return
         from jfastframework.accounts.service import normalize_email
+        from jfastframework.db.framework import serialize_setup
 
         async with self._sessionmaker() as session, session.begin():
+            # Every process runs this at once -- the API and the worker of a
+            # first `jfast dev`, each uvicorn worker of the production image --
+            # and each saw no administrator and inserted the `admin` role: one
+            # won, the rest died on uq_jfast_roles_tenant_name. The lock is
+            # held until this transaction commits, so the next process waits,
+            # then reads the administrator the first one created.
+            await serialize_setup(await session.connection(), "jfast.accounts.bootstrap_admin")
             service = self.service(session)
             email = normalize_email(settings.bootstrap_admin_email)
             if await service._row_by_email(email, None) is not None:

@@ -76,6 +76,16 @@ One addition came with it: enums in `--fields`.
   `/docs`, `/openapi.json`, `/info` and `/queue/stats` are 404, `/health` says
   `prod`, and console mail stops the boot. `jfast upgrade --check`:
   `jfast-env-wins-over-the-file`.
+- **The first `jfast dev` of a new project crashed: the API and the worker
+  created the bootstrap administrator at once.** Both saw no administrator and
+  inserted the `admin` role; the loser died on `uq_jfast_roles_tenant_name`
+  with a 400-line traceback and `jfast dev` stopped everything. The production
+  image, with one uvicorn worker per CPU, raced the same way. The bootstrap now
+  holds a PostgreSQL advisory lock (`serialize_setup`, like the other startup
+  work) until its transaction commits, so the next process waits and finds the
+  administrator. Tested against PostgreSQL with six concurrent startups in one
+  event loop and four separate processes started at the same instant: one
+  administrator, one role, no failures (both failed before the fix).
 - **CLI help dropped every `[section]` it named.** Rich reads `[scaffold]` as a
   style tag, so "Defaults to [scaffold] language." printed "Defaults to
   language." Escaped in `new module`, `remove` and `tenancy enable`; a test now
