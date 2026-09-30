@@ -311,6 +311,12 @@ def resolve_plugins(kind: str, chosen: Sequence[str], *, multitenant: bool = Fal
         selected.append("gateway")
 
     for name in chosen:
+        # What a plugin cannot start without goes in ahead of it: `--with
+        # accounts` alone used to write a service that refused to boot on
+        # "accounts requires auth".
+        for required in PLUGIN_CATALOG[name].requires:
+            if required not in selected:
+                selected.append(required)
         if name not in selected:
             selected.append(name)
 

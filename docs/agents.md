@@ -138,9 +138,9 @@ service, so it scales with your service. Measured on generated services —
 
 | modules | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 9,078 | 3,001 |
-| 3 | 11,108 | 4,563 |
-| 5 | 13,156 | 6,139 |
+| 1 | 9,525 | 3,016 |
+| 3 | 11,555 | 4,578 |
+| 5 | 13,603 | 6,154 |
 
 A generated service is the floor, because nothing is wrong with it yet. The
 same five-module service after some work in it — two modules `main.py` never

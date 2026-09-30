@@ -140,9 +140,9 @@ servicio, así que escala con tu servicio. Medido sobre servicios generados —
 
 | módulos | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 9,078 | 3,001 |
-| 3 | 11,108 | 4,563 |
-| 5 | 13,156 | 6,139 |
+| 1 | 9,525 | 3,016 |
+| 3 | 11,555 | 4,578 |
+| 5 | 13,603 | 6,154 |
 
 Un servicio recién generado es el piso, porque todavía no hay nada mal en él. El
 mismo servicio de cinco módulos después de trabajarlo un rato — dos módulos que
