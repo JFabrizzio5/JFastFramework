@@ -303,8 +303,22 @@ def _skipped(path: Path, root: Path) -> bool:
     return any(part in SKIP_DIRS for part in parts)
 
 
+def _files(root: Path, *suffixes: str) -> list[Path]:
+    """Every file under *root* ending in one of *suffixes*, SKIP_DIRS pruned.
+
+    Pruned while walking rather than filtered afterwards: a `.venv` inside the
+    project holds tens of thousands of files, and `rglob` reads every one of
+    them before a filter can throw them away.
+    """
+    found: list[Path] = []
+    for directory, subdirectories, names in os.walk(root):
+        subdirectories[:] = [name for name in subdirectories if name not in SKIP_DIRS]
+        found += [Path(directory, name) for name in names if name.endswith(suffixes)]
+    return sorted(found)
+
+
 def _python_files(root: Path) -> list[Path]:
-    return [path for path in sorted(root.rglob("*.py")) if not _skipped(path, root)]
+    return _files(root, ".py")
 
 
 def _parsed_files(root: Path) -> list[tuple[str, ast.Module]]:
@@ -1541,13 +1555,8 @@ def _framework_tables_owned_elsewhere(project: Project) -> list[str]:
     pattern = re.compile(r"\b(" + "|".join(re.escape(table) for table in tables) + r")\b")
     sources = [
         path
-        for path in sorted(project.root.rglob("*"))
-        if path.is_file()
-        and not _skipped(path, project.root)
-        and (
-            path.suffix == ".sql"
-            or (path.suffix == ".py" and "migrations" in path.relative_to(project.root).parts)
-        )
+        for path in _files(project.root, ".sql", ".py")
+        if path.suffix == ".sql" or "migrations" in path.relative_to(project.root).parts
     ]
     found = []
     for path in sources:
