@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -59,7 +60,9 @@ from jfastframework.errors import (
     ForbiddenError,
     NotFoundError,
     PluginError,
+    ServiceUnavailableError,
     UnauthorizedError,
+    problem_response,
 )
 from jfastframework.plugins.base import HealthReport, Plugin, PluginMeta, PluginSettings
 
@@ -87,6 +90,17 @@ FAMILY_CLAIM = "fam"
 GRANT_CLAIM = "grt"
 
 
+class RevocationUnavailableError(ServiceUnavailableError):
+    """The revocation store did not answer and ``revocation_fail_open`` is off."""
+
+    title = "Revocation Store Unavailable"
+
+
+# The shortest HMAC key this plugin accepts in production: RFC 7518 3.2 asks
+# for a key at least as long as the hash, 256 bits for HS256.
+MIN_SECRET_BYTES = 32
+
+
 def _as_response(result: Any) -> Response:
     """Whatever the on_identity handler returned, as a response."""
     from fastapi.encoders import jsonable_encoder
@@ -111,6 +125,13 @@ class AuthSettings(PluginSettings):
 
     jwks_url: str = ""
     jwks_cache_seconds: int = 3600
+    # Deadline, retry and breaker for the key fetch. The reasoning for each
+    # number is on `JWKSClient`; they are here so an issuer known to be slow
+    # can be given more room without a code change.
+    jwks_timeout: float = 5.0
+    jwks_attempts: int = 2
+    jwks_breaker_failures: int = 3
+    jwks_breaker_cool_down: float = 30.0
     public_key: str = ""
     secret: SecretStr | None = None
 
@@ -145,6 +166,15 @@ class AuthSettings(PluginSettings):
     # Reject a token whose jti has been revoked. Costs one store lookup per
     # authenticated request.
     check_revocation: bool = True
+    # What a revocation lookup does when the shared store (Redis) does not
+    # answer. Open: the token is accepted without the check, a warning is
+    # logged and /ready reports auth degraded -- the same trade the rate
+    # limiter makes, and the one the health check already promised by calling
+    # the store non-critical. The window is bounded: access tokens live
+    # `access_lifetime_minutes`. Closed: every authenticated request answers
+    # 503 until the store is back. Choose closed where a logout that does not
+    # take effect for a few minutes is worse than an outage.
+    revocation_fail_open: bool = True
 
     # Social login. One entry per provider:
     #
@@ -440,24 +470,29 @@ class AuthMiddleware:
         principal: Principal | None = None
 
         if header.lower().startswith("bearer "):
+            candidate: Principal | None = None
             try:
                 candidate = await self._plugin.verify_token(header[7:].strip())
-                if candidate.claims.get("typ") == "refresh":
-                    # A refresh token verifies like any other -- same key, same
-                    # issuer, same audience -- so without this check a 30-day
-                    # token opens a session anywhere an access token would.
-                    # Only an explicit "refresh" is refused: a token from an
-                    # external issuer carries no typ at all.
-                    logger.info(
-                        "refresh token used as bearer", extra={"subject": candidate.subject}
-                    )
-                else:
-                    principal = candidate
+            except RevocationUnavailableError as exc:
+                # Middleware runs outside the exception handlers, so the 503
+                # is written here rather than raised.
+                response = problem_response(exc, Request(scope, receive))
+                await response(scope, receive, send)
+                return
             except (TokenError, JWKSError) as exc:
                 # The reason belongs in the log, never in the response: an
                 # attacker learning *why* a token failed gets free
                 # reconnaissance.
                 logger.info("token rejected", extra={"reason": str(exc)})
+            if candidate is not None and candidate.claims.get("typ") == "refresh":
+                # A refresh token verifies like any other -- same key, same
+                # issuer, same audience -- so without this check a 30-day
+                # token opens a session anywhere an access token would.
+                # Only an explicit "refresh" is refused: a token from an
+                # external issuer carries no typ at all.
+                logger.info("refresh token used as bearer", extra={"subject": candidate.subject})
+            else:
+                principal = candidate
 
         state = scope.setdefault("state", {})
         state["principal"] = principal
@@ -569,10 +604,41 @@ class AuthPlugin(Plugin):
 
     # -- configuration -------------------------------------------------
 
-    def _validate(self) -> None:
+    def _validate(self, *, production: bool = False) -> None:
         settings: AuthSettings = self.settings
         if settings.mode not in MODES:
             raise PluginError(f"auth mode must be one of {', '.join(MODES)}, not {settings.mode!r}")
+
+        import jwt
+
+        if not settings.algorithms:
+            raise PluginError(
+                '[plugin.auth] algorithms is empty; list at least one, e.g. ["RS256"].'
+            )
+        known = set(jwt.algorithms.get_default_algorithms())
+        unknown = sorted(set(settings.algorithms) - known)
+        if unknown:
+            # PyJWT would reject every token with "algorithm not supported" --
+            # at the first request, as a 401 nobody can explain.
+            raise PluginError(
+                f"[plugin.auth] algorithms has {', '.join(unknown)}, which PyJWT does not "
+                f"know. Known: {', '.join(sorted(known))}."
+            )
+        for field, value, floor in (
+            ("leeway", settings.leeway, 0),
+            ("access_lifetime_minutes", settings.access_lifetime_minutes, 1),
+            ("refresh_lifetime_days", settings.refresh_lifetime_days, 1),
+            ("refresh_grace_seconds", settings.refresh_grace_seconds, 0),
+            ("jwks_cache_seconds", settings.jwks_cache_seconds, 1),
+            ("jwks_attempts", settings.jwks_attempts, 1),
+            ("jwks_breaker_failures", settings.jwks_breaker_failures, 0),
+        ):
+            if value < floor:
+                raise PluginError(f"[plugin.auth] {field} must be at least {floor}, not {value}.")
+        if settings.jwks_timeout <= 0 or settings.jwks_breaker_cool_down <= 0:
+            raise PluginError(
+                "[plugin.auth] jwks_timeout and jwks_breaker_cool_down must be positive."
+            )
 
         symmetric = set(settings.algorithms) & SYMMETRIC_ALGORITHMS
         asymmetric = set(settings.algorithms) - SYMMETRIC_ALGORITHMS
@@ -590,6 +656,18 @@ class AuthPlugin(Plugin):
                 raise PluginError('auth mode "jwks" needs [plugin.auth] jwks_url.')
             if symmetric:
                 raise PluginError('auth mode "jwks" cannot verify HMAC algorithms.')
+            scheme = settings.jwks_url.partition("://")[0].lower()
+            if scheme not in ("http", "https"):
+                raise PluginError(
+                    f"[plugin.auth] jwks_url must be an http(s) URL, not {settings.jwks_url!r}."
+                )
+            if production and scheme != "https":
+                # Whoever can answer that plain-HTTP request chooses which
+                # keys this service trusts, and so mints any token they like.
+                raise PluginError(
+                    "[plugin.auth] jwks_url is plain http in production: anyone on the "
+                    "path can serve their own keys and sign their own tokens. Use https."
+                )
         elif settings.mode == "public_key":
             if not settings.public_key:
                 raise PluginError('auth mode "public_key" needs [plugin.auth] public_key.')
@@ -600,12 +678,28 @@ class AuthPlugin(Plugin):
                 raise PluginError('auth mode "secret" needs JFAST_AUTH_SECRET.')
             if asymmetric:
                 raise PluginError('auth mode "secret" cannot verify asymmetric algorithms.')
+            secret_bytes = len(settings.secret.get_secret_value().encode("utf-8"))
+            if production and secret_bytes < MIN_SECRET_BYTES:
+                raise PluginError(
+                    f"JFAST_AUTH_SECRET is {secret_bytes} bytes; production needs at least "
+                    f"{MIN_SECRET_BYTES} (RFC 7518 3.2), or the HMAC can be brute-forced "
+                    f"offline from any one token. Generate one with "
+                    f'`python -c "import secrets; print(secrets.token_urlsafe(48))"`.'
+                )
 
         if settings.issue_tokens and settings.mode == "jwks":
             # Minting requires a private key; JWKS publishes public ones.
             raise PluginError(
                 'auth cannot issue tokens in "jwks" mode: minting needs a private key. '
                 'Use mode = "secret" for a single service, or issue from your identity service.'
+            )
+        if settings.issue_tokens and settings.mode == "public_key":
+            # The PEM here verifies; signing needs the private half, and
+            # jwt.encode would fail at the first login instead of at boot.
+            raise PluginError(
+                'auth cannot issue tokens in "public_key" mode: public_key holds the key '
+                "that verifies, not the one that signs. Issue from the service that holds "
+                'the private key, or use mode = "secret" for a single service.'
             )
 
         if not settings.audience:
@@ -618,7 +712,7 @@ class AuthPlugin(Plugin):
 
     def register(self, ctx: AppContext) -> None:
         settings: AuthSettings = self.settings
-        self._validate()
+        self._validate(production=ctx.settings.is_production)
         self._is_dev = not ctx.settings.is_production
         self._claims = TokenClaims(
             scopes=settings.scope_claim,
@@ -628,7 +722,12 @@ class AuthPlugin(Plugin):
 
         if settings.mode == "jwks":
             self._jwks = JWKSClient(
-                url=settings.jwks_url, cache_seconds=settings.jwks_cache_seconds
+                url=settings.jwks_url,
+                cache_seconds=settings.jwks_cache_seconds,
+                timeout=settings.jwks_timeout,
+                attempts=settings.jwks_attempts,
+                breaker_failures=settings.jwks_breaker_failures,
+                breaker_cool_down=settings.jwks_breaker_cool_down,
             )
         elif settings.mode == "public_key":
             self._key = settings.public_key
@@ -667,7 +766,10 @@ class AuthPlugin(Plugin):
             )
         else:
             self._store = MemoryTokenStore()
-            ctx.logger.warning(
+            # A warning only where it can bite: in development `jfast start`
+            # runs one process, and a line on every start that asks for Redis
+            # teaches people to skip the startup log.
+            (ctx.logger.warning if ctx.settings.is_production else ctx.logger.info)(
                 "auth is using an in-memory token store: a logout applies to this "
                 "process only. Enable the 'cache' plugin for shared revocation."
             )
@@ -729,13 +831,37 @@ class AuthPlugin(Plugin):
         )
 
         if settings.check_revocation and principal.token_id and self._store is not None:
-            if await self._store.is_revoked(principal.token_id):
-                raise TokenError("token has been revoked")
             family = principal.claims.get("fam")
-            if family and await self._store.is_family_revoked(str(family)):
+            try:
+                revoked = await self._store.is_revoked(principal.token_id)
+                family_revoked = bool(family) and await self._store.is_family_revoked(str(family))
+            except Exception as exc:  # any store failure is an outage
+                if not settings.revocation_fail_open:
+                    raise RevocationUnavailableError(
+                        "the revocation store is not answering; retry shortly"
+                    ) from exc
+                self._store_outage(exc)
+                return principal
+            if revoked:
+                raise TokenError("token has been revoked")
+            if family_revoked:
                 raise TokenError("session has been revoked")
 
         return principal
+
+    _last_store_warning: float = 0.0
+
+    def _store_outage(self, exc: Exception) -> None:
+        """Log that revocation is not being checked, at most every ten seconds."""
+        now = time.monotonic()
+        if now - self._last_store_warning >= 10.0:
+            self._last_store_warning = now
+            logger.warning(
+                "revocation store unreachable (%s: %s); accepting tokens without the "
+                "revocation check (revocation_fail_open = true)",
+                type(exc).__name__,
+                exc,
+            )
 
     def _build_router(self) -> APIRouter:
         router = APIRouter()
@@ -918,7 +1044,11 @@ class AuthPlugin(Plugin):
         if self._jwks is not None:
             healthy, detail = await self._jwks.health()
             if not healthy:
-                return HealthReport.fail(detail, **meta)
+                # With keys cached the service still verifies every token it
+                # verified a minute ago: degraded. Taking every replica out of
+                # rotation over an issuer outage would turn one outage into
+                # two. With no keys at all nothing can be verified: critical.
+                return HealthReport.fail(detail, critical=not self._jwks.key_ids, **meta)
             meta["key_ids"] = list(self._jwks.key_ids)
 
         if self._store is not None:

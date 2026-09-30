@@ -256,6 +256,18 @@ class DiskConfig:
     secret_key: str = ""
     # Path-style addressing: MinIO needs it, real S3 does not.
     force_path_style: bool = False
+    # Deadlines, retries and breaker for every S3 call; reasons on S3Storage.
+    # Seconds to connect -- a bucket in the same region answers in tens of ms.
+    connect_timeout: float = 5.0
+    # Seconds of silence while reading. Thirty covers a large GET on a slow
+    # link; it is the gap between bytes, not the whole transfer.
+    read_timeout: float = 30.0
+    # Tries per call, the first included (botocore "standard" mode: backoff
+    # with jitter, only for throttling, 5xx and connection errors).
+    max_attempts: int = 3
+    # Failed calls in a row that stop this disk calling S3, and for how long.
+    breaker_failures: int = 5
+    breaker_cool_down: float = 15.0
     # Absolute origin the public objects on this disk are reachable at: a CDN,
     # a custom domain, or just this app's own host when the client is a
     # single-page app on another origin. Applies to both drivers.
@@ -281,5 +293,17 @@ COMMON_KEYS = frozenset({"driver", "visibility", "pipeline", "public_base_url"})
 DRIVER_KEYS: dict[str, frozenset[str]] = {
     "local": COMMON_KEYS | {"root", "url_prefix"},
     "s3": COMMON_KEYS
-    | {"bucket", "region", "endpoint_url", "access_key", "secret_key", "force_path_style"},
+    | {
+        "bucket",
+        "region",
+        "endpoint_url",
+        "access_key",
+        "secret_key",
+        "force_path_style",
+        "connect_timeout",
+        "read_timeout",
+        "max_attempts",
+        "breaker_failures",
+        "breaker_cool_down",
+    },
 }
