@@ -336,25 +336,39 @@ viejo — no lo llaman de vuelta. `comprobante` publica un evento en la misma
 transacción que la escritura, por el outbox, y `asesor` se suscribe:
 
 ```python
-# en comprobante, junto a la escritura
-outbox = request.app.state.jfast.require("outbox")
+# modules/comprobante/services/comprobante_service.py -- junto a la escritura
+from jfastframework.events import Event
+
 await outbox.publish(
     session, "comprobantes", Event(type="comprobante.categorized", data={"id": c.id}, key=str(c.id))
 )
-
-# en asesor
-from jfastframework.plugins.builtin.events import Event, on
-
-@on("comprobantes")
-async def refrescar_consejo(event: Event) -> None:
-    if event.type == "comprobante.categorized":
-        ...
 ```
 
-El evento se confirma junto con las filas que lo causaron, y `comprobante` nunca
-se entera de que `asesor` existe — así que no hay arista de él hacia `asesor`, y
-no hay ciclo. Transportes, idempotencia y garantías de entrega están en
-[Colas y eventos](queues-and-events.md).
+```python
+# modules/asesor/tasks.py
+from jfastframework.events import Event, subscribe
+from jfastframework.tasks import TaskSession
+
+@subscribe("comprobante.categorized")
+async def refrescar_consejo(event: Event, session: TaskSession) -> None:
+    ...
+```
+
+```toml
+# contracts.toml
+[modules.comprobante]
+publishes = ["comprobante.categorized"]
+```
+
+`outbox.publish` encola un job por suscriptor en la misma transacción que la
+escritura, y `jfast worker` lo corre con el tenant que publicó. No hay broker
+de por medio: funciona en el stack por defecto con PostgreSQL. `comprobante`
+nunca se entera de que `asesor` existe y `asesor` no declara `depends_on` por
+esto — así que no hay arista en ningún sentido, y no hay ciclo. Un evento al que
+nadie se suscribe se rechaza en la request, y `contracts check` reporta una
+suscripción que nadie declara publicar. Las garantías de entrega están en
+[Colas y eventos](queues-and-events.md#eventos-entre-módulos); `@on(topic)`
+sobre Kafka es para *otros servicios*, no para módulos de este.
 
 ### La recompensa: extraer un módulo
 

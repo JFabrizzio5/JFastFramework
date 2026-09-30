@@ -55,6 +55,17 @@ volúmenes nombrados, healthchecks y condiciones `depends_on` conectadas a esos
 healthchecks para que la API no arranque contra una base de datos que todavía
 no acepta conexiones.
 
+Con `queue` en la lista el archivo también trae un servicio **`worker`**: el
+mismo build, entorno y volúmenes que `api`, corriendo `jfast worker --grace 25`
+en vez del servidor. No publica puertos, su healthcheck de imagen está
+desactivado (no responde `/health`), arranca cuando `api` está sano -- el
+entrypoint de la API es el que corre las migraciones que sus tasks necesitan --
+y tiene un `stop_grace_period` de 30 s, así que con `docker compose stop` termina
+lo que puede y libera el resto a la cola antes de que compose lo mate.
+`jfast workspace compose` hace lo mismo por servicio, como `<servicio>-worker`.
+Escálalo con `docker compose up --scale worker=3`; ver
+[Colas y eventos](queues-and-events.md#correr-el-worker).
+
 Prometheus y Grafana son opt-in incluso con `metrics` activado — la mayoría de
 los servicios hacen scrape desde un Prometheus central en vez de correr el
 suyo:

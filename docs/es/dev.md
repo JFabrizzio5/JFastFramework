@@ -5,8 +5,8 @@ jfast dev
 ```
 
 Levanta los contenedores y espera a que estén sanos, aplica las migraciones, y
-recién entonces arranca la API y el frontend. Un comando para las cuatro cosas
-que uno hace cada mañana, en el orden que hace que las fallas aparezcan donde
+recién entonces arranca la API, el worker de la cola y el frontend. Un comando
+para las cosas que uno hace cada mañana, en el orden que hace que las fallas aparezcan donde
 corresponde.
 
 ---
@@ -18,7 +18,15 @@ corresponde.
 | 1. Infraestructura | `docker compose up -d <db> <cache>`, y espera health | dice por qué, y para |
 | 2. Migraciones | `alembic upgrade head` | **para** |
 | 3. API | `uvicorn main:app --reload --no-proxy-headers` | — |
-| 4. Frontend | `npm run dev` en el proyecto del frontend | dice por qué, y sigue |
+| 4. Worker | `jfast worker`, cuando el plugin `queue` está activo | dice por qué, y sigue |
+| 5. Frontend | `npm run dev` en el proyecto del frontend | dice por qué, y sigue |
+
+El worker está porque la cola viene activada en todo servicio generado, y una
+cola que nadie consume son jobs acumulándose en `jfast_jobs` -- y suscriptores
+de eventos que nunca corren -- mientras la API responde 201. Levanta el mismo
+`main:app`, así que corre los mismos `@task` y `@subscribe` de los módulos.
+**No** recarga: reinicia `jfast dev` después de cambiar una task o un
+suscriptor.
 
 > `--no-proxy-headers` no es adorno. uvicorn trae su propio resolutor de
 > cabeceras forwarded **encendido**, confiando en `127.0.0.1` -- que es
@@ -33,6 +41,7 @@ Cada etapa se puede saltar, y cada salto se anuncia:
 jfast dev --no-infra      # the containers are already up
 jfast dev --no-migrate    # you are mid-migration and know it
 jfast dev --no-web        # backend only
+jfast dev --no-worker     # no queue worker (run `jfast worker` yourself)
 jfast dev --port 9000     # override the port in jfast.toml
 ```
 
@@ -118,6 +127,7 @@ quedó.
 | Backend | sí | sí |
 | Contenedores | no | los levanta |
 | Migraciones | no | las aplica |
+| Worker de la cola | no (`jfast worker`) | lo arranca |
 | Frontend | no | lo arranca |
 | `.env` traducido para el host | no | sí |
 

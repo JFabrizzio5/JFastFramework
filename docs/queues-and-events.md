@@ -1,6 +1,8 @@
 # Queues and events
 
-Two different things, deliberately two different plugins.
+Two different things, deliberately two different plugins -- and, between the
+modules of one service, a third thing built on the first: [local domain
+events](#events-between-modules), which need no broker.
 
 | | `queue` | `events` |
 | --- | --- | --- |
@@ -28,29 +30,101 @@ backend = "postgres"     # or "redis", "rabbitmq"
 max_attempts = 3
 ```
 
-Register a task, enqueue from a route:
+Declare a task in the module that owns it, in `modules/<name>/tasks.py`:
 
 ```python
-tasks = request.app.state.jfast.require("tasks")
+# modules/invoice/tasks.py
+from jfastframework.tasks import TaskSession, task
 
-@tasks.task("send_invoice_email")
-async def send_invoice_email(payload: dict) -> None:
-    ...
-
-queue = request.app.state.jfast.require("queue")
-await queue.enqueue(Job(task="send_invoice_email", payload={"invoice_id": 7}))
+@task("invoice.send_email", idempotent_on=lambda payload: payload["invoice_id"])
+async def send_email(payload: dict, session: TaskSession) -> None:
+    ...  # committed when this returns, rolled back if it raises
 ```
 
-Run a worker:
+Queue it through the request's session, so it exists if and only if the
+request commits (see [the outbox](#enqueue-in-the-requests-transaction-the-outbox)):
 
 ```python
-from jfastframework.queues import Worker
+outbox = request.app.state.jfast.require("outbox")
+await outbox.enqueue(session, Job(task="invoice.send_email", payload={"invoice_id": 7}))
+```
 
-worker = Worker(queue, tasks, concurrency=4)
-await worker.run()
+And run the worker next to the API:
+
+```bash
+jfast worker                    # --concurrency 4, --grace 25
 ```
 
 `GET /queue/stats` reports depths and registered task names.
+
+### Tasks live in their module
+
+Every `modules/<name>/tasks.py` (or `tasks/` package) is imported when the app
+is built -- by the API and by `jfast worker` alike, so both see the same
+`@task` and `@subscribe` declarations. Nothing else is searched: a task declared
+anywhere else runs only if something imports it first. A `tasks.py` that fails
+to import stops the boot, because the alternative is a task that silently never
+runs.
+
+Prefix the name with the module (`invoice.send_email`). It is the wire
+contract, and it is how `contracts check` knows which module owns the task: a
+module that queues another module's task by name without declaring the
+dependency is reported, with the event it should publish instead.
+
+`@tasks.task(...)` on the registry (`request.app.state.jfast.require("tasks")`)
+still works; the module-level `@task` is what the generators and docs use.
+
+### A task session: tenant, commit and rollback done for you
+
+A parameter annotated `TaskSession` receives a session on the primary
+database, opened for the job's tenant -- with `[plugin.database] rls = true`
+every transaction is scoped to it, exactly as a request's is. It is committed
+when the handler returns and rolled back when it raises, and the job is then
+retried. A task that declares one in a service without the `database` plugin
+stops the boot with the fix in the message.
+
+### Idempotency without thinking
+
+`idempotent_on` extracts a key from the payload and claims it in the inbox
+(`jfast_inbox`) **inside the handler's transaction**: if the work commits, so
+does the claim, and every redelivery after that is skipped; if it rolls back,
+so does the claim, and the retry runs. The queue plugin creates the inbox table
+when a task needs it.
+
+### Running the worker
+
+`jfast worker` boots the same app `jfast serve` does -- `main:app`, the same
+plugins and lifespan -- registers every module's tasks and subscribers, and
+consumes the queue. `jfast dev` starts it next to the API whenever the queue
+plugin is enabled (`--no-worker` to leave it out; it does not reload, so restart
+`jfast dev` after changing a task). `jfast deploy compose`, `jfast workspace
+compose` and the Kubernetes manifests add a worker service beside every service
+whose queue is on: same image, `jfast worker`, no ports, no HTTP probes.
+
+**Graceful shutdown.** On SIGTERM the worker stops claiming, gives the jobs
+already running `--grace` seconds (25 by default) to finish, and then cancels
+and **releases** the rest: back to the queue at once, without spending an
+attempt, so the next worker takes them immediately instead of after the
+visibility timeout -- and a deploy does not walk a job towards the dead-letter
+queue. A second signal stops waiting. Keep `--grace` below the orchestrator's
+kill deadline: the generated compose file gives the worker a 30 s
+`stop_grace_period`, and the Kubernetes Deployment a 30 s
+`terminationGracePeriodSeconds`.
+
+### Dead letters
+
+```bash
+jfast jobs dead                 # newest first, with the error that killed each
+jfast jobs dead --json
+jfast jobs retry <id> [<id>...] # back to the queue with attempts reset
+jfast jobs retry --all
+```
+
+The worker records why each attempt failed (`ValueError: card declined`), so
+the list says what to fix before replaying. Implemented for the PostgreSQL and
+Redis queues; on RabbitMQ the dead letters are in the `<name>.dead` queue, and
+the command says to use the management UI. The dead count is in `/ready`'s
+queue check, which turns `degraded` while it is above zero.
 
 ### Delivery is at-least-once. Handlers must be idempotent.
 
@@ -64,9 +138,10 @@ before acting.
 
 ### A job runs as the tenant that queued it
 
-A `Job` built inside a request takes that request's `tenant_id` and
-`request_id` from context, and the worker puts both back while the handler
-runs. The handler's log lines carry the request that caused them, and
+A `Job` built inside a request takes that request's `tenant_id`,
+`request_id` and trace context from context, and the worker puts them back
+while the handler runs -- its spans join the request's trace when the
+`telemetry` plugin is on. The handler's log lines carry the request that caused them, and
 `current_tenant_id()` inside it answers the same tenant:
 
 ```python
@@ -101,10 +176,17 @@ On the PostgreSQL queue in the same database the job is inserted straight into
 `jfast_jobs`. Anything else -- Redis, RabbitMQ, Kafka events -- goes through
 `jfast_outbox` and a relay that runs in every process, claims rows with `FOR
 UPDATE SKIP LOCKED`, retries with backoff, and sets a message aside as dead
-after `max_attempts`. `/ready` turns degraded when a message is stuck.
+after `max_attempts`. A row that no retry can deliver with this configuration
+-- an event with no bus, a job with no queue -- goes dead on the first attempt,
+with the reason. Every failed send is logged with its cause in the message, and
+`/ready` turns `degraded` from the first failed attempt, not only once a
+message is dead or old.
+
+What `publish` does with the event is [below](#events-between-modules).
 
 The consumer's half is `claim_once`: record the message id in the same
-transaction as the work, and a redelivery is skipped.
+transaction as the work, and a redelivery is skipped. `idempotent_on` and a
+subscriber's `TaskSession` do this for you.
 
 ```python
 from jfastframework.outbox import claim_once
@@ -279,7 +361,79 @@ late, and the requests the replica serves are not.
 
 ---
 
-## Events
+## Events between modules
+
+Two modules of one service react to each other with **local domain events**,
+over the queue that is already there. No broker, and no dependency between the
+two:
+
+```python
+# modules/receipt/services/receipt_service.py -- the publisher
+from jfastframework.events import Event
+
+await outbox.publish(session, "receipts", Event(type="receipt.registered", data={"id": r.id}))
+```
+
+```python
+# modules/alert/tasks.py -- a subscriber
+from jfastframework.events import Event, subscribe
+from jfastframework.tasks import TaskSession
+
+@subscribe("receipt.registered")
+async def check_budget(event: Event, session: TaskSession) -> None:
+    ...
+```
+
+```toml
+# contracts.toml
+[modules.receipt]
+publishes = ["receipt.registered"]
+```
+
+**What `publish` does.** It looks up this service's subscribers of the event's
+**type** and writes one job per subscriber through the request's session -- on
+the PostgreSQL queue, straight into `jfast_jobs` in the same transaction; on
+Redis or RabbitMQ, through the outbox relay. The jobs exist if and only if the
+request commits, and publishing the same event twice queues each subscriber
+once (the job id is derived from the event id and the subscriber). When the
+`events` plugin (Kafka) is on, the event **also** goes to `topic` for other
+services; local subscribers are still served by the queue, so turning Kafka on
+changes nothing inside the service.
+
+**Matching is on the type, never the topic.** The type is the domain fact and
+is what `contracts.toml` declares; the topic is Kafka's partitioning detail,
+which a module of the same service has no reason to know.
+
+**The worker runs the subscriber** with the `Event` rebuilt, the publishing
+request's tenant and request id restored, and its trace attached. The task
+name is `<type>-><module>.<function>`, and it is part of the wire contract
+like any task name: pass `@subscribe(..., name=...)` to keep it across a rename.
+
+**At least once, deduplicated for you.** A subscriber that takes a
+`TaskSession` claims the event id in the inbox inside its own transaction, so a
+redelivery after a commit is skipped: one effect per event per subscriber. A
+subscriber without a session must be idempotent by itself.
+
+**Nothing listening is an error.** Publishing an event no module of this
+service subscribes to, with no bus configured, raises `UndeliverableEvent` in
+the request -- a 500 whose detail names the fix -- instead of answering 201 and
+leaving a row to be retried until it dies. Subscribers with no `queue` plugin
+enabled are refused the same way.
+
+**The contract knows.** `jfast contracts check` reports a `@subscribe` to an
+event no module declares under `publishes` (`orphan-subscription`), an event
+built in a module that does not declare it (`undeclared-event`), and a module
+that queues another module's task by name without `depends_on`
+(`undeclared-dependency`, with this pattern as the fix). `jfast contracts show
+--json`, `CONTRACTS.md` and `jfast ai context` list who publishes and who
+listens. See [Contracts](contracts.md#events-and-tasks).
+
+---
+
+## Events between services (Kafka)
+
+The `events` plugin is for *other services* hearing this one. Inside one
+service, use [local events](#events-between-modules).
 
 ```toml
 [plugins]
@@ -291,7 +445,8 @@ consumer_group = "billing"
 ```
 
 ```python
-from jfastframework.plugins.builtin.events import Event, on
+from jfastframework.events import Event
+from jfastframework.plugins.builtin.events import on
 
 # Declared at import time, bound by the plugin before the consumer starts.
 @on("orders")
@@ -308,6 +463,9 @@ await events.publish("orders", Event(
     key="order-7",          # partition key: order events stay ordered
 ))
 ```
+
+An `@on` handler runs with the publishing request's tenant, request id and
+trace restored, as a subscriber does.
 
 ### Handlers are declared, not registered on a live bus
 
@@ -396,8 +554,25 @@ resolving.
 
 **Tested in CI:** the `Job` model, backoff and its cap, exhaustion,
 dead-lettering, unknown-task handling, job timeouts, worker draining on
-shutdown, and that an idle worker yields instead of busy-waiting — against an
-in-memory backend implementing the same protocol.
+shutdown, releasing what does not finish, not claiming while stopping, the
+trace attached to every job, and that an idle worker yields instead of
+busy-waiting — against an in-memory backend implementing the same protocol.
+
+**Local events against a real PostgreSQL** (`tests/test_local_events.py`):
+one job per subscriber in the publishing transaction and none after a
+rollback, the same event published twice queuing each subscriber once, the
+tenant, request id and trace restored in the worker, a session subscriber's
+effect happening once across a redelivery, a `TaskSession` committed on
+return and rolled back on error, `idempotent_on` skipping a duplicate, an
+event nobody receives answered 500 with nothing written, and `/ready`
+degraded by a failing outbox row.
+
+**The worker process** (`tests/test_worker_cli.py`): a real `jfast worker`
+against PostgreSQL, sent SIGTERM with a short and a long job running --
+the short one finishes, the long one is back in the queue with its attempt
+refunded, and the process exits inside the grace period; `jfast jobs dead` and
+`jfast jobs retry` against the same queue. Dead letters and release are also
+run against a real Redis (`tests/test_dead_letters.py`).
 
 **Against a real RabbitMQ 3.13** (`tests/test_rabbitmq_queue.py`, which CI
 refuses to let skip): a delayed job waits for its time, a long delay does not
@@ -414,7 +589,8 @@ with the scheduler on enqueue each tick once, and the Redis store claims once
 and never moves its latest tick backwards. The cron parser, catch-up and the
 two-replica cases run everywhere against a fake clock.
 
-**Not tested:** the Redis and Kafka backends against real servers. The
-PostgreSQL queue meets a real server only in the outbox suite, which enqueues
-through a request's session and claims what it wrote. RabbitMQ has not been tested in a cluster, under a broker
-restart, or with quorum queues.
+**Not tested:** the Kafka backend against a real broker; the Redis queue
+beyond dead letters and release against a real server; local events on the
+Redis or RabbitMQ queue (they travel through the outbox relay, which is
+tested with a recording queue). RabbitMQ has no `jfast jobs` support and has
+not been tested in a cluster, under a broker restart, or with quorum queues.

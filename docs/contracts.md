@@ -181,8 +181,9 @@ appends an empty one for each module it generates.
 | Rule | Reported when | What it says |
 | --- | --- | --- |
 | `cross-module` | a module imports anything of another module other than its `public.py` | `module 'asesor' imports modules.comprobante.services; import modules.comprobante.public instead` — and, if that file does not exist, to create it with a function returning DTOs |
-| `undeclared-dependency` | it imports `modules.<other>.public` without `<other>` in `depends_on` | `module 'asesor' calls modules.comprobante.public but does not declare 'comprobante' in depends_on` |
-| `module-cycle` | the graph of declared `depends_on` plus actual facade imports has a cycle | `module dependency cycle: asesor -> comprobante -> asesor`, once per cycle |
+| `undeclared-dependency` | it imports `modules.<other>.public`, or queues `Job(task="...")` for a task `<other>` declares with `@task`, without `<other>` in `depends_on` | `module 'asesor' calls modules.comprobante.public but does not declare 'comprobante' in depends_on` |
+| `module-cycle` | the graph of declared `depends_on` plus actual facade imports and task references has a cycle | `module dependency cycle: asesor -> comprobante -> asesor`, once per cycle |
+| `unused-dependency` | a `depends_on` entry names a module this one never imports nor queues a task of | `[modules.asesor] depends_on lists 'cartera', but module 'asesor' never calls modules.cartera.public or queues one of its tasks` -- reported at the line in `contracts.toml` |
 | `public-leak` | `public.py` imports or re-exports an ORM entity (any class in that module whose body assigns `__tablename__`), or imports `fastapi`/`starlette` | `modules/comprobante/public.py imports the ORM entity Comprobante` |
 | `cross-module-sql` | a string in `modules/<here>/` holds SQL naming a table another module owns | `module 'asesor' queries 'comprobantes' (module 'comprobante') with raw SQL` |
 | `unknown-dependency` | a `[modules.x]` block or a `depends_on` entry names no module under `modules/` -- usually a typo | `[modules.asesor] depends_on names 'comprobantes', which is not a module under modules/` |
@@ -214,8 +215,51 @@ Why each rule exists:
   every column across the boundary.
 
 Every one of these honours the inline waiver, and `[rules.placement] enabled =
-false` turns all six off together. The facade's file name is fixed at
-`public.py`.
+false` turns all of them off together -- the event rules below included. The
+facade's file name is fixed at `public.py`. `jfast inspect` reports
+`module-cycle` from the same graph -- imports plus declared `depends_on` -- so
+the two commands cannot disagree about whether a project has a cycle.
+
+### Events and tasks
+
+The other way across a boundary is an event, and it is part of the contract
+too. A module declares the event types it publishes; subscriptions and task
+ownership are read from the code:
+
+```toml
+[modules.comprobante]
+depends_on = []
+publishes = ["comprobante.registrado"]
+```
+
+```python
+# modules/alerta/tasks.py
+@subscribe("comprobante.registrado")
+async def revisar_presupuesto(event: Event, session: TaskSession) -> None: ...
+```
+
+`alerta` does **not** declare `depends_on = ["comprobante"]` for this: a
+subscriber depends on nothing, which is the point. See
+[Queues and events](queues-and-events.md#events-between-modules) for how the
+event is delivered.
+
+| Rule | Reported when | Fix |
+| --- | --- | --- |
+| `orphan-subscription` | a `@subscribe("<type>")` names an event no module declares under `publishes` | declare it in the publishing module, or fix the name. An event from another service arrives over Kafka: use `@on(topic)` for it |
+| `undeclared-event` | `Event(type="<type>")` is built in a module whose block does not list the type under `publishes` | add it to that module's `publishes` |
+| `undeclared-dependency` | `Job(task="alerta.revisar")` is queued from a module other than the one whose `@task` declares it | publish an event and `@subscribe` to it instead -- or declare the dependency |
+
+Only string literals are read -- a type or task name built at run time is not
+guessed at -- and a module's `tests/` are skipped. Queuing another module's
+task by name is the hidden cycle this catches: `comprobante` queuing
+`alerta.revisar` while `alerta` reads `comprobante`'s facade passed every check
+before, and is now `undeclared-dependency`, and `module-cycle` once declared.
+
+`jfast contracts show --json` carries `events` (each type with its declared
+publishers, the modules that build it, and its subscribers) and `tasks` (each
+task, its owner and who queues it); `CONTRACTS.md` renders both as tables, and
+`jfast ai context` adds each module's facade functions, `publishes`,
+`subscribes` and `tasks`.
 
 ### Forbidden calls
 
@@ -599,6 +643,7 @@ jfast contracts render                  # CONTRACTS.md
 jfast contracts waivers                 # every inline exception
 jfast contracts explain <a> <b>         # why that import is refused, and what to do
 jfast contracts explain --rule layer    # what a reported rule means, and where it lives
+jfast contracts explain --rule orphan-subscription
 jfast contracts diff                    # permitted architecture vs. the built one
 ```
 
