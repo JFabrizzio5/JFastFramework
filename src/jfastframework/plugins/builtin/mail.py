@@ -109,6 +109,15 @@ class Mailer:
             **extra,
         )
 
+    def has_template(self, name: str) -> bool:
+        """Whether the project's templates directory has ``<name>.html``.
+
+        For code with a built-in message of its own -- the accounts emails --
+        that lets a project override it by dropping a file in, without the
+        built-in failing on a project that has no templates at all.
+        """
+        return self._templates is not None and self._templates.exists(name)
+
     # -- sending -------------------------------------------------------
 
     async def send(self, message: EmailMessage) -> str:

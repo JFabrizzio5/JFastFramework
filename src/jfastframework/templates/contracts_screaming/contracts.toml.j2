@@ -207,8 +207,16 @@ rules = [
 # The blocks together are the module graph. `jfast contracts check` rejects a
 # call to a facade that is not listed here (undeclared-dependency) and any
 # cycle (module-cycle): two modules that call each other cannot be extracted
-# apart. Break a cycle by turning one direction into an event.
+# apart. Break a cycle by turning one direction into an event: the upstream
+# module lists the event under publishes, the downstream one reacts with
+# @subscribe("<type>") in its tasks.py and declares no depends_on for it.
+# A subscription nobody declares publishing (orphan-subscription), an event a
+# module builds without declaring it (undeclared-event) and a depends_on
+# entry nothing uses (unused-dependency) are reported too.
 #
 #     [modules.advisor]
 #     depends_on = ["receipt", "wallet"]
+#
+#     [modules.receipt]
+#     publishes = ["receipt.registered"]
 # ---------------------------------------------------------------------------

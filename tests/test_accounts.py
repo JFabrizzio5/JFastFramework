@@ -97,7 +97,8 @@ async def dsn(request: pytest.FixtureRequest, tmp_path: Path) -> str:
         async with engine.begin() as conn:
             await conn.execute(
                 text(
-                    "DROP TABLE IF EXISTS jfast_user_roles, jfast_role_permissions, "
+                    "DROP TABLE IF EXISTS jfast_user_sessions, jfast_recovery_codes, "
+                    "jfast_account_tokens, jfast_user_roles, jfast_role_permissions, "
                     "jfast_roles, jfast_users"
                 )
             )

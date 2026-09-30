@@ -1,0 +1,151 @@
+import { useState } from 'react'
+
+import BaseButton from '@/components/BaseButton.jsx'
+import BaseInput from '@/components/BaseInput.jsx'
+import { mfaConfirm, mfaSetup } from '@/services/auth.service.js'
+import { useAuthStore } from '@/stores/auth.store.js'
+
+/**
+ * Enrolment in three steps: start, scan and confirm, save the recovery codes.
+ * Used signed in (the Security page) and at sign-in for a role that requires
+ * MFA, where `mfaToken` stands in for the session the user does not have yet.
+ *
+ * No QR code is drawn: that would be a dependency for one image. The
+ * otpauth:// link opens the app on a phone, and the key can be typed on any
+ * other device. Add a QR library here if your users expect one.
+ */
+export default function MfaSetupPanel({ mfaToken = null, onDone }) {
+  const user = useAuthStore((state) => state.user)
+  const [step, setStep] = useState('start')
+  const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [setup, setSetup] = useState(null)
+  const [codes, setCodes] = useState([])
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  // An account created through a provider has no password to ask for.
+  const needsPassword = !mfaToken && user?.has_password !== false
+
+  async function run(action) {
+    setError('')
+    setPending(true)
+    try {
+      await action()
+    } catch (failure) {
+      setError(failure.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  function start(event) {
+    event.preventDefault()
+    return run(async () => {
+      setSetup(await mfaSetup({ password: password || null, mfaToken }))
+      setPassword('')
+      setStep('confirm')
+    })
+  }
+
+  function confirm(event) {
+    event.preventDefault()
+    return run(async () => {
+      setCodes(await mfaConfirm(code, mfaToken))
+      setStep('codes')
+    })
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(codes.join('\n'))
+      setCopied(true)
+    } catch {
+      // No clipboard permission: the codes are on screen to copy by hand.
+    }
+  }
+
+  if (step === 'start') {
+    return (
+      <form noValidate className="flex flex-col gap-4" onSubmit={start}>
+        <p className="text-sm text-ink-soft">
+          Use an authenticator app -- 1Password, Google Authenticator, Authy -- to get a
+          six-digit code at every sign-in.
+        </p>
+        {needsPassword ? (
+          <BaseInput
+            label="Current password"
+            type="password"
+            autoComplete="current-password"
+            required
+            error={error}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        ) : (
+          error && (
+            <p className="text-sm text-brand-600" role="alert">
+              {error}
+            </p>
+          )
+        )}
+        <BaseButton type="submit" className="w-full" loading={pending}>
+          Set up the app
+        </BaseButton>
+      </form>
+    )
+  }
+
+  if (step === 'confirm') {
+    const grouped = setup.secret.replace(/(.{4})/g, '$1 ').trim()
+    return (
+      <form noValidate className="flex flex-col gap-4" onSubmit={confirm}>
+        <p className="text-sm text-ink-soft">
+          On this phone,{' '}
+          <a href={setup.otpauth_uri} className="font-medium text-brand-600 underline">
+            open it in your authenticator app
+          </a>
+          . Elsewhere, add an account by hand with this key:
+        </p>
+        <code className="block rounded-lg bg-elevated px-3 py-2 text-center font-mono text-sm tracking-wider break-all text-ink">
+          {grouped}
+        </code>
+        <BaseInput
+          label="The six-digit code the app shows"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={6}
+          required
+          error={error}
+          value={code}
+          onChange={(event) => setCode(event.target.value)}
+        />
+        <BaseButton type="submit" className="w-full" loading={pending}>
+          Turn it on
+        </BaseButton>
+      </form>
+    )
+  }
+
+  // The recovery codes: shown once, never again.
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-ink-soft">
+        Two-factor authentication is on. Keep these recovery codes somewhere safe: each one signs
+        you in once if you lose your phone, and they are not shown again.
+      </p>
+      <ul className="grid grid-cols-2 gap-2 rounded-lg bg-elevated p-3 font-mono text-sm text-ink">
+        {codes.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+      <BaseButton variant="outline" className="w-full" onClick={copy}>
+        {copied ? 'Copied' : 'Copy the codes'}
+      </BaseButton>
+      <BaseButton className="w-full" onClick={() => onDone?.()}>
+        I have saved them
+      </BaseButton>
+    </div>
+  )
+}

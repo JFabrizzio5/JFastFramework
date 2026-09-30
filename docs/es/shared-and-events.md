@@ -73,18 +73,55 @@ Las tres formas de cruzar la frontera de un módulo, y cuál usar:
 | Necesitas… | Usa | No |
 | --- | --- | --- |
 | leer datos que son de otro módulo | una función en su `public.py`, que devuelve DTOs | su repositorio, su entidad, SQL contra sus tablas |
-| reaccionar a algo que hizo otro módulo | un evento que publica por el outbox | una llamada de vuelta hacia él |
+| reaccionar a algo que hizo otro módulo | un evento que publica (`outbox.publish`) y al que te suscribes con `@subscribe` | una llamada de vuelta hacia él, o encolar su tarea por nombre |
 | hablar el mismo enum o tipo | `shared/` | una copia en cada módulo |
 
-La segunda fila es donde entran los eventos y los channels. Un módulo que tiene
-que enterarse de que un comprobante se categorizó no le pide al módulo de
-comprobantes que lo llame; el de comprobantes publica `receipt.categorized` en
-la misma transacción que categorizó — `outbox.publish(session, topic,
-Event(...))`, ver [Colas y eventos](queues-and-events.md) — y quien le importe
-se suscribe. El que publica nunca nombra a sus suscriptores, así que la
-dependencia apunta en un solo sentido y el grafo de módulos queda sin ciclos. Un
-[channel](#channels), más abajo, hace el mismo trabajo dentro de un proceso
-cuando el evento no tiene que sobrevivir a una caída.
+La segunda fila es donde entran los eventos, y funciona en el stack por defecto —
+PostgreSQL y su cola, sin broker. El módulo de comprobantes declara el evento que
+publica y lo publica en la misma transacción que categorizó; el módulo al que le
+importa se suscribe en su propio `tasks.py`:
+
+```python
+# modules/receipt/services/receipt_service.py
+from jfastframework.events import Event
+
+await outbox.publish(session, "receipts", Event(type="receipt.categorized", data={"id": receipt.id}))
+```
+
+```python
+# modules/budget/tasks.py
+from jfastframework.events import Event, subscribe
+from jfastframework.tasks import TaskSession
+
+@subscribe("receipt.categorized")
+async def check_budget(event: Event, session: TaskSession) -> None:
+    ...  # corre en el worker, con el tenant que publicó, y hace commit al volver
+```
+
+```toml
+# contracts.toml
+[modules.receipt]
+publishes = ["receipt.categorized"]
+```
+
+`outbox.publish` escribe un job por suscriptor en la cola con la misma sesión, así
+que la reacción existe si y solo si la categorización hizo commit. `budget` **no**
+lista `receipt` en `depends_on`: el que publica nunca nombra a sus suscriptores,
+así que ninguna arista apunta en ningún sentido y el grafo de módulos queda sin
+ciclos. `jfast worker` corre al suscriptor; ver
+[Colas y eventos](queues-and-events.md#eventos-entre-módulos).
+
+Dos cosas que esto reemplaza, y que pasan la revisión para fallar después:
+
+- **Publicar sin que nadie escuche.** Un evento al que ningún módulo se suscribe y
+  que ningún broker lleva se rechaza en la petición (`UndeliverableEvent`, un 500
+  que dice cómo arreglarlo) en vez de responder 201 y morir en el outbox.
+- **Encolar la tarea del otro módulo por su nombre.** `Job(task="budget.check")`
+  desde `receipt` es una llamada a `budget` escrita como texto. `contracts check`
+  la reporta como `undeclared-dependency` y sugiere el evento.
+
+Un [channel](#channels), más abajo, hace un trabajo parecido dentro de un proceso
+cuando el mensaje no tiene que sobrevivir a una caída.
 
 ### Qué pertenece a shared/
 

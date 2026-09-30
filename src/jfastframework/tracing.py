@@ -24,7 +24,7 @@ nothing here raises -- telemetry that breaks a request is worse than none.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from typing import Any, Protocol
 
 __all__ = [
@@ -111,3 +111,23 @@ def span(name: str, **attributes: Any) -> Iterator[None]:
         manager = nullcontext()
     with manager:
         yield
+
+
+def annotate(**attributes: Any) -> None:
+    """Add attributes to the current span, for values known only at its end.
+
+    Framework-internal, and deliberately not in ``__all__``: the token counts
+    of a model call or the status of an upstream answer arrive after
+    :func:`span` opened, and this is how the call site records them. A backend
+    without an ``annotate`` method ignores it; without a backend it returns at
+    once. The same rule as everywhere here: small scalars, never content.
+    """
+    backend = _backend
+    if backend is _NOOP:
+        return
+    # Telemetry must never break the caller -- not even a backend whose
+    # attribute lookup itself fails.
+    with suppress(Exception):
+        record = getattr(backend, "annotate", None)
+        if record is not None:
+            record(attributes)
