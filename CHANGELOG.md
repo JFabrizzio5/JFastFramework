@@ -36,6 +36,56 @@ One addition came with it: enums in `--fields`.
 
 ### Fixed
 
+- **Security: with `auth` on, a subdomain, path or header granted a tenant by
+  itself.** `current_tenant` returned the subdomain's tenant with nobody signed
+  in, so with the plugin's default `sources = ["token", "subdomain"]` an
+  anonymous `curl -H "Host: acme.localhost" localhost:8700/tickets` listed and
+  created acme's rows -- the `Host` header is the client's to choose -- and a
+  signed-in user whose token carried no tenant was served as whichever
+  tenant's subdomain they reached. An unsigned source now only *names* a
+  tenant; the tenant granted to the request (on `request.state.tenant_id`, in
+  the RLS session, `TenantSession`, jobs, events and `current_tenant`) must be
+  backed by the principal: no session is a 401, a token claim that disagrees
+  is a 403, and a token with no tenant is a 403 unless the new `[plugin.tenancy]
+  trust_unscoped_principals = true` says the service checks membership itself.
+  A signed source outranks an unsigned one wherever it sits in `sources`.
+  Sign-in keeps working on the subdomain: the named tenant is on
+  `request.state.tenant_requested`, which `/auth/login`, `/auth/register` and
+  password reset read, and a public page reads it with the new
+  `requested_tenant` dependency. Without `auth` (a public site with a tenant
+  per subdomain) the resolved tenant stays usable. Found building a
+  multi-company help desk; every row of the rule is tested over HTTP,
+  including that curl and its POST (401). `jfast upgrade --check`:
+  `unsigned-tenant-needs-a-session`.
+- **`JFAST_ENV=prod` did nothing in a project `jfast start` generated.** The
+  generator wrote `[app] env = "local"`, and `JFastConfig.load` passed `[app]`
+  to the settings as arguments, which beat environment variables -- so the
+  switch `docs/deploy.md`'s checklist names was overridden by the file, and a
+  production image ran with `/docs`, `/openapi.json`, `/info` (every plugin's
+  settings) and `/queue/stats` open, console mail "sent" to stdout and no HSTS,
+  with nothing in the log. `env` and `debug` describe the deployment, so
+  `JFAST_ENV` and `JFAST_DEBUG` set in the process environment now win over
+  `[app] env` and `debug`; every other key still loses to the file, as
+  documented. A `.env` file read by the settings does not count (the generated
+  `.env.example` says `JFAST_ENV=local`, and a copied one must not turn a
+  committed `prod` off). A disagreement is a WARNING at boot. `jfast start`,
+  `jfast new service` and the gateway no longer write `env` at all (the default
+  is `local`), and the Cloud Run script now sets `JFAST_ENV=prod` instead of
+  `production`, which the settings refuse -- and which was only harmless while
+  the file won. Verified on a generated project: with `JFAST_ENV=prod`,
+  `/docs`, `/openapi.json`, `/info` and `/queue/stats` are 404, `/health` says
+  `prod`, and console mail stops the boot. `jfast upgrade --check`:
+  `jfast-env-wins-over-the-file`.
+- **The first `jfast dev` of a new project crashed: the API and the worker
+  created the bootstrap administrator at once.** Both saw no administrator and
+  inserted the `admin` role; the loser died on `uq_jfast_roles_tenant_name`
+  with a 400-line traceback and `jfast dev` stopped everything. The production
+  image, with one uvicorn worker per CPU, raced the same way. The bootstrap now
+  holds a PostgreSQL advisory lock (`serialize_setup`, like the other startup
+  work) until its transaction commits, so the next process waits and finds the
+  administrator. Tested against PostgreSQL with six concurrent startups in one
+  event loop and four separate processes started at the same instant: one
+  administrator, one role, no failures (both failed before the fix).
 - **CLI help dropped every `[section]` it named.** Rich reads `[scaffold]` as a
   style tag, so "Defaults to [scaffold] language." printed "Defaults to
   language." Escaped in `new module`, `remove` and `tenancy enable`; a test now

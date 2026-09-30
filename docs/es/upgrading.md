@@ -172,8 +172,30 @@ desarrollo.
 
 ## Lo que cambia en `0.1.0a12`
 
-Solo correcciones; nada detiene a un servicio correcto de `0.1.0a11`. Tres notas
-señalan archivos que `0.1.0a11` generó y que hay que tocar:
+Correcciones, y una es de seguridad y cambia respuestas:
+
+- `unsigned-tenant-needs-a-session` -- `auth` y `tenancy` activos, con
+  `subdomain`, `path` o `header` entre las fuentes (el default del plugin, y lo
+  que escribe `jfast new service --with auth,tenancy`). Esas fuentes ya no
+  otorgan un tenant por sí solas: un request en `acme.` sin sesión es 401 donde
+  `current_tenant` le entregaba las filas de acme, y un token cuyo tenant no
+  coincide con el subdominio -- o que no trae ninguno -- es 403. Las rutas que
+  usan `current_tenant` no necesitan nada; una página pública a propósito toma
+  `Depends(requested_tenant)`; un servicio cuyos tokens no traen tenant y que
+  revisa la membresía por su cuenta pone `[plugin.tenancy]
+  trust_unscoped_principals = true`. Ver
+  [multi-tenancy](multitenancy.md#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-si-sola).
+
+- `jfast-env-wins-over-the-file` -- `[app] env` (o `debug`) en `jfast.toml`,
+  que tiene todo proyecto que generó `jfast start`. `JFAST_ENV` en el entorno
+  del proceso ahora le gana, así que un despliegue que pone `JFAST_ENV=prod`
+  por fin corre como producción: `/docs`, `/info` y `/queue/stats` se cierran,
+  y un plugin que quedó en un backend de desarrollo (correo por consola) se
+  niega a arrancar. Borra la línea, pon `JFAST_ENV=prod` en el `environment:`
+  de compose y lee el log de arranque por el warning `overridden by JFAST_ENV`.
+
+Nada más detiene a un servicio correcto de `0.1.0a11`. Tres notas señalan
+archivos que `0.1.0a11` generó y que hay que tocar:
 
 - `image-cannot-write-local-storage` -- un servicio con `storage` cuyo
   Dockerfile corre como `appuser` sin ser dueño de `/app`. La imagen de

@@ -193,3 +193,18 @@ def test_generated_scripts_fail_fast() -> None:
             if name.endswith(".sh"):
                 assert content.startswith("#!/usr/bin/env bash")
                 assert "set -euo pipefail" in content
+
+
+def test_cloud_run_sets_an_env_the_settings_accept() -> None:
+    """It set JFAST_ENV=production, harmless only while jfast.toml beat the
+    environment; now JFAST_ENV wins, and "production" would stop the boot."""
+    import re
+    from typing import get_args
+
+    from jfastframework.settings import Environment
+
+    script = render(FunctionConfig(name="fn", target="gcp", project="p"))["deploy-cloudrun.sh"]
+    match = re.search(r"JFAST_ENV=(\w+)", script)
+    assert match is not None
+    assert match.group(1) == "prod"
+    assert match.group(1) in get_args(Environment)

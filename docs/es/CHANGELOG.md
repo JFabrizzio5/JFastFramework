@@ -36,6 +36,59 @@ llamada a un modelo desde un worker. Llegó con ello una adición: enums en
 
 ### Corregido
 
+- **Seguridad: con `auth` activo, un subdominio, una ruta o un header otorgaban
+  un tenant por sí solos.** `current_tenant` regresaba el tenant del subdominio
+  sin nadie con sesión, así que con el default del plugin, `sources = ["token",
+  "subdomain"]`, un `curl -H "Host: acme.localhost" localhost:8700/tickets`
+  anónimo listaba y creaba filas de acme -- el header `Host` lo elige el
+  cliente --, y un usuario con sesión cuyo token no traía tenant quedaba servido
+  como el tenant de cualquier subdominio al que llegara. Una fuente sin firma
+  ahora solo *nombra* un tenant; el tenant que se le otorga al request (en
+  `request.state.tenant_id`, la sesión con RLS, `TenantSession`, jobs, eventos
+  y `current_tenant`) tiene que respaldarlo el principal: sin sesión es 401, un
+  claim del token que no coincide es 403, y un token sin tenant es 403 salvo que
+  el nuevo `[plugin.tenancy] trust_unscoped_principals = true` diga que el
+  servicio revisa la membresía por su cuenta. Una fuente firmada le gana a una
+  sin firma sin importar su lugar en `sources`. Iniciar sesión en el subdominio
+  sigue funcionando: el tenant nombrado queda en
+  `request.state.tenant_requested`, que leen `/auth/login`, `/auth/register` y
+  la recuperación de contraseña, y una página pública lo lee con la nueva
+  dependencia `requested_tenant`. Sin `auth` (un sitio público con un tenant por
+  subdominio) el tenant resuelto sigue sirviendo. Encontrado al construir una
+  mesa de ayuda multi-empresa; cada fila de la regla está probada por HTTP,
+  incluido ese curl y su POST (401). `jfast upgrade --check`:
+  `unsigned-tenant-needs-a-session`.
+- **`JFAST_ENV=prod` no hacía nada en un proyecto generado por `jfast start`.**
+  El generador escribía `[app] env = "local"`, y `JFastConfig.load` le pasaba
+  `[app]` a los settings como argumentos, que le ganan a las variables de
+  entorno -- así que el interruptor que nombra el checklist de
+  `docs/deploy.md` quedaba anulado por el archivo, y una imagen de producción
+  corría con `/docs`, `/openapi.json`, `/info` (los settings de cada plugin) y
+  `/queue/stats` abiertos, el correo por consola "enviado" a stdout y sin HSTS,
+  sin nada en el log. `env` y `debug` describen el despliegue, así que
+  `JFAST_ENV` y `JFAST_DEBUG` puestas en el entorno del proceso ahora le ganan a
+  `[app] env` y `debug`; todas las demás llaves siguen perdiendo contra el
+  archivo, como está documentado. Un archivo `.env` que lean los settings no
+  cuenta (el `.env.example` generado dice `JFAST_ENV=local`, y una copia no debe
+  apagar un `prod` commiteado). Un desacuerdo es un WARNING al arrancar. `jfast
+  start`, `jfast new service` y el gateway ya no escriben `env` (el default es
+  `local`), y el script de Cloud Run ahora pone `JFAST_ENV=prod` en vez de
+  `production`, que los settings rechazan -- y que solo era inofensivo mientras
+  ganaba el archivo. Verificado en un proyecto generado: con `JFAST_ENV=prod`,
+  `/docs`, `/openapi.json`, `/info` y `/queue/stats` dan 404, `/health` dice
+  `prod` y el correo por consola detiene el arranque. `jfast upgrade --check`:
+  `jfast-env-wins-over-the-file`.
+- **El primer `jfast dev` de un proyecto nuevo se caía: la API y el worker
+  creaban el administrador de arranque a la vez.** Los dos veían que no había
+  administrador e insertaban el rol `admin`; el que perdía moría en
+  `uq_jfast_roles_tenant_name` con un traceback de 400 líneas y `jfast dev`
+  detenía todo. La imagen de producción, con un worker de uvicorn por CPU,
+  competía igual. El arranque ahora sostiene un advisory lock de PostgreSQL
+  (`serialize_setup`, como el resto del trabajo de arranque) hasta que su
+  transacción hace commit, así que el siguiente proceso espera y encuentra al
+  administrador. Probado contra PostgreSQL con seis arranques simultáneos en un
+  event loop y cuatro procesos separados que arrancan en el mismo instante: un
+  administrador, un rol, ninguna falla (los dos fallaban antes del arreglo).
 - **La ayuda de la CLI se comía cada `[sección]` que nombraba.** Rich lee
   `[scaffold]` como etiqueta de estilo, así que "Defaults to [scaffold]
   language." salía "Defaults to  language." Escapado en `new module`, `remove` y

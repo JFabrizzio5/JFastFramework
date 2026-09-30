@@ -208,7 +208,8 @@ come from the environment instead of the file --
 `JFAST_HTTP_UPSTREAMS__BILLING__BASE_URL=http://billing.internal:8010` -- and,
 as for every plugin, a value in `jfast.toml` wins over the environment, so
 leave `base_url` out of the file for an upstream whose address differs per
-environment.
+environment. (Only `[app] env` and `debug` go the other way; see
+[deploy](deploy.md#which-wins-jfasttoml-or-the-environment).)
 
 ## Health
 

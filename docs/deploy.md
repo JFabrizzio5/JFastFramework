@@ -220,6 +220,35 @@ Never put a DSN, key or password in `jfast.toml` — it is committed. Settings
 that hold secrets are typed `SecretStr`, which also keeps them out of
 `jfast describe` and `/info`.
 
+## Which wins: `jfast.toml` or the environment
+
+`jfast.toml` is the committed description of the service, and for every
+setting but two it wins over the environment: a value written in the file is
+the value that runs, whatever `JFAST_*` says. Leave a key out of the file for
+anything that differs per environment -- an upstream's `base_url`, the mail
+backend -- and set it in the environment instead.
+
+The two exceptions describe the deployment rather than the code:
+
+| `[app]` key | Variable | When the variable is set in the process environment |
+| --- | --- | --- |
+| `env` | `JFAST_ENV` | it wins over the file |
+| `debug` | `JFAST_DEBUG` | it wins over the file |
+
+So `JFAST_ENV=prod` turns production on even in a project whose `jfast.toml`
+still says `env = "local"` -- what `jfast start` wrote before 0.1.0a12. When
+the two disagree, the boot log says so on a WARNING line
+(`[app] env = 'local' in jfast.toml is overridden by JFAST_ENV='prod' from the
+environment`), so neither side changes production silently. Only the process
+environment counts, not a `.env` file read by the settings: the generated
+`.env.example` carries `JFAST_ENV=local`, and a copied `.env` must not be able
+to turn a committed `env = "prod"` off. Compose's `env_file:` does put `.env`
+into the process environment, which is why the override that sets
+`JFAST_ENV: prod` goes under `environment:`, which compose ranks above it.
+
+Projects generated from 0.1.0a12 on write no `env` at all: it defaults to
+`local`, and the deployment decides.
+
 ## The generated file is generated
 
 `docker-compose.generated.yml` carries a header saying so. Hand edits are lost
@@ -474,9 +503,13 @@ any number, this page's included.
 
 ## Checklist before production
 
-- [ ] `JFAST_ENV=prod` — this alone disables `/info`, closes `/docs` and
-      `/openapi.json`, tightens the CSP and switches HSTS on
-- [ ] `JFAST_DEBUG=false` — otherwise exception messages reach clients
+- [ ] `JFAST_ENV=prod` — this alone disables `/info`, closes `/docs`,
+      `/openapi.json` and `/queue/stats`, tightens the CSP, switches HSTS on
+      and makes plugins refuse development backends (console mail). It wins
+      over `[app] env` in `jfast.toml`; check the boot log for the `overridden
+      by JFAST_ENV` warning and `/health` for `"env": "prod"`
+- [ ] `JFAST_DEBUG=false` — otherwise exception messages reach clients; it
+      wins over `[app] debug`, like `JFAST_ENV`
 - [ ] Every secret from the environment, none from `jfast.toml`
 - [ ] `/ready` wired to the orchestrator's readiness probe, `/health` to
       liveness — not the other way round

@@ -211,7 +211,8 @@ puede venir del entorno en vez del archivo --
 `JFAST_HTTP_UPSTREAMS__BILLING__BASE_URL=http://billing.internal:8010` -- y,
 como en todos los plugins, un valor en `jfast.toml` gana sobre el entorno, así
 que deja `base_url` fuera del archivo para un upstream cuya dirección cambia
-según el entorno.
+según el entorno. (Solo `[app] env` y `debug` van al revés; ver
+[deploy](deploy.md#quien-gana-jfasttoml-o-el-entorno).)
 
 ## Salud
 

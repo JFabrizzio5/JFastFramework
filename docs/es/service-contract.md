@@ -146,7 +146,9 @@ claim firmado antes que de cualquier cosa que el request pueda elegir;
 `X-Tenant-ID` solo es fuente cuando `header` está en la lista.
 
 En Python la configuración de los plugins también puede venir de `jfast.toml`
-(`[plugin.auth]`, `[plugin.tenancy]`), que le gana al entorno. Un servicio en
+(`[plugin.auth]`, `[plugin.tenancy]`), que le gana al entorno -- salvo
+`JFAST_ENV` y `JFAST_DEBUG`, que le ganan a `[app] env` y `debug` cuando están
+puestas, porque describen el despliegue ([deploy](deploy.md#quien-gana-jfasttoml-o-el-entorno)). Un servicio en
 otro lenguaje solo tiene el entorno, así que escribe en su `.env` los valores
 que debe compartir -- modo, algoritmos, secreto o llave pública, issuer,
 audience, fuentes de tenancy. Nada los copia entre servicios por ti: un

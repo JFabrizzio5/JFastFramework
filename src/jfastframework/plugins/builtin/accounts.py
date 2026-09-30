@@ -73,6 +73,20 @@ if TYPE_CHECKING:
 EMAIL_VERIFICATION_MODES = ("off", "optional", "required")
 
 
+def _signin_tenant(request: Request) -> str | None:
+    """Which tenant's accounts a sign-in, sign-up or reset looks in.
+
+    The tenant the request *names* -- subdomain or path -- because before a
+    session exists that is the only way to say which tenant the form is for,
+    and the password (or the emailed token, or the provider) is what proves
+    the caller belongs there. Not ``request.state.tenant_id``: with `auth` on,
+    tenancy grants no tenant to a request without a session.
+    """
+    from jfastframework.plugins.builtin.tenancy import tenant_hint
+
+    return tenant_hint(request)
+
+
 class AccountsSettings(PluginSettings):
     model_config = SettingsConfigDict(env_prefix="JFAST_ACCOUNTS_", env_file=".env", extra="ignore")
 
@@ -457,8 +471,16 @@ class AccountsPlugin(Plugin):
         if not settings.bootstrap_admin_email:
             return
         from jfastframework.accounts.service import normalize_email
+        from jfastframework.db.framework import serialize_setup
 
         async with self._sessionmaker() as session, session.begin():
+            # Every process runs this at once -- the API and the worker of a
+            # first `jfast dev`, each uvicorn worker of the production image --
+            # and each saw no administrator and inserted the `admin` role: one
+            # won, the rest died on uq_jfast_roles_tenant_name. The lock is
+            # held until this transaction commits, so the next process waits,
+            # then reads the administrator the first one created.
+            await serialize_setup(await session.connection(), "jfast.accounts.bootstrap_admin")
             service = self.service(session)
             email = normalize_email(settings.bootstrap_admin_email)
             if await service._row_by_email(email, None) is not None:
@@ -550,7 +572,7 @@ class AccountsPlugin(Plugin):
 
     async def _sign_in_identity(self, identity: Any, request: Request) -> Any:
         settings: AccountsSettings = self.settings
-        tenant = getattr(request.state, "tenant_id", None)
+        tenant = _signin_tenant(request)
         async with self._sessionmaker() as session, session.begin():
             user = await self.service(session).sign_in_federated(
                 federated_id=identity.federated_id,
@@ -701,7 +723,7 @@ class AccountsPlugin(Plugin):
             summary="Sign in with email and password",
         )
         async def login(body: LoginRequest, request: Request, session: DbSession) -> Any:
-            tenant = getattr(request.state, "tenant_id", None)
+            tenant = _signin_tenant(request)
             # Before the password is checked, and keyed on what was typed: the
             # answer is the same for an address with no account.
             await plugin._limit(request, "login-ip")
@@ -743,7 +765,7 @@ class AccountsPlugin(Plugin):
                 from jfastframework.accounts.passwords import check_password
                 from jfastframework.accounts.service import normalize_email
 
-                tenant = getattr(request.state, "tenant_id", None)
+                tenant = _signin_tenant(request)
                 await plugin._limit(request, "email-ip")
                 service = plugin.service(session)
                 address = normalize_email(body.email)
@@ -861,7 +883,7 @@ class AccountsPlugin(Plugin):
                     background,
                     "verify_email",
                     email=body.email,
-                    tenant=getattr(request.state, "tenant_id", None),
+                    tenant=_signin_tenant(request),
                 )
                 return _accepted()
 
@@ -880,7 +902,7 @@ class AccountsPlugin(Plugin):
                     background,
                     "reset_password",
                     email=body.email,
-                    tenant=getattr(request.state, "tenant_id", None),
+                    tenant=_signin_tenant(request),
                 )
                 return _accepted()
 
@@ -979,7 +1001,7 @@ class AccountsPlugin(Plugin):
             if found is None:
                 return problem_response(expired, request)
             row = await service.row_by_id(found["user_id"])
-            tenant = getattr(request.state, "tenant_id", None)
+            tenant = _signin_tenant(request)
             if row is None or not row["is_active"] or row["tenant_id"] != tenant:
                 return problem_response(expired, request)
             await plugin._limit(request, "login-account", f"user:{row['id']}")

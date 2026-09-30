@@ -138,6 +138,12 @@ def create_app(
     for router in routers or []:
         app.include_router(router)
 
+    # After the plugins registered, so observability's handlers carry it. A
+    # file that says local and an environment that says prod is the one
+    # disagreement nobody may miss: it decides /docs, /info, HSTS, the mail
+    # backend and every other production default.
+    for sentence in cfg.overridden:
+        logger.warning(sentence)
     logger.info(
         "%s built with plugins: %s",
         settings.app_name,

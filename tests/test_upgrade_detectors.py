@@ -1951,6 +1951,79 @@ def test_a_facade_generated_for_a_multitenant_service_is_not_told(
     assert "facade-tenant-optional" not in report(tmp_path)
 
 
+@affected_by("jfast-env-wins-over-the-file")
+def _the_env_jfast_start_wrote(root: Path) -> list[str]:
+    # `service` writes the [app] block every 0.1.0a11 project has.
+    service(root, "observability")
+    return ['jfast.toml:4 [app] env = "local": JFAST_ENV in the environment now wins']
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _debug_committed_on(root: Path) -> list[str]:
+    service(root, "observability")
+    edit(root / "jfast.toml", 'env = "local"\n', "debug = true\n")
+    return ["jfast.toml:4 [app] debug = true: JFAST_DEBUG in the environment now wins"]
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _the_line_removed(root: Path) -> None:
+    _the_env_jfast_start_wrote(root)
+    edit(root / "jfast.toml", 'env = "local"\n', "")
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _env_only_in_another_table(root: Path) -> None:
+    # A plugin's own `env` key is not the deployment's.
+    _the_line_removed(root)
+    write(root / "jfast.toml", (root / "jfast.toml").read_text() + '\n[plugin.x]\nenv = "a"\n')
+
+
+TENANT_BY_SUBDOMAIN = (
+    '\n[plugin.tenancy]\nsources = ["token", "subdomain"]\nbase_domain = "localhost"\n'
+)
+
+
+@affected_by("unsigned-tenant-needs-a-session")
+def _auth_and_a_subdomain_tenant(root: Path) -> list[str]:
+    # The help desk of F1: the documented example, anonymous rows by Host header.
+    service(root, "observability", "database", "auth", "tenancy", extra=TENANT_BY_SUBDOMAIN)
+    return ['[plugin.tenancy] sources = ["token", "subdomain"]: subdomain no longer grants']
+
+
+@affected_by("unsigned-tenant-needs-a-session")
+def _auth_and_the_default_sources(root: Path) -> list[str]:
+    # No `sources` line: the plugin's default is ["token", "subdomain"].
+    service(
+        root,
+        "observability",
+        "auth",
+        "tenancy",
+        extra='\n[plugin.tenancy]\nbase_domain = "app.example.com"\n',
+    )
+    return ['[plugin.tenancy] sources = ["token", "subdomain"] (the default): subdomain']
+
+
+@unaffected_by("unsigned-tenant-needs-a-session")
+def _only_signed_sources(root: Path) -> None:
+    # What `jfast start --multitenant` writes: nothing a client can choose.
+    _auth_and_a_subdomain_tenant(root)
+    edit(root / "jfast.toml", '["token", "subdomain"]', '["token", "user"]')
+
+
+@unaffected_by("unsigned-tenant-needs-a-session")
+def _a_public_site_without_auth(root: Path) -> None:
+    # No principal to check against: the subdomain's tenant stays usable.
+    _auth_and_a_subdomain_tenant(root)
+    edit(root / "jfast.toml", '"auth", ', "")
+
+
+@unaffected_by("unsigned-tenant-needs-a-session")
+def _a_subdomain_source_without_a_base_domain(root: Path) -> None:
+    # Refused at boot before and after: nothing changed for it at runtime.
+    _auth_and_a_subdomain_tenant(root)
+    edit(root / "jfast.toml", 'base_domain = "localhost"\n', "")
+
+
 @affected_by("revocation-fail-open")
 def _auth_checking_revocation_against_redis(root: Path) -> list[str]:
     service(root, "observability", "database", "cache", "auth", extra=AUTH_ISSUING)
