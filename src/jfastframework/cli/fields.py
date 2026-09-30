@@ -589,7 +589,7 @@ def tuple_source(names: Sequence[str], *, indent: str = "") -> str:
 LINE_LENGTH = 100
 
 
-def fit(head: str, items: Sequence[str], tail: str, *, indent: int = 0) -> str:
+def fit(head: str, items: Sequence[str], tail: str, *, indent: int = 0, hug: bool = False) -> str:
     """A call or a signature, on one line if it fits and one item per line if not.
 
     Written the way ruff format settles it, so a generated file is already
@@ -597,11 +597,18 @@ def fit(head: str, items: Sequence[str], tail: str, *, indent: int = 0) -> str:
     with a trailing comma, which the formatter then leaves alone. The first
     line carries no indentation -- the template already wrote it -- and the
     rest carry ``indent`` spaces.
+
+    ``hug`` is for a hand-written signature with no trailing comma: between
+    one line and one item per line, ruff first tries every item on a single
+    indented line of its own, and settles there when that fits.
     """
     one_line = f"{head}{', '.join(items)}{tail}"
     if indent + len(one_line) <= LINE_LENGTH or not items:
         return one_line
     pad = " " * indent
+    hugged = f"{pad}    {', '.join(items)}"
+    if hug and len(hugged) <= LINE_LENGTH:
+        return f"{head}\n{hugged}\n{pad}{tail}"
     body = "".join(f"{pad}    {item},\n" for item in items)
     return f"{head}\n{body}{pad}{tail}"
 

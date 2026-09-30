@@ -463,6 +463,7 @@ nothing marks. This lists them with file and line, the way `jfast upgrade
 | Rule | Severity | Looks for |
 | --- | --- | --- |
 | `tenant-none-literal` | high | a call passing `tenant_id=None`: a repository, a facade, `rag`, `llm` |
+| `facade-tenant-optional` | high | a module facade (`modules/<name>/public.py`) whose `tenant_id` admits None (`str \| None`, `Optional[str]`, `= None`): a variable that happens to be None reads every tenant, and no literal marks the call. The facades generated for a single-tenant service are listed here on purpose -- change them to `tenant_id: str` when tenancy goes on |
 | `route-without-tenant` | high | a route that opens a database session and has no tenant dependency |
 | `factory-without-tenant` | high | the same, in a dependency (`get_service`), reported once with the routes that use it |
 | `raw-sql-without-tenant` | high | an SQL string naming a tenant table and never `tenant_id` |

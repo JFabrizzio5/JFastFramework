@@ -28,6 +28,7 @@ from jfastframework.cli import check as check_cli
 from jfastframework.cli import tenancy as tenancy_cli
 from jfastframework.cli.exits import Code
 from jfastframework.cli.scaffold import (
+    MODULE_LAYOUTS,
     Scaffolder,
     module_context,
     module_trees,
@@ -311,6 +312,15 @@ def test_a_clean_service_has_nothing_to_report(tmp_path: Path) -> None:
             },
         ),
         (
+            "facade-tenant-optional",
+            {
+                "modules/invoice/public.py": """
+                    async def get_invoice(session, *, tenant_id: str | None, invoice_id: int):
+                        return await InvoiceRepository(session, tenant_id=tenant_id).get(invoice_id)
+                """
+            },
+        ),
+        (
             "route-without-tenant",
             {
                 "modules/invoice/routes.py": """
@@ -508,10 +518,114 @@ def test_a_generated_service_reports_its_factories(tmp_path: Path) -> None:
         )
     report = readiness(root)
     assert sorted({t.table for t in report.tables}) == ["customers", "invoices"]
+    # ...and every facade takes an optional tenant: right for one customer, and
+    # the signature to change -- with its callers -- before a second arrives.
     assert sorted((f.code, f.path) for f in report.open) == [
+        ("facade-tenant-optional", "modules/customer/public.py"),
+        ("facade-tenant-optional", "modules/invoice/public.py"),
         ("factory-without-tenant", "modules/customer/api/routes.py"),
         ("factory-without-tenant", "modules/invoice/api/routes.py"),
     ]
+
+
+FACADE = "modules/invoice/public.py"
+
+
+@pytest.mark.parametrize(
+    "signature",
+    [
+        "session, *, tenant_id: str | None, invoice_id: int",
+        "session, *, tenant_id: None | str, invoice_id: int",
+        "session, *, tenant_id: Optional[str], invoice_id: int",
+        "session, *, tenant_id: typing.Optional[str], invoice_id: int",
+        "session, *, tenant_id: Union[str, None], invoice_id: int",
+        'session, *, tenant_id: "str | None", invoice_id: int',
+        "session, tenant_id: str = None, invoice_id: int = 0",
+        "session, invoice_id, tenant_id=None",
+    ],
+)
+def test_a_facade_tenant_that_admits_none_is_reported(tmp_path: Path, signature: str) -> None:
+    _write(
+        tmp_path,
+        {**CLEAN, FACADE: f"async def get_invoice({signature}):\n    return None\n"},
+    )
+    found = [f for f in readiness(tmp_path).open if f.code == "facade-tenant-optional"]
+    assert [(f.path, f.line) for f in found] == [(FACADE, 1)], [str(f) for f in found]
+    assert "get_invoice(" in found[0].message
+
+
+@pytest.mark.parametrize(
+    ("path", "source"),
+    [
+        # Required, and a str: the shape a multitenant facade has.
+        (FACADE, "async def get_invoice(session, *, tenant_id: str, invoice_id: int): ..."),
+        # A helper of the facade is not its API.
+        (FACADE, "async def _load(session, tenant_id: str | None = None): ..."),
+        # Nothing on the parameter says what it accepts.
+        (FACADE, "async def get_invoice(session, tenant_id, invoice_id): ..."),
+        # Not a facade: services, repositories and nested files are other rules' business.
+        ("modules/invoice/service.py", "def build(session, tenant_id: str | None = None): ..."),
+        ("modules/invoice/api/public.py", "def get(session, tenant_id: str | None): ..."),
+        # A method is not the facade's surface.
+        (FACADE, "class Reader:\n    def get(self, tenant_id: str | None): ..."),
+    ],
+)
+def test_what_is_not_an_optional_facade_tenant_stays_quiet(
+    tmp_path: Path, path: str, source: str
+) -> None:
+    _write(tmp_path, {**CLEAN, path: source + "\n"})
+    assert "facade-tenant-optional" not in _ready(tmp_path)
+
+
+def test_an_optional_facade_tenant_can_be_waived(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        {
+            **CLEAN,
+            FACADE: (
+                "async def report(\n"
+                "    session,\n"
+                "    tenant_id: str | None,  # contracts: allow the admin report spans tenants\n"
+                "): ...\n"
+            ),
+        },
+    )
+    report = readiness(tmp_path)
+    assert report.open == []
+    assert [item.waived for item in report.waived] == ["the admin report spans tenants"]
+
+
+@pytest.mark.parametrize("layout", MODULE_LAYOUTS)
+def test_a_generated_facade_requires_the_tenant_in_a_multitenant_service(
+    tmp_path: Path, layout: str
+) -> None:
+    root = tmp_path / "shop"
+    scaffolder = Scaffolder()
+    scaffolder.render_trees(
+        service_trees("api", None, root), service_context("shop", multitenant=True)
+    )
+    scaffolder.render_trees(
+        module_trees(layout, "api", root / "modules", root),
+        module_context("invoice", layout=layout, access="tenant"),
+    )
+    facade = (root / FACADE).read_text(encoding="utf-8")
+    assert "tenant_id: str, invoice_id: int" in facade
+    assert "tenant_id: str | None" not in facade
+    assert readiness(root).open == [], [str(f) for f in readiness(root).open]
+
+    # The same module in a single-tenant service keeps None, says why, and is
+    # listed for the day that service takes a second customer.
+    single = tmp_path / "solo"
+    scaffolder.render_trees(service_trees("api", None, single), service_context("solo"))
+    scaffolder.render_trees(
+        module_trees(layout, "api", single / "modules", single),
+        module_context("invoice", layout=layout, access="auth"),
+    )
+    facade = (single / FACADE).read_text(encoding="utf-8")
+    assert "tenant_id: str | None, invoice_id: int" in facade
+    assert "this service has one customer" in facade
+    found = [f for f in readiness(single).open if f.code == "facade-tenant-optional"]
+    assert [f.path for f in found] == [FACADE]
 
 
 def test_the_cli_report_and_its_exit_code(tmp_path: Path) -> None:

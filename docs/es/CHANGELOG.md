@@ -69,6 +69,19 @@ imagen de producción, el frontend generado en un navegador, una subida.
   ["scripts/**"]`: un comando que alguien corre en una terminal habla por
   stdout. Los contratos ya escritos conservan su regla; agrega la línea a
   `[[rules.forbid_call]] pattern = "print"` a mano.
+- **Las fachadas generadas aceptaban `tenant_id=None` en un servicio
+  multitenant.** `get_<modulo>(session, *, tenant_id: str | None, ...)` de
+  `public.py` le pasaba el valor al repositorio, y None significa sin filtro de
+  tenant: una tarea u otro módulo con una variable que resultaba ser None leía
+  las filas de todos los tenants, y `--multitenant-ready` solo detectaba el
+  literal. Un módulo generado con acceso por tenant (lo que implica tenancy)
+  ahora recibe `tenant_id: str`. Un servicio de un solo tenant conserva
+  `str | None` -- sus filas se escriben sin tenant, así que None es el único
+  valor que las encuentra -- con un comentario que lo explica, y `jfast check
+  --multitenant-ready` tiene una regla nueva, `facade-tenant-optional`, que
+  lista cada firma de fachada que admite None (`str | None`, `Optional[str]`,
+  `= None`) como paso previo al cambio. `jfast upgrade --check`:
+  `facade-tenant-optional`, para servicios con tenancy.
 
 ## [0.1.0a11] - 2026-09-30
 

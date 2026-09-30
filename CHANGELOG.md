@@ -69,6 +69,18 @@ generated frontend in a browser, an upload.
   a command someone runs in a terminal talks through stdout. Contracts already
   written keep their rule; add the line to `[[rules.forbid_call]] pattern =
   "print"` by hand.
+- **Generated facades accepted `tenant_id=None` in a multitenant service.**
+  `public.py`'s `get_<module>(session, *, tenant_id: str | None, ...)` passed
+  the value to the repository, and None means no tenant filter: a task or
+  another module holding a variable that happened to be None read every
+  tenant's rows, and `--multitenant-ready` only caught the literal. A module
+  generated with tenant access (what tenancy implies) now takes `tenant_id:
+  str`. A single-tenant service keeps `str | None` -- its rows are written with
+  no tenant, so None is the only value that finds them -- with a comment saying
+  so, and `jfast check --multitenant-ready` has a new rule,
+  `facade-tenant-optional`, that lists every facade signature admitting None
+  (`str | None`, `Optional[str]`, `= None`) as a step before the switch.
+  `jfast upgrade --check`: `facade-tenant-optional`, for services with tenancy.
 
 ## [0.1.0a11] - 2026-09-30
 

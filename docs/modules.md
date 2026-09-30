@@ -316,6 +316,13 @@ own repository.
   request to infer it from — a worker, a scheduled task, another module's
   service. An implicit tenant is exactly how a job ends up reading every
   tenant's rows ([Queues and events](queues-and-events.md) has the story).
+  In a multitenant service (`--access tenant`, what tenancy implies) it is
+  `tenant_id: str`: `None` would build the repository with no tenant filter
+  and the facade would answer for every tenant. In a single-tenant service it
+  is `tenant_id: str | None`, because the rows are written with no tenant and
+  `None` is the only value that finds them; `jfast check --multitenant-ready`
+  lists those signatures (`facade-tenant-optional`) to change when tenancy goes
+  on.
 - **DTOs, not entities.** An ORM entity drags its session and lazy relations
   across the boundary, and every column becomes part of the API the day someone
   reads it. A DTO is a promise you chose to make. `public.py` may not import

@@ -321,7 +321,12 @@ cableado a través del repositorio propio de ese layout.
   request del cual inferirlo — un worker, una tarea programada, el servicio de
   otro módulo. Un tenant implícito es justo como un job termina leyendo las
   filas de todos los tenants ([Colas y eventos](queues-and-events.md) tiene la
-  historia).
+  historia). En un servicio multitenant (`--access tenant`, lo que implica
+  tenancy) es `tenant_id: str`: `None` construiría el repositorio sin filtro de
+  tenant y la fachada respondería por todos. En un servicio de un solo tenant es
+  `tenant_id: str | None`, porque las filas se escriben sin tenant y `None` es
+  el único valor que las encuentra; `jfast check --multitenant-ready` lista esas
+  firmas (`facade-tenant-optional`) para cambiarlas al encender tenancy.
 - **DTOs, no entidades.** Una entidad del ORM arrastra su sesión y sus
   relaciones lazy a través de la frontera, y cada columna se vuelve parte de la
   API el día en que alguien la lee. Un DTO es una promesa que elegiste hacer.
