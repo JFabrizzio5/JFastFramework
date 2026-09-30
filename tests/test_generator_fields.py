@@ -357,3 +357,48 @@ def test_an_enum_added_to_an_old_str_enum_file_imports_what_it_uses(
     assert "class Status(StrEnum):" in source
     namespace: dict[str, object] = {}
     exec(compile(source, "enums.py", "exec"), namespace)  # the file must import
+
+
+@pytest.mark.parametrize("layout", MODULE_LAYOUTS)
+def test_a_unique_key_with_an_optional_field_ignores_rows_without_a_value(
+    service: Path, layout: str
+) -> None:
+    # Found building a receipts SaaS from scratch: `--unique uuid_cfdi` on an
+    # optional field made the second receipt without a UUID a 409, because
+    # NULLS NOT DISTINCT treated every missing value as the same one and the
+    # rule looked the None up. It now means "unique once it has a value".
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "module",
+            "gasto",
+            "--layout",
+            layout,
+            "--fields",
+            "folio:str(36)?,total:money",
+            "--unique",
+            "folio",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    module = service / "modules" / "gasto"
+    everything = "".join(p.read_text(encoding="utf-8") for p in module.rglob("*.py"))
+    assert 'postgresql_where=text("folio IS NOT NULL")' in everything
+    assert "UniqueConstraint(" not in everything
+    assert "if folio is None:" in everything
+    if layout == "modular":
+        assert "test_rows_without_a_key_value_never_collide" in everything
+
+
+def test_a_required_unique_key_keeps_its_constraint(service: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["new", "module", "gasto", "--fields", "folio:str(36),total:money", "--unique", "folio"],
+    )
+    assert result.exit_code == 0, result.output
+    everything = "".join(
+        p.read_text(encoding="utf-8") for p in (service / "modules" / "gasto").rglob("*.py")
+    )
+    assert "UniqueConstraint(" in everything and "postgresql_where" not in everything
+    assert "is None:" not in everything.split("ensure_folio_is_available")[1][:400]

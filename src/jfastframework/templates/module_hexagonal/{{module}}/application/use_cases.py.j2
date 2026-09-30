@@ -113,6 +113,10 @@ class {{ Module }}UseCases:
         in-memory adapter. Read-then-write: the unique constraint on the table
         is what holds when two requests pass this at once.
         """
+{% if unique.nullable_names %}
+        if {{ unique.nullable_names|join(" is None or ") }} is None:
+            return  # no value, nothing to collide with: the key applies once it has one
+{% endif %}
         existing = await self.repository.{{ unique.port_finder }}({{ unique.arguments }})
         if existing is not None and existing.id != exclude_id:
             {{ fit("raise ConflictError(", ['f"' ~ unique.described ~ ' is already taken"'], ")", indent=12) }}

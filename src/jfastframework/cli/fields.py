@@ -313,6 +313,16 @@ class UniqueSpec:
         return "_and_".join(self.names)
 
     @property
+    def nullable_names(self) -> tuple[str, ...]:
+        """Key fields declared with ``?``: the key only applies once they have a value."""
+        return tuple(f.name for f in self.fields if f.nullable)
+
+    @property
+    def present(self) -> str:
+        """SQL predicate "every nullable key field has a value", for a partial index."""
+        return " AND ".join(f"{name} IS NOT NULL" for name in self.nullable_names)
+
+    @property
     def finder(self) -> str:
         return f"by_{self.suffix}"
 
@@ -350,6 +360,10 @@ class UniqueSpec:
     def sample_arguments(self, index: int) -> list[str]:
         """The key's sample values, positionally, for calling the rule in a test."""
         return [f.sample(index) for f in self.fields]
+
+    def empty_arguments(self) -> list[str]:
+        """The key with every nullable field empty, for the "no value" test."""
+        return ["None" if f.nullable else f.sample(0) for f in self.fields]
 
     def prefixed(self, prefix: str) -> list[str]:
         """``["payload.a", "payload.b"]``: the key read off one object."""
@@ -442,8 +456,10 @@ class ModuleFields:
             names |= {f"sqlalchemy.{name}" for name in f.sqlalchemy_names}
         if self.needs_jsonb:
             names.add("sqlalchemy.dialects.postgresql.JSONB")
-        if unique and self.uniques:
+        if unique and any(not u.nullable_names for u in self.uniques):
             names.add("sqlalchemy.UniqueConstraint")
+        if unique and any(u.nullable_names for u in self.uniques):
+            names |= {"sqlalchemy.Index", "sqlalchemy.text"}
         return sorted(names)
 
     def pydantic(self, *, versioned: bool = False) -> list[str]:

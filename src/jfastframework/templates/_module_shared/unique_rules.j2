@@ -14,6 +14,10 @@
     on the table is what actually enforces it. ``exclude_id`` is the row being
     updated, which does not collide with itself.
     """
+{% if unique.nullable_names %}
+    if {{ unique.nullable_names|join(" is None or ") }} is None:
+        return  # no value, nothing to collide with: the key applies once it has one
+{% endif %}
     existing = await repository.{{ unique.finder }}({{ unique.arguments }})
     if existing is not None and existing.id != exclude_id:
         {{ fit("raise ConflictError(", ['f"' ~ unique.described ~ ' is already taken"'], ")", indent=8) }}

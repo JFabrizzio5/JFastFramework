@@ -26,6 +26,21 @@ class {{ entity_class }}({{ entity_bases }}):
     # tenant-first constraint on this table the same name.
     __table_args__ = (
 {% for unique in uniques %}
+{% if unique.nullable_names %}
+        # {{ unique.nullable_names|join(", ") }} may be empty, and an empty value is not a
+        # value: two rows without one do not collide. A partial index, because
+        # NULLS NOT DISTINCT would treat every missing value as the same one.
+        Index(
+            "{{ unique.constraint_name }}",
+{% for column in ["tenant_id"] + unique.names|list %}
+            "{{ column }}",
+{% endfor %}
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+            postgresql_where=text("{{ unique.present }}"),
+            sqlite_where=text("{{ unique.present }}"),
+        ),
+{% else %}
         UniqueConstraint(
 {% for column in ["tenant_id"] + unique.names|list %}
             "{{ column }}",
@@ -33,6 +48,7 @@ class {{ entity_class }}({{ entity_bases }}):
             name="{{ unique.constraint_name }}",
             postgresql_nulls_not_distinct=True,
         ),
+{% endif %}
 {% endfor %}
     )
 {% endif %}
