@@ -35,7 +35,7 @@ import socket
 import time
 from typing import Any
 
-from jfastframework.queues.base import Job
+from jfastframework.queues.base import DeadJob, Job
 
 # A worker that has not touched the registry in this multiple of the visibility
 # timeout counts as dead. Slack on purpose: a slow heartbeat should not cause a
@@ -203,6 +203,53 @@ class RedisQueue:
         now = await self._now()
         await self._client.zadd(self._delayed, {job.to_json(): now + job.backoff().total_seconds()})
         await self._heartbeat(now)
+
+    async def release(self, job: Job) -> None:
+        """Hand a claimed job back at once, without spending an attempt.
+
+        The receipt is the payload as it was claimed -- before this delivery
+        counted its attempt -- so pushing it back as-is is the refund. It goes
+        to the consuming end of the list, so it is the next job taken.
+        """
+        await self._client.lrem(self._processing, 1, job.receipt)
+        await self._client.rpush(self._pending, job.receipt)
+        await self._heartbeat()
+
+    async def dead(self, *, limit: int = 100) -> list[DeadJob]:
+        """The dead letters, newest first (``nack`` pushes them on the left)."""
+        found: list[DeadJob] = []
+        for raw in await self._client.lrange(self._dead, 0, max(limit, 1) - 1):
+            job = Job.from_json(raw)
+            found.append(
+                DeadJob(
+                    id=job.id,
+                    task=job.task,
+                    attempts=job.attempts,
+                    max_attempts=job.max_attempts,
+                    tenant_id=job.tenant_id,
+                    error=job.error,
+                )
+            )
+        return found
+
+    async def retry_dead(self, ids: list[str] | None = None) -> int:
+        """Back to pending with attempts reset. ``None`` retries every one.
+
+        Each entry is removed by value before it is pushed, so two operators
+        retrying at once cannot both return the same job: only one LREM wins.
+        """
+        wanted = None if ids is None else set(ids)
+        returned = 0
+        for raw in await self._client.lrange(self._dead, 0, -1):
+            job = Job.from_json(raw)
+            if wanted is not None and job.id not in wanted:
+                continue
+            if not await self._client.lrem(self._dead, 1, raw):
+                continue
+            job.attempts = 0
+            await self._client.lpush(self._pending, job.to_json())
+            returned += 1
+        return returned
 
     async def stats(self) -> dict[str, int]:
         registry = await self._client.hgetall(self._workers)

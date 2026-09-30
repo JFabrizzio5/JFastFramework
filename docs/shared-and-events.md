@@ -72,17 +72,55 @@ The three ways across a module boundary, and which one to use:
 | You need to… | Use | Not |
 | --- | --- | --- |
 | read data another module owns | a function in its `public.py`, returning DTOs | its repository, its entity, SQL against its tables |
-| react to something another module did | an event it publishes through the outbox | a call back into it |
+| react to something another module did | an event it publishes (`outbox.publish`) and you `@subscribe` to | a call back into it, or queuing its task by name |
 | speak the same enum or type | `shared/` | a copy in each module |
 
-The second row is where events and channels come in. A module that has to know
-when a receipt was categorised does not ask the receipts module to call it; the
-receipts module publishes `receipt.categorized` in the transaction that did the
-categorising — `outbox.publish(session, topic, Event(...))`, see
-[Queues and events](queues-and-events.md) — and whoever cares subscribes. The
-publisher never names its subscribers, so the dependency points one way and the
-module graph stays free of cycles. A [channel](#channels) below does the same
-job inside one process when the event does not have to survive a crash.
+The second row is where events come in, and it works on the default stack —
+PostgreSQL and its queue, no broker. The receipts module declares the event it
+publishes and publishes it in the transaction that did the categorising; the
+module that cares subscribes in its own `tasks.py`:
+
+```python
+# modules/receipt/services/receipt_service.py
+from jfastframework.events import Event
+
+await outbox.publish(session, "receipts", Event(type="receipt.categorized", data={"id": receipt.id}))
+```
+
+```python
+# modules/budget/tasks.py
+from jfastframework.events import Event, subscribe
+from jfastframework.tasks import TaskSession
+
+@subscribe("receipt.categorized")
+async def check_budget(event: Event, session: TaskSession) -> None:
+    ...  # runs in the worker, as the publishing tenant, committed on return
+```
+
+```toml
+# contracts.toml
+[modules.receipt]
+publishes = ["receipt.categorized"]
+```
+
+`outbox.publish` writes one job per subscriber into the queue through the same
+session, so the reaction exists if and only if the categorising committed.
+`budget` does **not** list `receipt` in `depends_on`: the publisher never names
+its subscribers, so no edge points either way and the module graph stays free of
+cycles. `jfast worker` runs the subscriber; see
+[Queues and events](queues-and-events.md#events-between-modules).
+
+Two things this replaces, both of which pass review and fail later:
+
+- **Publishing with nobody listening.** An event no module subscribes to and no
+  broker carries is refused in the request (`UndeliverableEvent`, a 500 that
+  names the fix) instead of answering 201 and dying in the outbox.
+- **Queuing the other module's task by name.** `Job(task="budget.check")` from
+  `receipt` is a call into `budget` spelt as a string. `contracts check`
+  reports it as `undeclared-dependency` and suggests the event.
+
+A [channel](#channels) below does a similar job inside one process when the
+message does not have to survive a crash.
 
 ### What belongs in shared/
 

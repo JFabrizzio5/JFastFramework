@@ -119,7 +119,7 @@ def test_a_module_with_no_block_depends_on_nothing(tmp_path: Path) -> None:
 def test_show_json_and_rendering_carry_the_graph(tmp_path: Path) -> None:
     contract, _ = build(tmp_path, {}, extra=DEPENDS)
     described = contract.describe()
-    assert described["modules"] == {"asesor": {"depends_on": ["comprobante"]}}
+    assert described["modules"] == {"asesor": {"depends_on": ["comprobante"], "publishes": []}}
     assert described["rules"]["placement"]["facade"] == "modules/<name>/public.py"
     # Survives the trip to JSON: this is what an agent reads.
     assert json.loads(json.dumps(described))["modules"]["asesor"]["depends_on"] == ["comprobante"]
@@ -246,7 +246,11 @@ def test_declaring_a_different_module_does_not_count(tmp_path: Path) -> None:
         {"modules/asesor/service.py": USES_FACADE, "modules/cartera/__init__.py": ""},
         extra='\n[modules.asesor]\ndepends_on = ["cartera"]\n',
     )
-    assert [v.rule for v in found(contract, root)] == ["undeclared-dependency"]
+    # And the entry it did declare is used by nothing.
+    assert sorted(v.rule for v in found(contract, root)) == [
+        "undeclared-dependency",
+        "unused-dependency",
+    ]
 
 
 def test_a_waiver_clears_an_undeclared_dependency(tmp_path: Path) -> None:
@@ -290,7 +294,8 @@ def test_a_cycle_closed_by_an_import_points_at_the_import(tmp_path: Path) -> Non
         extra='\n[modules.comprobante]\ndepends_on = ["asesor"]\n',
     )
     rules = sorted(v.rule for v in found(contract, root))
-    assert rules == ["module-cycle", "undeclared-dependency"]
+    # comprobante's declaration is used by no import, which is its own finding.
+    assert rules == ["module-cycle", "undeclared-dependency", "unused-dependency"]
     [cycle] = found(contract, root, "module-cycle")
     assert (cycle.path, cycle.line) == ("modules/asesor/service.py", 1)
 
@@ -506,6 +511,7 @@ def test_one_switch_turns_every_rule_off(tmp_path: Path) -> None:
         "public-leak",
         "cross-module-sql",
         "shared-direction",
+        "unused-dependency",
     }
     contract.enforce_placement = False
     assert found(contract, root) == []

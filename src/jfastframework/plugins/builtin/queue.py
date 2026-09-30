@@ -112,6 +112,7 @@ class QueuePlugin(Plugin):
         self._scheduler: Scheduler | None = None
         self._scheduler_task: asyncio.Task[None] | None = None
         self._scheduler_stop = asyncio.Event()
+        self._needs_inbox = False
 
     def _build_backend(self, ctx: AppContext) -> QueueBackend:
         settings: QueueSettings = self.settings
@@ -218,6 +219,15 @@ class QueuePlugin(Plugin):
         ctx.provide("queue", self._backend)
         ctx.provide("tasks", self._registry)
 
+        # Every module's `tasks.py`: its @task and @subscribe declarations are
+        # bound here, in the API and in `jfast worker` alike. A handler that
+        # needs a database the service does not have fails now, not on its
+        # first job.
+        from jfastframework.tasks import bind, discover
+
+        discover(ctx)
+        self._needs_inbox = bind(self._registry, ctx)
+
         if self.settings.scheduler:
             from jfastframework.queues.scheduler import Scheduler
 
@@ -260,6 +270,18 @@ class QueuePlugin(Plugin):
                 )
             if self._backend is not None:
                 await self._backend.setup()
+            # A second pass for a tasks.py imported after register -- a router
+            # imported lazily. Bound names are skipped.
+            from jfastframework.tasks import bind
+
+            self._needs_inbox |= bind(self._registry, ctx)
+            if self._needs_inbox and ctx.has("db.engine"):
+                # idempotent_on and session subscribers claim in the inbox; it
+                # is the outbox's table, and this service may not run the outbox.
+                from jfastframework.db.framework import ensure_tables
+                from jfastframework.outbox import INBOX_TABLE
+
+                await ensure_tables(ctx.require("db.engine"), INBOX_TABLE)
         except Exception as exc:  # noqa: BLE001 - reported through /ready
             self._setup_error = str(exc)
             ctx.logger.error(

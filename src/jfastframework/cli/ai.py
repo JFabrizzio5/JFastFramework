@@ -558,6 +558,14 @@ def _module_summary(module: project_model.Module, *, with_files: bool) -> dict[s
         "imports": list(module.imports),
         "external": list(module.external),
         "file_count": len(module.files),
+        # The graph an agent writing a new module needs, without opening a
+        # file: what each module offers (its facade), what it announces and
+        # reacts to, and the background work it owns.
+        "facade": list(module.facade),
+        "depends_on": list(module.depends_on),
+        "publishes": list(module.publishes),
+        "subscribes": list(module.subscribes),
+        "tasks": list(module.tasks),
     }
     if with_files:
         summary["files"] = list(module.files)
@@ -708,6 +716,14 @@ def context_payload(
         payload["contract"] = {"error": found.contract_error}
 
     if not brief:
+        from jfastframework.contracts.wiring import graph
+        from jfastframework.contracts.wiring import scan as scan_wiring
+
+        # Who publishes each event, who listens, who owns each task and who
+        # queues it -- the edges no import shows.
+        payload["events"] = graph(
+            found.contract.module_publishes if found.contract else {}, scan_wiring(project.root)
+        )
         payload["shared"] = {
             "files": list(project.shared_files),
             "imports_modules": [

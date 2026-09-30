@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
 from typing import Any
 
+from jfastframework import tracing
 from jfastframework.queues.base import Job, QueueBackend, _current_job
 from jfastframework.queues.schedule import Schedule
 
@@ -38,6 +39,9 @@ class TaskRegistry:
     def __init__(self) -> None:
         self._handlers: dict[str, Handler] = {}
         self._schedules: dict[str, Schedule] = {}
+        #: Names bound from module-level ``@task``/``@subscribe`` declarations,
+        #: so binding again skips them instead of colliding with itself.
+        self.declared: set[str] = set()
 
     def register(self, name: str, handler: Handler) -> None:
         if name in self._handlers:
@@ -157,6 +161,9 @@ class TaskRegistry:
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._handlers))
 
+    def has(self, name: str) -> bool:
+        return name in self._handlers
+
 
 #: How much of the visibility timeout a job may use when nobody says.
 #:
@@ -176,9 +183,24 @@ class TaskRegistry:
 #: claim.
 JOB_TIMEOUT_SHARE = 0.8
 
+#: How long a stopping worker waits for its in-flight jobs when nobody says.
+#:
+#: Kubernetes sends SIGKILL 30 s after SIGTERM by default, and a process killed
+#: mid-job releases nothing: its jobs sit invisible until the visibility
+#: timeout runs out. Five seconds short of that leaves room to hand the
+#: unfinished ones back.
+DEFAULT_DRAIN_SECONDS = 25.0
+
 
 class Worker:
-    """Claims jobs and runs their handlers until told to stop."""
+    """Claims jobs and runs their handlers until told to stop.
+
+    Stopping is graceful: no new job is claimed, jobs already running get up
+    to ``drain_timeout`` seconds to finish, and whatever is still running then
+    is cancelled and *released* -- returned to the queue at once, without
+    spending an attempt -- so the next worker takes it immediately instead of
+    after the visibility timeout.
+    """
 
     def __init__(
         self,
@@ -188,12 +210,19 @@ class Worker:
         concurrency: int = 4,
         poll_timeout: float = 5.0,
         job_timeout: float | None = None,
+        drain_timeout: float = DEFAULT_DRAIN_SECONDS,
+        close_backend: bool = True,
     ) -> None:
         self.backend = backend
         self.registry = registry
         self.concurrency = concurrency
         self.poll_timeout = poll_timeout
         self.job_timeout = self._resolve_job_timeout(backend, job_timeout)
+        self.drain_timeout = drain_timeout
+        # False when the backend belongs to someone else -- the queue plugin,
+        # which closes it at shutdown. Closing it twice is harmless for
+        # PostgreSQL and not for a broker connection.
+        self.close_backend = close_backend
         self._stopping = asyncio.Event()
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -233,7 +262,11 @@ class Worker:
         loop = asyncio.get_running_loop()
 
         while not self._stopping.is_set():
-            await limiter.acquire()
+            # Interruptible: with every slot busy, a plain acquire would sit
+            # until a job finished and then claim *another* one -- a stopping
+            # worker taking new work is exactly what SIGTERM must prevent.
+            if not await self._acquire_or_stop(limiter):
+                break
             started = loop.time()
             try:
                 job = await self.backend.dequeue(timeout=self.poll_timeout)
@@ -258,17 +291,64 @@ class Worker:
                     await asyncio.sleep(0)
                 continue
 
+            if self._stopping.is_set():
+                # Claimed while the stop arrived: hand it straight back.
+                await self._release(job)
+                limiter.release()
+                break
+
             task = asyncio.create_task(self._run_job(job, limiter))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
 
-        # Let in-flight jobs finish; killing them mid-write is how a queue
-        # produces half-applied side effects.
-        if self._tasks:
-            logger.info("draining %d in-flight job(s)", len(self._tasks))
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        await self.backend.close()
+        await self._drain()
+        if self.close_backend:
+            await self.backend.close()
         logger.info("worker stopped")
+
+    async def _drain(self) -> None:
+        """Let in-flight jobs finish, up to ``drain_timeout``; release the rest.
+
+        Killing a handler mid-write is how a queue produces half-applied side
+        effects, so the first choice is to wait. Waiting forever is not a
+        choice: the orchestrator's SIGKILL arrives on its own clock, and a job
+        still running then is neither finished nor handed back.
+        """
+        if not self._tasks:
+            return
+        running = set(self._tasks)
+        logger.info("draining %d in-flight job(s), up to %gs", len(running), self.drain_timeout)
+        _, unfinished = await asyncio.wait(running, timeout=self.drain_timeout)
+        if not unfinished:
+            return
+        logger.warning(
+            "%d job(s) did not finish within %gs; releasing them to the queue",
+            len(unfinished),
+            self.drain_timeout,
+        )
+        for task in unfinished:
+            task.cancel()
+        # Each cancelled job releases itself in `_run_job`; wait for that to
+        # land before the backend is closed underneath it.
+        await asyncio.gather(*unfinished, return_exceptions=True)
+
+    async def _acquire_or_stop(self, limiter: asyncio.Semaphore) -> bool:
+        """A concurrency slot, or False as soon as the worker is stopping."""
+        if self._stopping.is_set():
+            return False
+        acquire = asyncio.ensure_future(limiter.acquire())
+        stop = asyncio.ensure_future(self._stopping.wait())
+        await asyncio.wait({acquire, stop}, return_when=asyncio.FIRST_COMPLETED)
+        stop.cancel()
+        if not acquire.done():
+            acquire.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await acquire
+        got = acquire.done() and not acquire.cancelled()
+        if got and self._stopping.is_set():
+            limiter.release()
+            return False
+        return got
 
     async def _sleep_or_stop(self, seconds: float) -> None:
         """Idle, but wake immediately on stop().
@@ -286,6 +366,7 @@ class Worker:
             # Never retry: no deploy will make this job deliverable, and
             # retrying it forever masks the real problem.
             logger.error("%s", exc, extra={"job_id": job.id, "task": job.task})
+            job.error = f"UnknownTask: {exc}"
             await self.backend.nack(job, retry=False)
             limiter.release()
             return
@@ -300,15 +381,38 @@ class Worker:
         tenant_token = tenant_id_var.set(job.tenant_id)
         job_token = _current_job.set(job)
         try:
-            await asyncio.wait_for(handler(job.payload), timeout=self.job_timeout)
+            # The trace of the request that queued it, so this job's spans are
+            # children of that request instead of an orphan trace of their own.
+            with (
+                tracing.attach(job.trace),
+                tracing.span(
+                    f"job {job.task}",
+                    # Reserved: the telemetry backend turns it into the span
+                    # kind rather than recording it as an attribute.
+                    **{"span.kind": "consumer"},
+                    job_id=job.id,
+                    task=job.task,
+                    attempt=job.attempts,
+                    tenant_id=job.tenant_id or "",
+                ),
+            ):
+                await asyncio.wait_for(handler(job.payload), timeout=self.job_timeout)
+        except asyncio.CancelledError:
+            # Stopped by a shutdown that could not wait any longer. The job did
+            # not fail; hand it back without spending an attempt.
+            logger.warning("job released on shutdown", extra={"job_id": job.id, "task": job.task})
+            await self._release(job)
+            raise
         except TimeoutError:
             logger.error("job timed out", extra={"job_id": job.id, "task": job.task})
+            job.error = f"TimeoutError: ran longer than {self.job_timeout:g}s"
             await self.backend.nack(job, retry=True)
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "job failed",
                 extra={"job_id": job.id, "task": job.task, "attempts": job.attempts},
             )
+            job.error = f"{type(exc).__name__}: {exc}"
             await self.backend.nack(job, retry=True)
         else:
             await self.backend.ack(job)
@@ -319,8 +423,25 @@ class Worker:
             request_id_var.reset(request_token)
             limiter.release()
 
+    async def _release(self, job: Job) -> None:
+        release = getattr(self.backend, "release", None)
+        try:
+            if release is not None:
+                await release(job)
+            else:
+                await self.backend.nack(job, retry=True)
+        except Exception:
+            # The visibility timeout is the backstop: the job comes back when
+            # the claim expires, later than it should but not lost.
+            logger.exception("could not release job", extra={"job_id": job.id})
+
     def stop(self) -> None:
+        """Stop claiming. :meth:`run` returns once in-flight jobs are drained."""
         self._stopping.set()
+
+    @property
+    def stopping(self) -> bool:
+        return self._stopping.is_set()
 
     async def run_once(self) -> bool:
         """Claim and run at most one job. Returns True if one was handled.

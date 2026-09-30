@@ -51,10 +51,13 @@ from jfastframework.contracts.model import Contract, match_path
 from jfastframework.contracts.placement import (
     CYCLE_RULE,
     LEAK_RULE,
+    ORPHAN_RULE,
     SHARED_RULE,
     SQL_RULE,
+    UNDECLARED_EVENT_RULE,
     UNDECLARED_RULE,
     UNKNOWN_RULE,
+    UNUSED_RULE,
     _suggest_shared_target,
     crosses_to_facade,
     facade_path,
@@ -299,13 +302,46 @@ RULES: dict[str, RuleDoc] = {
     ),
     UNDECLARED_RULE: RuleDoc(
         UNDECLARED_RULE,
-        "a module called another module's public.py without listing it in depends_on",
+        "a module called another module's public.py, or queued a task another module "
+        "declares with @task, without listing that module in depends_on",
         "[modules.<name>] depends_on",
         (
             "add the module to depends_on under [modules.<name>] in contracts.toml -- a "
             "reviewed, visible edge in the module graph",
-            "or, if you only need to react to something the other module did, subscribe to "
-            "its event through the outbox and depend on nothing",
+            "or, if you only need to react to something the other module did, publish an "
+            "event (declared under publishes) and @subscribe to it in the reacting module: "
+            "neither then depends on the other",
+        ),
+    ),
+    ORPHAN_RULE: RuleDoc(
+        ORPHAN_RULE,
+        "a module @subscribe-s to an event type that no module declares under publishes",
+        "[modules.<name>] publishes",
+        (
+            'declare the event in the publishing module: publishes = ["<type>"] under its '
+            "[modules.<name>] block",
+            "or fix the event name -- a subscription to an event nobody publishes never runs",
+            "an event from another service arrives over Kafka: use @on(topic) for it",
+        ),
+    ),
+    UNDECLARED_EVENT_RULE: RuleDoc(
+        UNDECLARED_EVENT_RULE,
+        "a module builds Event(type=...) for a type its [modules.<name>] block does not list "
+        "under publishes",
+        "[modules.<name>] publishes",
+        (
+            "add the type to publishes under [modules.<name>]: an event is part of the "
+            "module's API, like its public.py",
+        ),
+    ),
+    UNUSED_RULE: RuleDoc(
+        UNUSED_RULE,
+        "a depends_on entry names a module this one never imports through public.py nor "
+        "queues a task of",
+        "[modules.<name>] depends_on",
+        (
+            "remove the entry; a stale edge makes the declared graph disagree with the code",
+            "or waive it on the contracts.toml line if the use is coming in the next change",
         ),
     ),
     CYCLE_RULE: RuleDoc(
@@ -510,7 +546,18 @@ def _rule_declarations(
             )
         else:
             found = [declaration]
-    elif rule in (UNDECLARED_RULE, CYCLE_RULE, UNKNOWN_RULE):
+    elif rule in (ORPHAN_RULE, UNDECLARED_EVENT_RULE):
+        found = [
+            d
+            for name in sorted(contract.module_publishes)
+            if (d := source.key(f"modules.{name}", "publishes")) is not None
+        ]
+        if not found:
+            unknown.append(
+                "no [modules.<name>] block declares publishes yet, so every event built in "
+                "a module is undeclared and every @subscribe is an orphan"
+            )
+    elif rule in (UNDECLARED_RULE, CYCLE_RULE, UNKNOWN_RULE, UNUSED_RULE):
         found = [
             d
             for name in sorted(contract.module_deps)
