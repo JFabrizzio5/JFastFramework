@@ -2086,6 +2086,48 @@ def _facades_with_an_optional_tenant(project: Project) -> list[str]:
     return found
 
 
+def _deployment_keys_in_the_file(project: Project) -> list[str]:
+    """``[app] env`` or ``debug`` written in ``jfast.toml``.
+
+    Exactly the projects whose running environment can change: from 0.1.0a12
+    ``JFAST_ENV`` and ``JFAST_DEBUG``, when the process environment sets them,
+    win over these two keys, and a project without them already took both
+    from the environment. Every project ``jfast start`` generated before
+    0.1.0a12 has ``env = "local"``.
+    """
+    from jfastframework.settings import DEPLOYMENT_KEYS
+
+    app = _table(_config(project), "app")
+    present = [key for key in DEPLOYMENT_KEYS if key in app]
+    if not present:
+        return []
+    lines: dict[str, int] = {}
+    table = ""
+    try:
+        text = (project.root / "jfast.toml").read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            table = stripped.strip("[] ")
+            continue
+        if table != "app":
+            continue
+        match = re.match(r"(\w+)\s*=", stripped)
+        if match and match.group(1) in present:
+            lines.setdefault(match.group(1), number)
+    found = []
+    for key in present:
+        value = app[key]
+        spelled = f'"{value}"' if isinstance(value, str) else str(value).lower()
+        found.append(
+            f"jfast.toml:{lines.get(key, 0)} [app] {key} = {spelled}: "
+            f"{DEPLOYMENT_KEYS[key]} in the environment now wins over it"
+        )
+    return found
+
+
 def _unsigned_tenant_sources_with_auth(project: Project) -> list[str]:
     """`auth` and `tenancy` on, with a subdomain, path or header among the sources.
 
@@ -2462,6 +2504,28 @@ CHANGES: tuple[Change, ...] = (
             "Change each listed parameter to `tenant_id: str` and run mypy: it names every "
             "caller that can still pass None. Give those the tenant they run for -- "
             "current_tenant in a route, job.tenant_id in a task."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="behaviour",
+        code="jfast-env-wins-over-the-file",
+        summary="JFAST_ENV and JFAST_DEBUG now win over [app] env and debug in jfast.toml.",
+        detail=(
+            'jfast start wrote [app] env = "local", and jfast.toml won over the environment, '
+            "so JFAST_ENV=prod -- the switch docs/deploy.md's checklist names -- did nothing: "
+            "the production image ran with /docs, /info and /queue/stats open, console mail "
+            "and no HSTS. env and debug describe the deployment, so the process environment "
+            "now beats the file for those two (every other key still loses to the file), and "
+            "a disagreement is a WARNING at boot. A deployment that sets JFAST_ENV now gets "
+            "that value instead of the file's."
+        ),
+        detect=_deployment_keys_in_the_file,
+        remedy=(
+            "Delete the listed line (env defaults to local) and set JFAST_ENV=prod where the "
+            "service is deployed, under compose's environment: rather than in a copied .env. "
+            "Keep it only if every environment that runs this file should share the value "
+            "and none sets JFAST_ENV."
         ),
     ),
     Change(

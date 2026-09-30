@@ -1951,6 +1951,33 @@ def test_a_facade_generated_for_a_multitenant_service_is_not_told(
     assert "facade-tenant-optional" not in report(tmp_path)
 
 
+@affected_by("jfast-env-wins-over-the-file")
+def _the_env_jfast_start_wrote(root: Path) -> list[str]:
+    # `service` writes the [app] block every 0.1.0a11 project has.
+    service(root, "observability")
+    return ['jfast.toml:4 [app] env = "local": JFAST_ENV in the environment now wins']
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _debug_committed_on(root: Path) -> list[str]:
+    service(root, "observability")
+    edit(root / "jfast.toml", 'env = "local"\n', "debug = true\n")
+    return ["jfast.toml:4 [app] debug = true: JFAST_DEBUG in the environment now wins"]
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _the_line_removed(root: Path) -> None:
+    _the_env_jfast_start_wrote(root)
+    edit(root / "jfast.toml", 'env = "local"\n', "")
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _env_only_in_another_table(root: Path) -> None:
+    # A plugin's own `env` key is not the deployment's.
+    _the_line_removed(root)
+    write(root / "jfast.toml", (root / "jfast.toml").read_text() + '\n[plugin.x]\nenv = "a"\n')
+
+
 TENANT_BY_SUBDOMAIN = (
     '\n[plugin.tenancy]\nsources = ["token", "subdomain"]\nbase_domain = "localhost"\n'
 )

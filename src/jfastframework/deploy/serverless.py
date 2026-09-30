@@ -172,7 +172,7 @@ gcloud run deploy "$NAME" \\
   --timeout {config.timeout_seconds}s \\
   {ingress} \\
   --port 8000 \\
-  --set-env-vars JFAST_ENV=production
+  --set-env-vars JFAST_ENV=prod
 
 echo "Deployed $NAME to Cloud Run in $REGION"
 """

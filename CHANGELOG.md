@@ -57,6 +57,25 @@ One addition came with it: enums in `--fields`.
   multi-company help desk; every row of the rule is tested over HTTP,
   including that curl and its POST (401). `jfast upgrade --check`:
   `unsigned-tenant-needs-a-session`.
+- **`JFAST_ENV=prod` did nothing in a project `jfast start` generated.** The
+  generator wrote `[app] env = "local"`, and `JFastConfig.load` passed `[app]`
+  to the settings as arguments, which beat environment variables -- so the
+  switch `docs/deploy.md`'s checklist names was overridden by the file, and a
+  production image ran with `/docs`, `/openapi.json`, `/info` (every plugin's
+  settings) and `/queue/stats` open, console mail "sent" to stdout and no HSTS,
+  with nothing in the log. `env` and `debug` describe the deployment, so
+  `JFAST_ENV` and `JFAST_DEBUG` set in the process environment now win over
+  `[app] env` and `debug`; every other key still loses to the file, as
+  documented. A `.env` file read by the settings does not count (the generated
+  `.env.example` says `JFAST_ENV=local`, and a copied one must not turn a
+  committed `prod` off). A disagreement is a WARNING at boot. `jfast start`,
+  `jfast new service` and the gateway no longer write `env` at all (the default
+  is `local`), and the Cloud Run script now sets `JFAST_ENV=prod` instead of
+  `production`, which the settings refuse -- and which was only harmless while
+  the file won. Verified on a generated project: with `JFAST_ENV=prod`,
+  `/docs`, `/openapi.json`, `/info` and `/queue/stats` are 404, `/health` says
+  `prod`, and console mail stops the boot. `jfast upgrade --check`:
+  `jfast-env-wins-over-the-file`.
 - **CLI help dropped every `[section]` it named.** Rich reads `[scaffold]` as a
   style tag, so "Defaults to [scaffold] language." printed "Defaults to
   language." Escaped in `new module`, `remove` and `tenancy enable`; a test now

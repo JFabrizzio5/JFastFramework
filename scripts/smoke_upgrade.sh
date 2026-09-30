@@ -128,6 +128,21 @@ for facade in Path("modules").glob("*/public.py"):
         print(f"    tenant_id: str in {facade}")
 PYEOF
       ;;
+    jfast-env-wins-over-the-file)
+      # The note's remedy: drop [app] env (local is the default); the
+      # deployment sets JFAST_ENV.
+      "${vpy}" - <<'PYEOF'
+import re
+from pathlib import Path
+
+path = Path("jfast.toml")
+source = path.read_text(encoding="utf-8")
+fixed = re.sub(r'(?m)^env = "local"\n', "", source, count=1)
+if fixed != source:
+    path.write_text(fixed, encoding="utf-8")
+    print("    removed [app] env from jfast.toml")
+PYEOF
+      ;;
     unsigned-tenant-needs-a-session)
       # The generated routes use current_tenant and the generated tests sign
       # in: the note needs nothing from this project. Its pytest below is the

@@ -143,7 +143,9 @@ up on a 403. A tenant comes from a signed claim before anything a request can
 choose; `X-Tenant-ID` is only a source when `header` is listed.
 
 In Python the plugin settings can also come from `jfast.toml`
-(`[plugin.auth]`, `[plugin.tenancy]`), which wins over the environment. A
+(`[plugin.auth]`, `[plugin.tenancy]`), which wins over the environment --
+except `JFAST_ENV` and `JFAST_DEBUG`, which beat `[app] env` and `debug` when
+set, because they describe the deployment ([deploy](deploy.md#which-wins-jfasttoml-or-the-environment)). A
 service in another language only has the environment, so write the values it
 must share -- mode, algorithms, secret or public key, issuer, audience,
 tenancy sources -- into its `.env`. Nothing copies them between services for

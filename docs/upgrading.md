@@ -179,6 +179,14 @@ Fixes, and one of them is a security fix that changes answers:
   checks membership itself sets `[plugin.tenancy] trust_unscoped_principals =
   true`. See [multitenancy](multitenancy.md#with-auth-on-an-unsigned-source-never-grants-a-tenant-by-itself).
 
+- `jfast-env-wins-over-the-file` -- `[app] env` (or `debug`) in `jfast.toml`,
+  which every project `jfast start` generated has. `JFAST_ENV` in the process
+  environment now wins over it, so a deployment that sets `JFAST_ENV=prod`
+  finally runs as production: `/docs`, `/info` and `/queue/stats` close, and a
+  plugin left on a development backend (console mail) refuses to start. Delete
+  the line, set `JFAST_ENV=prod` under compose's `environment:`, and read the
+  boot log for the `overridden by JFAST_ENV` warning.
+
 Nothing else stops a correct `0.1.0a11` service. Three notes point at files
 `0.1.0a11` generated that need a hand:
 

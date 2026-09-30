@@ -7,6 +7,7 @@ the first request that touches it.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from collections.abc import Sequence
 from datetime import tzinfo
@@ -39,6 +40,31 @@ HSTS_ONE_YEAR = 31_536_000
 UPLOAD_PLUGIN = "storage"
 UPLOAD_MAX_BODY_BYTES = 25 * 1024 * 1024
 UPLOAD_REQUEST_TIMEOUT = 120.0
+
+
+# `[app]` keys that describe the deployment rather than the code, with the
+# variable that sets each. Everywhere else `jfast.toml` wins over the
+# environment -- it is the committed description of the service -- but these
+# two are what a deployment flips: `docs/deploy.md` promises that
+# `JFAST_ENV=prod` alone turns production on, and a `debug = true` committed
+# for a laptop must be switchable off by the environment that runs it. When
+# the variable is set in the process environment, it wins over the file.
+DEPLOYMENT_KEYS: dict[str, str] = {"env": "JFAST_ENV", "debug": "JFAST_DEBUG"}
+
+
+def _process_environment(variable: str) -> str | None:
+    """The variable from the process environment, as pydantic-settings reads it.
+
+    Case-insensitive, like the settings themselves. Only the process
+    environment: a `.env` file is a developer convenience -- the generated
+    `.env.example` carries `JFAST_ENV=local` -- and letting a copied one beat
+    the committed file would turn a `[app] env = "prod"` off without anyone
+    deciding it. An empty value counts as unset.
+    """
+    for key, value in os.environ.items():
+        if key.upper() == variable and value.strip():
+            return value
+    return None
 
 
 def raises_request_limits(enabled: Sequence[str], disabled: Sequence[str]) -> bool:
@@ -319,9 +345,19 @@ class JFastConfig:
         pool_size = 20
     """
 
-    def __init__(self, settings: JFastSettings, raw: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        settings: JFastSettings,
+        raw: dict[str, Any] | None = None,
+        *,
+        overridden: Sequence[str] = (),
+    ) -> None:
         self.settings = settings
         self.raw: dict[str, Any] = raw or {}
+        # One sentence per `[app]` value the environment replaced: the app
+        # factory logs them at boot, so a file and a deployment that disagree
+        # about whether this is production are never silent.
+        self.overridden: tuple[str, ...] = tuple(overridden)
 
     @classmethod
     def load(
@@ -342,6 +378,15 @@ class JFastConfig:
         if "name" in app_section:
             app_section.setdefault("app_name", app_section.pop("name"))
 
+        # A deployment property set in the environment beats the file. Popped
+        # rather than overwritten, so pydantic-settings reads and validates the
+        # variable itself: `JFAST_ENV=production` fails the boot exactly as it
+        # would with no `[app] env` at all.
+        from_file: dict[str, Any] = {}
+        for key, variable in DEPLOYMENT_KEYS.items():
+            if key in app_section and _process_environment(variable) is not None:
+                from_file[key] = app_section.pop(key)
+
         plugins_section = raw.get("plugins", {})
         if "enabled" in plugins_section:
             app_section.setdefault("plugins", plugins_section["enabled"])
@@ -351,11 +396,17 @@ class JFastConfig:
             app_section.update(overrides)
 
         settings = JFastSettings(**app_section)
+        overridden = [
+            f"[app] {key} = {value!r} in jfast.toml is overridden by "
+            f"{DEPLOYMENT_KEYS[key]}={getattr(settings, key)!r} from the environment"
+            for key, value in from_file.items()
+            if key not in (overrides or {}) and getattr(settings, key) != value
+        ]
         # Published here rather than in the field validator: a validator runs
         # on every JFastSettings a test constructs, and a process-wide default
         # must change only when a configuration is actually loaded.
         set_default_zone(settings.timezone)
-        return cls(settings=settings, raw=raw)
+        return cls(settings=settings, raw=raw, overridden=overridden)
 
     def plugin_config(self, name: str) -> dict[str, Any]:
         """Raw config block for one plugin (``[plugin.<name>]`` in jfast.toml)."""

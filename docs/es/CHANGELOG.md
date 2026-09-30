@@ -58,6 +58,26 @@ llamada a un modelo desde un worker. Llegó con ello una adición: enums en
   mesa de ayuda multi-empresa; cada fila de la regla está probada por HTTP,
   incluido ese curl y su POST (401). `jfast upgrade --check`:
   `unsigned-tenant-needs-a-session`.
+- **`JFAST_ENV=prod` no hacía nada en un proyecto generado por `jfast start`.**
+  El generador escribía `[app] env = "local"`, y `JFastConfig.load` le pasaba
+  `[app]` a los settings como argumentos, que le ganan a las variables de
+  entorno -- así que el interruptor que nombra el checklist de
+  `docs/deploy.md` quedaba anulado por el archivo, y una imagen de producción
+  corría con `/docs`, `/openapi.json`, `/info` (los settings de cada plugin) y
+  `/queue/stats` abiertos, el correo por consola "enviado" a stdout y sin HSTS,
+  sin nada en el log. `env` y `debug` describen el despliegue, así que
+  `JFAST_ENV` y `JFAST_DEBUG` puestas en el entorno del proceso ahora le ganan a
+  `[app] env` y `debug`; todas las demás llaves siguen perdiendo contra el
+  archivo, como está documentado. Un archivo `.env` que lean los settings no
+  cuenta (el `.env.example` generado dice `JFAST_ENV=local`, y una copia no debe
+  apagar un `prod` commiteado). Un desacuerdo es un WARNING al arrancar. `jfast
+  start`, `jfast new service` y el gateway ya no escriben `env` (el default es
+  `local`), y el script de Cloud Run ahora pone `JFAST_ENV=prod` en vez de
+  `production`, que los settings rechazan -- y que solo era inofensivo mientras
+  ganaba el archivo. Verificado en un proyecto generado: con `JFAST_ENV=prod`,
+  `/docs`, `/openapi.json`, `/info` y `/queue/stats` dan 404, `/health` dice
+  `prod` y el correo por consola detiene el arranque. `jfast upgrade --check`:
+  `jfast-env-wins-over-the-file`.
 - **La ayuda de la CLI se comía cada `[sección]` que nombraba.** Rich lee
   `[scaffold]` como etiqueta de estilo, así que "Defaults to [scaffold]
   language." salía "Defaults to  language." Escapado en `new module`, `remove` y

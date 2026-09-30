@@ -186,6 +186,14 @@ Correcciones, y una es de seguridad y cambia respuestas:
   trust_unscoped_principals = true`. Ver
   [multi-tenancy](multitenancy.md#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-sí-sola).
 
+- `jfast-env-wins-over-the-file` -- `[app] env` (o `debug`) en `jfast.toml`,
+  que tiene todo proyecto que generó `jfast start`. `JFAST_ENV` en el entorno
+  del proceso ahora le gana, así que un despliegue que pone `JFAST_ENV=prod`
+  por fin corre como producción: `/docs`, `/info` y `/queue/stats` se cierran,
+  y un plugin que quedó en un backend de desarrollo (correo por consola) se
+  niega a arrancar. Borra la línea, pon `JFAST_ENV=prod` en el `environment:`
+  de compose y lee el log de arranque por el warning `overridden by JFAST_ENV`.
+
 Nada más detiene a un servicio correcto de `0.1.0a11`. Tres notas señalan
 archivos que `0.1.0a11` generó y que hay que tocar:
 
