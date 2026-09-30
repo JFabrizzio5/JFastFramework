@@ -180,6 +180,41 @@ def storage_mounts(plugin: Plugin, *, prefix: str) -> list[str]:
     return mounts
 
 
+#: What the worker container runs: the same image as the API, a different
+#: command. The grace is the worker's drain window, five seconds inside the
+#: stop period below so a job it cannot finish is handed back before SIGKILL.
+WORKER_COMMAND = ["jfast", "worker", "--grace", "25"]
+WORKER_STOP_GRACE = "30s"
+
+
+def runs_queue(plugins: list[Plugin]) -> bool:
+    """Does this service have a queue someone has to consume?"""
+    return any(plugin.meta.name == "queue" for plugin in plugins)
+
+
+def worker_compose_service(api: dict[str, Any], api_name: str) -> dict[str, Any]:
+    """The worker next to an API service: same build, same environment and
+    volumes, `jfast worker` instead of the server.
+
+    No ports -- it serves nothing -- and no healthcheck: the image's HEALTHCHECK
+    curls /health, which a worker does not answer, and would mark it unhealthy
+    forever. It waits for the API to be healthy because the API's entrypoint is
+    what runs the migrations its tasks need.
+    """
+    entry: dict[str, Any] = {
+        key: value
+        for key, value in api.items()
+        if key in ("build", "restart", "env_file", "environment", "volumes")
+    }
+    entry["command"] = list(WORKER_COMMAND)
+    entry["healthcheck"] = {"disable": True}
+    entry["stop_grace_period"] = WORKER_STOP_GRACE
+    depends = dict(api.get("depends_on") or {})
+    depends[api_name] = {"condition": "service_healthy"}
+    entry["depends_on"] = depends
+    return entry
+
+
 def build_compose(
     config: JFastConfig,
     plugins: list[Plugin],
@@ -239,7 +274,11 @@ def build_compose(
         }
         if dependants:
             app_entry["depends_on"] = dependants
-        services = {"api": app_entry, **services}
+        app_services: dict[str, Any] = {"api": app_entry}
+        # A queue nobody consumes is jobs piling up while the API answers 201.
+        if runs_queue(plugins):
+            app_services["worker"] = worker_compose_service(app_entry, "api")
+        services = {**app_services, **services}
 
     compose: dict[str, Any] = {"services": services}
     if volumes:

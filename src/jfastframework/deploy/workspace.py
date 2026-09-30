@@ -31,7 +31,9 @@ from jfastframework.deploy.compose import (
     generation_context,
     infra_compose_service,
     named_volumes,
+    runs_queue,
     storage_mounts,
+    worker_compose_service,
 )
 from jfastframework.resources import RESOURCE_TYPES
 
@@ -82,6 +84,8 @@ class _PluginGraph:
     # Service name -> mounts to add to the service's own container.
     mounts: dict[str, list[str]] = field(default_factory=dict)
     volumes: dict[str, Any] = field(default_factory=dict)
+    # Services whose queue plugin is on, and so get a worker container.
+    workers: set[str] = field(default_factory=set)
 
 
 def _plugins_of(root: Path, service: ServiceEntry) -> tuple[JFastConfig | None, list[Plugin]]:
@@ -158,6 +162,8 @@ def _scan_plugins(workspace: Workspace) -> _PluginGraph:
         # The base port the plugin's container will be published on. Without
         # it a plugin cannot advertise an address that resolves from the host.
         ctx = generation_context(config, service.port)
+        if runs_queue(plugins):
+            graph.workers.add(service.name)
 
         for plugin in plugins:
             graph.mounts.setdefault(service.name, []).extend(
@@ -277,6 +283,8 @@ def build_workspace_compose(workspace: Workspace, *, with_caddy: bool = True) ->
             entry["ports"].append(f"{service.grpc_port}:{service.grpc_port}")
 
         services[service.name] = entry
+        if service.name in plugins.workers:
+            services[f"{service.name}-worker"] = worker_compose_service(entry, service.name)
 
     if with_caddy:
         # Caddy last so it depends on everything already collected.

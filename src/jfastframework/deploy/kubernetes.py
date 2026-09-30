@@ -174,6 +174,63 @@ def deployment(
     }
 
 
+#: The worker's drain window and the pod's kill deadline, five seconds apart so
+#: a job it cannot finish is released before SIGKILL rather than left
+#: invisible until the queue's visibility timeout.
+WORKER_GRACE_SECONDS = 25
+WORKER_TERMINATION_SECONDS = 30
+
+
+def worker_deployment(
+    service: ServiceEntry,
+    *,
+    namespace: str,
+    replicas: int = 1,
+    secrets: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """`jfast worker` for a service whose queue plugin is on.
+
+    The API's Deployment with a different command: same image, environment
+    and security context. No ports and no HTTP probes -- it serves nothing, so
+    `/health` would fail and restart it forever. Scale it on queue depth, not
+    CPU; no autoscaler is generated for it.
+    """
+    manifest = deployment(service, namespace=namespace, replicas=replicas, secrets=secrets)
+    name = f"{service.name}-worker"
+    manifest["metadata"]["name"] = name
+    manifest["metadata"]["labels"] = {
+        "app.kubernetes.io/name": name,
+        "app.kubernetes.io/component": "worker",
+        "app.kubernetes.io/part-of": namespace,
+    }
+    spec = manifest["spec"]
+    spec["selector"] = {"matchLabels": {"app.kubernetes.io/name": name}}
+    # A worker needs no surge: a job is safe in the queue while none runs.
+    spec["strategy"] = {"type": "RollingUpdate", "rollingUpdate": {"maxUnavailable": 1}}
+    template = spec["template"]
+    template["metadata"] = {"labels": {"app.kubernetes.io/name": name}}
+    template["spec"]["terminationGracePeriodSeconds"] = WORKER_TERMINATION_SECONDS
+    [container] = template["spec"]["containers"]
+    container["name"] = name
+    container["command"] = ["jfast", "worker", "--grace", str(WORKER_GRACE_SECONDS)]
+    for key in ("ports", "livenessProbe", "readinessProbe", "startupProbe"):
+        container.pop(key, None)
+    return manifest
+
+
+def runs_worker(service: ServiceEntry, workspace: Workspace) -> bool:
+    """Whether the service's jfast.toml enables the queue plugin."""
+    if workspace.file is None:
+        return False
+    config_path = workspace.file.parent / service.path / "jfast.toml"
+    if not config_path.is_file():
+        return False
+    from jfastframework.settings import JFastConfig
+
+    config = JFastConfig.load(config_path)
+    return "queue" in config.settings.plugins and "queue" not in config.settings.disabled_plugins
+
+
 def service_manifest(service: ServiceEntry, *, namespace: str) -> dict[str, Any]:
     ports: list[dict[str, Any]] = [{"name": "http", "port": service.port, "targetPort": "http"}]
     if service.grpc:
@@ -347,13 +404,16 @@ def build(
 
     for service in deployable:
         secrets = secret_env(service, workspace)
-        files[f"base/{service.name}.yaml"] = _document(
+        documents = [
             deployment(service, namespace=ns, secrets=secrets),
             service_manifest(service, namespace=ns),
             config_map(service, namespace=ns, env="prod"),
             autoscaler(service, namespace=ns),
             disruption_budget(service, namespace=ns),
-        )
+        ]
+        if runs_worker(service, workspace):
+            documents.append(worker_deployment(service, namespace=ns, secrets=secrets))
+        files[f"base/{service.name}.yaml"] = _document(*documents)
         resources.append(f"{service.name}.yaml")
 
         files[f"base/{service.name}-secrets.example.yaml"] = _document(
@@ -424,7 +484,9 @@ edit `base/` by hand.
 **Generated:** Deployment, Service, ConfigMap, HorizontalPodAutoscaler,
 PodDisruptionBudget per service, plus one Ingress on `{host}` routing `/api`
 the same way the local Caddyfile does — so the frontend build is identical in
-both places.
+both places. A service with the `queue` plugin also gets a `<service>-worker`
+Deployment: the same image running `jfast worker`, no ports, no HTTP probes,
+and 30 s to drain on shutdown (the worker releases what it cannot finish in 25).
 
 **Not generated: databases.** A StatefulSet for PostgreSQL emitted by a
 scaffolder is how people lose data — no backups, no point-in-time recovery, no
