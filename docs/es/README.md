@@ -365,9 +365,10 @@ arrancar — esa combinación *es* el ataque), tokens emitidos para un servicio
 hermano, y un clock skew generoso. Las razones del rechazo van al log; el
 cliente recibe un 401 pelado.
 
-**El tenancy deja de ser falsificable.** Sin auth, `tenant_id` viene del header
-`X-Tenant-ID` — que puede poner cualquiera con curl. Con auth, viene de un
-claim firmado.
+**El tenancy deja de ser falsificable.** El tenant viene de un claim firmado, o
+de las fuentes del plugin `tenancy`. Un header `X-Tenant-ID` suelto nunca es un
+tenant: queda en el log como `tenant_claimed`, y solo se confía en él cuando
+`tenancy` pone `header` entre sus fuentes.
 
 `auth` no tiene store de usuarios propio. El plugin `accounts` lo es --
 usuarios, `/auth/login`, bloqueo, roles y permisos -- y un servicio con su propia

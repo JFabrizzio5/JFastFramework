@@ -97,9 +97,13 @@ plain 401. Telling an attacker *which* check failed is free reconnaissance.
 
 ## Tenancy stops being forgeable
 
-Before this plugin, `tenant_id` comes from the `X-Tenant-ID` header —
-convenient in development, and settable by anyone with curl. With auth enabled
-it comes from a **signed claim**, and the header is ignored.
+With auth enabled the tenant comes from a **signed claim**, and the
+`X-Tenant-ID` header is ignored -- for anonymous requests too. Until 0.1.0a11
+the observability middleware copied that header into `request.state.tenant_id`
+when nothing else had set it, so with `auth` on and `tenancy` off an anonymous
+request was served as whichever tenant it named. The header is now only a log
+field, `tenant_claimed`; to trust it behind a gateway, list `header` in
+`[plugin.tenancy] sources`.
 
 That is the main security reason to turn this on, more than the login form.
 

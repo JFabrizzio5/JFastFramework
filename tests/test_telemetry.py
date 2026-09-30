@@ -200,7 +200,13 @@ async def test_an_otlp_endpoint_builds_a_batch_exporter_and_reports_it() -> None
 
 
 async def test_a_request_is_one_server_span_named_by_its_route() -> None:
-    app = traced_app(routers=(users_router(),))
+    # The tenant comes from `tenancy` with the header as a declared source: a
+    # bare header is never a tenant (see test_tenancy's spoofing test).
+    app = traced_app(
+        routers=(users_router(),),
+        plugins=("observability", "tenancy", "telemetry"),
+        plugin_config={"tenancy": {"sources": ["header"]}},
+    )
     async with client_for(app) as client:
         response = await client.get("/users/42", headers={"X-Tenant-ID": "acme"})
     assert response.status_code == 200

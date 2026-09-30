@@ -1807,6 +1807,43 @@ def _the_same_rag_with_tenancy_on(root: Path) -> None:
     )
 
 
+GATEWAY_CLIENT = (
+    "import httpx\n\n\n"
+    "async def forward(client: httpx.AsyncClient, tenant: str) -> None:\n"
+    '    await client.get("/items", headers={"X-Tenant-ID": tenant})\n'
+)
+
+
+@affected_by("tenant-header-not-a-tenant")
+def _code_sending_the_tenant_header_without_tenancy(root: Path) -> list[str]:
+    service(root, "observability", "auth", extra=AUTH_ISSUING)
+    write(root / "shared" / "gateway_client.py", GATEWAY_CLIENT)
+    return ["shared/gateway_client.py:5 "]
+
+
+@affected_by("tenant-header-not-a-tenant")
+def _a_configured_tenant_header(root: Path) -> list[str]:
+    service(root, "observability", extra='\n[plugin.observability]\ntenant_header = "X-Org"\n')
+    return ["[plugin.observability] tenant_header = 'X-Org'"]
+
+
+@unaffected_by("tenant-header-not-a-tenant")
+def _tenancy_that_lists_the_header(root: Path) -> None:
+    _code_sending_the_tenant_header_without_tenancy(root)
+    edit(root / "jfast.toml", '"auth"', '"auth", "tenancy"')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text() + '\n[plugin.tenancy]\nsources = ["token", "header"]\n',
+    )
+
+
+@unaffected_by("tenant-header-not-a-tenant")
+def _the_header_only_in_a_comment_or_a_test(root: Path) -> None:
+    service(root, "observability", "auth", extra=AUTH_ISSUING)
+    write(root / "shared" / "notes.py", "# X-Tenant-ID is not trusted here\n")
+    write(root / "tests" / "test_x.py", GATEWAY_CLIENT)
+
+
 @affected_by("revocation-fail-open")
 def _auth_checking_revocation_against_redis(root: Path) -> list[str]:
     service(root, "observability", "database", "cache", "auth", extra=AUTH_ISSUING)

@@ -2001,6 +2001,40 @@ def _own_database_error_handlers(project: Project) -> list[str]:
     return found
 
 
+def _tenant_header_without_tenancy(project: Project) -> list[str]:
+    """Code that sends or configures the tenant header, in a service without ``tenancy``.
+
+    Only the places that show the header is really used -- its name in the
+    service's own code or its frontends, or a configured ``tenant_header`` --
+    because every service reads ``request.state.tenant_id`` and nearly none
+    ever relied on a bare header for it.
+    """
+    if "tenancy" in _active_plugins(project):
+        return []
+    observability = _table(_config(project), "plugin", "observability")
+    header = str(observability.get("tenant_header") or "X-Tenant-ID")
+    found: list[str] = []
+    if "tenant_header" in observability:
+        found.append(f"[plugin.observability] tenant_header = {header!r}")
+    pattern = re.compile(re.escape(header), re.IGNORECASE)
+    paths = [p for p in _python_files(project.root) if "tests" not in p.parts]
+    for frontend in _frontends(project):
+        paths += _files(frontend / "src", ".js", ".ts", ".vue", ".jsx", ".tsx")
+    for path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for number, line in enumerate(lines, start=1):
+            code = line.strip()
+            if code.startswith(("#", "//", "*")) or not pattern.search(code):
+                continue
+            found.append(f"{_label(path, project)}:{number} {code[:90]}")
+            if len(found) >= 10:
+                return found
+    return found
+
+
 def _revocation_fails_open(project: Project) -> list[str]:
     """Revocation checked against Redis, with the new fail-open default unchosen.
 
@@ -2255,6 +2289,25 @@ CHANGES: tuple[Change, ...] = (
             "Make sure the client address is the real one (trusted proxies), then raise "
             "login_limit_per_ip for a shared egress. Set [plugin.accounts] rate_limit = false "
             "to keep 0.1.0a10's behaviour."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="tenant-header-not-a-tenant",
+        summary="A bare X-Tenant-ID header no longer sets the tenant; only tenancy can trust it.",
+        detail=(
+            "observability used to copy the header into request.state.tenant_id when nothing "
+            "else had resolved a tenant, and current_tenant, the RLS session and every Job or "
+            "Event built in the request trusted that value. With auth on and tenancy off an "
+            "anonymous request was served as whichever tenant it named. The header is now only "
+            "a log field, tenant_claimed; the tenant comes from a signed token or from tenancy."
+        ),
+        detect=_tenant_header_without_tenancy,
+        remedy=(
+            "If a trusted gateway in front of this service sets the header, enable tenancy with "
+            'sources = ["header"] (after "token" if tokens carry a tenant). Otherwise put the '
+            "tenant in the token (auth's tenant claim) and stop sending the header."
         ),
     ),
     Change(

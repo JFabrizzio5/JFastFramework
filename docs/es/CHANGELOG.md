@@ -43,6 +43,17 @@ los que aplican a tu proyecto, con archivo y línea, y el arreglo.
 
 ### Cambios incompatibles
 
+- **Un header `X-Tenant-ID` suelto ya no es un tenant (seguridad).** El
+  middleware de observability lo copiaba a `request.state.tenant_id` cuando
+  nada más había resuelto uno, y `current_tenant`, la sesión con RLS y cada
+  `Job` o `Event` creado en la petición confiaban en ese valor: con `auth`
+  activo y `tenancy` apagado, una petición anónima con `X-Tenant-ID: victim` se
+  atendía como el tenant `victim` (un usuario con sesión no podía cambiarse: el
+  token ganaba). El header ahora es solo un campo del log, `tenant_claimed`. Un
+  servicio detrás de un gateway confiable que lo pone declara `header` en
+  `[plugin.tenancy] sources`. Encontrado al replicar tenancy en el scaffold de
+  Go. `jfast upgrade --check`: `tenant-header-not-a-tenant`.
+
 - **`outbox.publish` rechaza un evento que nadie va a recibir.** Sin ningún
   módulo con `@subscribe` al tipo del evento y sin bus configurado, lanza
   `UndeliverableEvent` -- un 500 cuyo detalle dice cómo arreglarlo, sin

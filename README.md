@@ -357,9 +357,10 @@ at startup — that combination *is* the attack), tokens minted for a sibling
 service, and a generous clock skew. Rejection reasons go to the log; the client
 gets a plain 401.
 
-**Tenancy stops being forgeable.** Without auth, `tenant_id` comes from the
-`X-Tenant-ID` header — settable by anyone with curl. With it, from a signed
-claim.
+**Tenancy stops being forgeable.** The tenant comes from a signed claim, or
+from the `tenancy` plugin's sources. A bare `X-Tenant-ID` header is never a
+tenant: it is logged as `tenant_claimed`, and trusted only when `tenancy`
+lists `header` as a source.
 
 `auth` has no user store of its own. The `accounts` plugin is one -- users,
 `/auth/login`, lockout, roles and permissions -- and a service with its own

@@ -44,6 +44,17 @@ that apply to your project, with file and line, and the remedy.
 
 ### Breaking
 
+- **A bare `X-Tenant-ID` header is no longer a tenant (security).** The
+  observability middleware copied it into `request.state.tenant_id` when nothing
+  else had resolved one, and `current_tenant`, the RLS session and every `Job`
+  or `Event` built in the request trusted that value: with `auth` on and
+  `tenancy` off, an anonymous request carrying `X-Tenant-ID: victim` was served
+  as tenant `victim` (a signed-in user could not switch: the token won). The
+  header is now only a log field, `tenant_claimed`. A service behind a trusted
+  gateway that sets it lists `header` in `[plugin.tenancy] sources`. Found while
+  mirroring tenancy in the Go scaffold. `jfast upgrade --check`:
+  `tenant-header-not-a-tenant`.
+
 - **`outbox.publish` refuses an event nobody will receive.** With no module
   `@subscribe`d to the event type and no event bus configured, it raises
   `UndeliverableEvent` -- a 500 whose detail names the fix, with nothing

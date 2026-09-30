@@ -99,9 +99,13 @@ tu proveedor de identidad.
 
 ## El tenancy deja de ser falsificable
 
-Antes de este plugin, `tenant_id` viene del header `X-Tenant-ID` — cómodo en
-desarrollo, y seteable por cualquiera con curl. Con auth habilitado viene de un
-**claim firmado**, y el header se ignora.
+Con auth habilitado el tenant viene de un **claim firmado**, y el header
+`X-Tenant-ID` se ignora -- también en peticiones anónimas. Hasta 0.1.0a11 el
+middleware de observability copiaba ese header a `request.state.tenant_id`
+cuando nada más lo había puesto, así que con `auth` activo y `tenancy` apagado
+una petición anónima se atendía como el tenant que nombrara. El header ahora es
+solo un campo del log, `tenant_claimed`; para confiar en él detrás de un
+gateway, pon `header` en `[plugin.tenancy] sources`.
 
 Esa es la razón principal de seguridad para prenderlo, más que el formulario de
 login.
