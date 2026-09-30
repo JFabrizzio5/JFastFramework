@@ -19,15 +19,43 @@ const routes = [
   /*nuevaRuta*/
 ]
 
+[% if frontend_accounts | default(true) %]
+// The account pages the backend's `accounts` plugin answers for. Loaded on
+// demand: most visits never open them. The paths of the two email links must
+// match [plugin.accounts] verify_email_path and reset_password_path.
+const page = (load) => async () => ({ Component: (await load()).default })
+
+const accountRoutes = [
+  { path: '/register', lazy: page(() => import('@/views/RegisterView.jsx')), handle: { title: 'Create an account', public: true } },
+  { path: '/verify-email', lazy: page(() => import('@/views/VerifyEmailView.jsx')), handle: { title: 'Confirm your email', public: true } },
+  { path: '/forgot-password', lazy: page(() => import('@/views/ForgotPasswordView.jsx')), handle: { title: 'Reset your password', public: true } },
+  { path: '/reset-password', lazy: page(() => import('@/views/ResetPasswordView.jsx')), handle: { title: 'Choose a new password', public: true } },
+  { path: '/mfa/enrol', lazy: page(() => import('@/views/MfaEnrolView.jsx')), handle: { title: 'Set up two-step verification', public: true } },
+]
+
+// Signed in, so behind the guard with every other page.
+routes.push({
+  path: '/account/security',
+  lazy: page(() => import('@/views/SecurityView.jsx')),
+  handle: { title: 'Security' },
+})
+
+// Private unless a route says `handle: { public: true }`, and this is the one
+// line to change. The backend signs people in with the `accounts` plugin, so
+// every page -- including the ones `jfast new view` adds later -- sits behind
+// the sign-in page, and a page meant for everyone opts out on its own.
+const PUBLIC_BY_DEFAULT = false
+[% else %]
 // Public until a route says otherwise, and this is the one line to change.
 //
-// The scaffold ships it open because the generated backend's auth plugin does
-// not mount /auth/login -- it has no user store -- so gating the home page
-// would put a sign-in form in front of everyone that nothing can satisfy. Set
-// this to false the day yours has one, and every route is covered including
-// the ones `jfast new view` adds later; until then opt routes in one at a time
-// with `handle: { requiresAuth: true }`.
+// This frontend was generated for a backend without the `accounts` plugin,
+// which is what mounts /auth/login -- so gating the home page would put a
+// sign-in form in front of everyone that nothing can satisfy. Set this to
+// false the day yours signs people in, and every route is covered including
+// the ones `jfast new view` adds later; until then opt routes in one at a
+// time with `handle: { requiresAuth: true }`.
 const PUBLIC_BY_DEFAULT = true
+[% endif %]
 
 // Wrapped around the whole list rather than around each route, so a module
 // added at the marker above is covered without the generator knowing about
@@ -57,6 +85,9 @@ export default createBrowserRouter([
     element: <LoginView />,
     handle: { title: 'Sign in', public: true },
   },
+[% if frontend_accounts | default(true) %]
+  ...accountRoutes,
+[% endif %]
   {
     element: <RequireAuth />,
     children: routes,

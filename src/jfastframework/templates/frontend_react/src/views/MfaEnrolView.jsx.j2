@@ -1,0 +1,41 @@
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+
+import AuthShell from '@/components/AuthShell.jsx'
+import MfaSetupPanel from '@/components/MfaSetupPanel.jsx'
+import { safeNext } from '@/services/auth.service.js'
+import { LOGIN_ROUTE } from '@/stores/auth.store.js'
+
+/**
+ * Reached from the sign-in page when a role of the account requires MFA and it
+ * has none. The enrolment token rides in router state, not the address; a
+ * reload loses it on purpose, and the way back is to sign in again.
+ */
+export default function MfaEnrolView() {
+  const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const mfaToken = useLocation().state?.mfaToken ?? null
+
+  return (
+    <AuthShell
+      title="Set up two-step verification"
+      eyebrow="Required for your role"
+      hero="Protect your account."
+      heroFaded="Your role requires a second step."
+      heroText="From now on, signing in asks for a code from an app on your phone."
+      footer={
+        <Link to={LOGIN_ROUTE} className="hover:text-ink">
+          Back to sign in
+        </Link>
+      }
+    >
+      {mfaToken ? (
+        <MfaSetupPanel
+          mfaToken={mfaToken}
+          onDone={() => navigate(safeNext(params.get('next')), { replace: true })}
+        />
+      ) : (
+        <p className="text-sm text-ink-soft">This sign-in has expired.</p>
+      )}
+    </AuthShell>
+  )
+}

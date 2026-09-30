@@ -15,12 +15,12 @@
 import CardBox from '@/components/CardBox.vue'
 
 // Every signed-out page -- sign in, sign up, the email links, the second step
-// -- is drawn inside this one frame, so the look lives in one file. The Nexora
-// look has its own AuthShell.vue with the same props; the pages do not know
+// -- is drawn inside this one frame, so the look lives in one file. Another
+// look ships its own AuthShell.vue with the same props; the pages do not know
 // which one they got.
 //
-// `eyebrow`, `hero`, `heroFaded` and `heroText` are the Nexora hero; this
-// classic card has no hero and ignores them.
+// `eyebrow`, `hero`, `heroFaded` and `heroText` feed a look with a hero
+// beside the form; this card has none and ignores them.
 defineProps({
   title: { type: String, required: true },
   lead: { type: String, default: '' },

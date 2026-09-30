@@ -37,7 +37,9 @@ export const useAuthStore = create((set, get) => ({
 
   /**
    * Takes the session a login service already fetched:
-   * `{ token, refreshToken, user }`.
+   * `{ token, refreshToken, user }`. `user` may come later, through
+   * `setUser`: the accounts plugin answers a sign-in with tokens only, and
+   * services/auth.service.js fetches the user from /auth/account next.
    *
    * The store never calls axios. HTTP belongs in `Services/`, and keeping the
    * dependency one-way -- api.js imports this file, never the reverse -- is
