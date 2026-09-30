@@ -15,6 +15,7 @@ from jfastframework.cli import modules as module_registry
 from jfastframework.cli import ui
 from jfastframework.cli import ui as cli_ui
 from jfastframework.cli.common import _report
+from jfastframework.cli.fields import FieldSpecError
 from jfastframework.cli.generate import (
     _generate_gateway,
     _print_next_steps,
@@ -37,6 +38,7 @@ from jfastframework.cli.scaffold import (
     MODULE_UIS,
     PLUGIN_CATALOG,
     PLURAL_LANGUAGES,
+    ROUTE_ACCESS,
     SERVICE_KINDS,
     Scaffolder,
     check_frontend_template,
@@ -44,6 +46,7 @@ from jfastframework.cli.scaffold import (
     detect_frontend_template,
     module_context,
     module_trees,
+    route_access_for,
     to_pascal,
     to_snake,
     view_context,
@@ -83,6 +86,24 @@ def _scaffold_language(root: Path) -> str:
         return "en"
     value = data.get("scaffold", {}).get("language", "en")
     return str(value)
+
+
+def _enabled_plugins(root: Path) -> list[str]:
+    """``[plugins].enabled`` from the project's jfast.toml, or nothing."""
+    import tomllib
+
+    config = root / "jfast.toml"
+    if not config.is_file():
+        return []
+    try:
+        data = tomllib.loads(config.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    plugins = data.get("plugins", {})
+    enabled = plugins.get("enabled", []) if isinstance(plugins, dict) else []
+    disabled = set(plugins.get("disabled", [])) if isinstance(plugins, dict) else set()
+    # `disabled` wins over `enabled`, as it does when the service boots.
+    return [str(name) for name in enabled if name not in disabled]
 
 
 def _ask_layout(module: str) -> str:
@@ -131,17 +152,48 @@ def new_module(
     root: Path = typer.Option(
         Path("."), "--root", help="Project root, where the htmx overlay writes templates."
     ),
+    fields: str | None = typer.Option(
+        None,
+        "--fields",
+        help=(
+            'The real fields, e.g. "cartera_id:int, mes:str(7), leida:bool=false, nota:text?". '
+            "Types: int, bigint, str(N), text, bool, float, decimal(P,S), money, date, "
+            "datetime, json; ? = nullable; =value = default. See docs/modules.md."
+        ),
+    ),
+    unique: list[str] = typer.Option(
+        [],
+        "--unique",
+        help='Fields that are unique together per tenant, e.g. "cartera_id,mes". Repeatable.',
+    ),
+    bare: bool = typer.Option(
+        False, "--bare", help="The module's structure with no fields at all, not even examples."
+    ),
+    access: str | None = typer.Option(
+        None,
+        "--access",
+        help=(
+            "How the routes learn who is asking: open, auth (require_auth) or tenant "
+            "(current_tenant). Defaults to what jfast.toml enables."
+        ),
+    ),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files."),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
     """Scaffold a domain module.
 
-    Two layouts and two UI options, composed rather than duplicated:
+    Four layouts and two UI options, composed rather than duplicated:
 
         jfast new module order
         jfast new module order --layout screaming
         jfast new module order --ui htmx
-        jfast new module order --layout screaming --ui htmx
+
+    With the real fields instead of the example ones -- nothing to delete:
+
+        jfast new module presupuesto \\
+            --fields "cartera_id:int, mes:str(7), gasto:money, leida:bool=false" \\
+            --unique "cartera_id,mes"
+        jfast new module alerta --bare
     """
     if layout is None:
         layout = _ask_layout(name)
@@ -157,10 +209,35 @@ def new_module(
             f"choose from: {', '.join(PLURAL_LANGUAGES)}", param_hint="--language"
         )
 
+    if ui == "htmx" and (fields is not None or bare):
+        # The overlay draws the example fields -- a name, a description, an
+        # active flag -- and would render pages for columns that do not exist.
+        raise typer.BadParameter(
+            "the HTMX pages are drawn for the example fields. Generate the module "
+            "with --ui api and write its pages for your fields, or drop --fields/--bare",
+            param_hint="--ui",
+        )
+    if access is None:
+        access = route_access_for(_enabled_plugins(root))
+    if access not in ROUTE_ACCESS:
+        raise typer.BadParameter(f"choose from: {', '.join(ROUTE_ACCESS)}", param_hint="--access")
+
     scaffolder = Scaffolder()
-    context = module_context(
-        name, layout=layout, ui=ui, table=table, modules_dir=target.name, language=language
-    )
+    try:
+        context = module_context(
+            name,
+            layout=layout,
+            ui=ui,
+            table=table,
+            modules_dir=target.name,
+            language=language,
+            fields=fields,
+            unique=unique,
+            bare=bare,
+            access=access,
+        )
+    except FieldSpecError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--fields") from exc
     trees = module_trees(layout, ui, target, root)
     # `ui` here is the --ui option, which shadows the ui module inside this one
     # function. The spinner is reached through the package to say which is meant.
@@ -187,7 +264,8 @@ def new_module(
     ]
     if ui == "htmx":
         steps.insert(0, ('[plugins] enabled = [..., "web"]', "HTMX pages need it"))
-    cli_ui.next_steps(f"{module} ({layout}, {ui})", steps)
+    shape = "bare" if bare else ("example fields" if fields is None else "your fields")
+    cli_ui.next_steps(f"{module} ({layout}, {ui}, {shape}, {access} routes)", steps)
 
 
 def _split_csv(value: str | None) -> list[str]:
@@ -347,8 +425,10 @@ def _import_str_enum(source: str) -> str:
         return source
     extended, count = re.subn(
         r"^from enum import (.+)$",
-        lambda match: "from enum import "
-        + ", ".join(sorted({*(n.strip() for n in match.group(1).split(",")), "StrEnum"})),
+        lambda match: (
+            "from enum import "
+            + ", ".join(sorted({*(n.strip() for n in match.group(1).split(",")), "StrEnum"}))
+        ),
         source,
         count=1,
         flags=re.MULTILINE,

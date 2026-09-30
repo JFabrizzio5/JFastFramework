@@ -1,0 +1,20 @@
+{#
+  One availability rule per unique key. `repository` is Any because the
+  tests hand it an in-memory stand-in; the finder it calls is the contract.
+#}
+{% for unique in uniques %}
+
+
+{{ fit("async def " ~ unique.rule ~ "(", ["repository: Any"] + unique.parameter_list + ["*", "exclude_id: int | None = None"], ") -> None:") }}
+    """Reject a {{ unique.names|join(" + ") }} another {{ module }} already holds.
+
+    Scoped, not global: the repository filters by tenant, so two tenants may
+    each hold the same value. Read-then-write, so two concurrent writes can
+    both pass -- this exists for the readable 409, and the unique constraint
+    on the table is what actually enforces it. ``exclude_id`` is the row being
+    updated, which does not collide with itself.
+    """
+    existing = await repository.{{ unique.finder }}({{ unique.arguments }})
+    if existing is not None and existing.id != exclude_id:
+        {{ fit("raise ConflictError(", ['f"' ~ Module ~ ' with ' ~ unique.described ~ ' already exists"'], ")", indent=8) }}
+{% endfor %}

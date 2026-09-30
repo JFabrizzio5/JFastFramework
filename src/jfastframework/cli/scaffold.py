@@ -410,19 +410,60 @@ def module_context(
     table: str | None = None,
     modules_dir: str = "modules",
     language: str = "en",
+    fields: str | None = None,
+    unique: Sequence[str] = (),
+    bare: bool = False,
+    access: str = "open",
 ) -> dict[str, Any]:
+    """The vocabulary a module template renders with.
+
+    ``fields``/``unique``/``bare`` are `jfast new module`'s flags, parsed by
+    :mod:`jfastframework.cli.fields`; with none of them the module carries the
+    example fields it always has. ``access`` is how the generated routes find
+    out who is asking -- see :data:`ROUTE_ACCESS`.
+    """
+    from jfastframework.cli.fields import module_fields
+
+    if access not in ROUTE_ACCESS:
+        raise ValueError(f"Unknown access {access!r}. Choose from: {', '.join(ROUTE_ACCESS)}")
     snake = to_snake(name)
     plural = pluralize(snake, language)
+    resolved_table = table or plural
+    declared = module_fields(fields, unique, bare=bare, table=resolved_table)
     return {
         "module": snake,
         "Module": to_pascal(name),
         "module_title": snake.replace("_", " ").title(),
         "module_plural": plural.replace("_", " "),
-        "table": table or plural,
+        "table": resolved_table,
         "layout": layout,
         "ui": ui,
         "modules_dir": modules_dir,
+        "access": access,
+        **declared.as_context(),
     }
+
+
+#: How a generated module's routes learn who is asking, in the order a service
+#: grows into them:
+#:
+#: ``open``    no auth plugin: the routes are public, and the tenant is whatever
+#:             the request resolved to -- nothing, in a service without tenancy.
+#: ``auth``    auth on, one customer: every route needs a signed-in caller
+#:             (`require_auth`), and rows are written with no tenant.
+#: ``tenant``  tenancy on: every route runs as the caller's tenant
+#:             (`current_tenant`), 401 without a session and 403 without a
+#:             tenant, so a request can never fall back to "all tenants".
+ROUTE_ACCESS = ("open", "auth", "tenant")
+
+
+def route_access_for(enabled_plugins: Collection[str]) -> str:
+    """The access a service's plugins imply for the modules generated in it."""
+    if "tenancy" in enabled_plugins:
+        return "tenant"
+    if "auth" in enabled_plugins or "accounts" in enabled_plugins:
+        return "auth"
+    return "open"
 
 
 def service_context(

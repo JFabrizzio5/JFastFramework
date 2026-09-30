@@ -1,0 +1,41 @@
+{#
+  The public facade after its docstring: a frozen DTO with the declared fields
+  and one query. The including file sets `repository_import`, `fetch` (the
+  line that binds `read_from`), `read_from` and `fetch_note`.
+#}
+from __future__ import annotations
+
+{% for line in import_lines(["dataclasses.dataclass", "typing.TYPE_CHECKING"] + spec.stdlib()) %}
+{{ line }}
+{% endfor %}
+
+{{ repository_import }}
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@dataclass(frozen=True, slots=True)
+class {{ Module }}Summary:
+    """What other modules may know about a {{ module }}. Add fields deliberately.
+
+    Every declared field is here to start with, because a facade that hides
+    what callers need gets bypassed. Remove the ones that are this module's
+    business alone before anything depends on them.
+    """
+
+    id: int
+{% for f in fields %}
+    {{ f.name }}: {{ f.annotation }}
+{% endfor %}
+
+
+async def get_{{ module }}(
+    session: AsyncSession, *, tenant_id: str | None, {{ module }}_id: int
+) -> {{ Module }}Summary | None:
+    """One {{ module }}, or None when it does not exist for this tenant."""
+    {{ fetch_note }}
+    {{ fetch }}
+    if {{ read_from }} is None{{ " or " ~ read_from ~ ".id is None" if read_from == "entity" }}:
+        return None
+    {{ fit("return " ~ Module ~ "Summary(", ["id=" ~ read_from ~ ".id"] + spec.read_arguments(read_from), ")", indent=4) }}

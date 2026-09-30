@@ -1,0 +1,44 @@
+{#
+  The table: its columns and its unique keys. Rendered inside the class body
+  of every layout's entity or row, which differ only in their name and bases.
+  `entity_class` and `entity_bases` come from the including file's `set`,
+  and the include goes on the line right after the last import: this file
+  writes the blank lines, because how many depends on what comes first.
+#}
+{% if spec.needs_jsonb %}
+
+# JSONB on PostgreSQL, where it can be indexed and compared; plain JSON on any
+# other backend, so the in-memory SQLite a test may use still creates the table.
+JSON_COLUMN = JSON().with_variant(JSONB(), "postgresql")
+{% endif %}
+
+
+class {{ entity_class }}({{ entity_bases }}):
+    __tablename__ = "{{ table }}"
+{% if uniques %}
+    # The rule the service checks, made true by the database: two requests can
+    # both pass the check, only one can pass the constraint. tenant_id first,
+    # and NULLS NOT DISTINCT so it also holds for rows with no tenant
+    # (PostgreSQL 15+). Named, because the naming convention would give every
+    # tenant-first constraint on this table the same name.
+    __table_args__ = (
+{% for unique in uniques %}
+        UniqueConstraint(
+{% for column in ["tenant_id"] + unique.names|list %}
+            "{{ column }}",
+{% endfor %}
+            name="{{ unique.constraint_name }}",
+            postgresql_nulls_not_distinct=True,
+        ),
+{% endfor %}
+    )
+{% endif %}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+{% for f in fields %}
+{% if f.type == "money" %}
+    # Minor units -- cents, centavos: 1050 is 10.50. Integers add up exactly;
+    # floats do not, and a total that is off by a cent is still wrong.
+{% endif %}
+    {{ fit(f.name ~ ": Mapped[" ~ f.annotation ~ "] = mapped_column(", f.column_args, ")", indent=4) }}
+{% endfor %}

@@ -1,0 +1,72 @@
+{#
+  An in-memory stand-in for a BaseRepository subclass, holding real instances
+  of `entity_class`. `versioned` adds the expected_version check the layered
+  layout's repository performs.
+#}
+{% set versioned = versioned|default(false) %}
+class FakeRepository:
+    """In-memory stand-in for the repository, holding real {{ entity_class }} objects.
+
+    Real instances rather than a hand-written stand-in, so the fake has exactly
+    the columns the table has and the type checker verifies every attribute a
+    test reads. Nothing is flushed, so column defaults the database would fill
+    in are not: every value a test reads was passed in.
+    """
+
+    def __init__(self) -> None:
+        self.items: dict[int, {{ entity_class }}] = {}
+        self._next_id = 1
+
+    {{ fit("async def paginate(", ["self", "*", "limit: int = 50", "offset: int = 0", "**_: Any"], ") -> Page[" ~ entity_class ~ "]:", indent=4) }}
+        values = list(self.items.values())
+        return Page(
+            items=values[offset : offset + limit],
+            total=len(values),
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_or_raise(self, item_id: int) -> {{ entity_class }}:
+        try:
+            return self.items[item_id]
+        except KeyError:
+            raise NotFoundError(f"{{ Module }} {item_id!r} not found") from None
+{% for unique in uniques %}
+
+    {{ fit("async def " ~ unique.finder ~ "(", ["self"] + unique.parameter_list, ") -> " ~ entity_class ~ " | None:", indent=4) }}
+        {{ fit("return next(", ["(i for i in self.items.values() if " ~ unique.matches("i") ~ ")", "None"], ")", indent=8) }}
+{% endfor %}
+
+    async def create(self, **values: Any) -> {{ entity_class }}:
+{% if versioned %}
+        item = {{ entity_class }}(id=self._next_id, version=1, **values)
+{% else %}
+        item = {{ entity_class }}(id=self._next_id, **values)
+{% endif %}
+        self.items[self._next_id] = item
+        self._next_id += 1
+        return item
+
+{% if versioned %}
+    async def update(
+        self,
+        instance: {{ entity_class }},
+        *,
+        expected_version: int | None = None,
+        **values: Any,
+    ) -> {{ entity_class }}:
+        if expected_version is not None and expected_version != instance.version:
+            raise PreconditionFailedError("stale version")
+        for key, value in values.items():
+            setattr(instance, key, value)
+        instance.version += 1
+        return instance
+{% else %}
+    {{ fit("async def update(", ["self", "instance: " ~ entity_class, "**values: Any"], ") -> " ~ entity_class ~ ":", indent=4) }}
+        for key, value in values.items():
+            setattr(instance, key, value)
+        return instance
+{% endif %}
+
+    async def delete(self, instance: {{ entity_class }}) -> None:
+        self.items.pop(instance.id, None)

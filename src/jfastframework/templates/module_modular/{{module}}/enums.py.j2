@@ -18,6 +18,7 @@ including in JSON, in SQL and in an f-string.
 """
 
 from __future__ import annotations
+{% if example %}
 
 from enum import StrEnum
 
@@ -31,3 +32,7 @@ class {{ Module }}Stage(StrEnum):
     DRAFT = "draft"
     ACTIVE = "active"
     ARCHIVED = "archived"
+{% else %}
+
+# None yet: `jfast new enum {{ Module }}Status --module {{ module }} --values a,b`.
+{% endif %}

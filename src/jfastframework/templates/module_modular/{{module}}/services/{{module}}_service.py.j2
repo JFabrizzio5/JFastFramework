@@ -11,7 +11,10 @@ from jfastframework.db import Page
 
 from ..models import {{ Module }}, {{ Module }}Create, {{ Module }}Update
 from ..repositories import {{ Module }}Repository
-from ..validations import ensure_can_deactivate, ensure_name_is_available
+{% set rules = (uniques|map(attribute="rule")|list) + (["ensure_can_deactivate"] if example else []) %}
+{% if rules %}
+from ..validations import {{ rules|sort|join(", ") }}
+{% endif %}
 
 
 class {{ Module }}Service:
@@ -25,22 +28,21 @@ class {{ Module }}Service:
         return await self.repository.get_or_raise(item_id)
 
     async def create(self, payload: {{ Module }}Create) -> {{ Module }}:
-        await ensure_name_is_available(self.repository, payload.name)
+{% for unique in uniques %}
+        {{ fit("await " ~ unique.rule ~ "(", ["self.repository"] + unique.prefixed("payload."), ")", indent=8) }}
+{% endfor %}
         return await self.repository.create(**payload.model_dump())
 
     async def update(self, item_id: int, payload: {{ Module }}Update) -> {{ Module }}:
         item = await self.repository.get_or_raise(item_id)
         changes = payload.model_dump(exclude_unset=True)
-        # The same rule as create, or a rename walks straight past it into a
-        # name that is already taken. A validation enforced on one path and not
-        # the other is worse than none, because it reads as a guarantee.
-        name = changes.get("name")
-        if name is not None and name != item.name:
-            await ensure_name_is_available(self.repository, name)
+{% include "_module_shared/update_unique_checks.j2" %}
+{% if example %}
         # `is False`, not falsy: an omitted field and an explicit false are
         # different requests, and only the second one is a deactivation.
         if changes.get("is_active") is False:
             ensure_can_deactivate(item)
+{% endif %}
         return await self.repository.update(item, **changes)
 
     async def delete(self, item_id: int) -> None:
