@@ -339,6 +339,12 @@ that apply to your project, with file and line, and the remedy.
   `WHERE`/`AND`** -- a repository helper that does filter by tenant. That is
   undecidable from the source, so the rule stays quiet. Cuadra had eight
   findings, all false.
+- **FastAPI 0.142's own telemetry ran beside the plugin.** On seeing
+  `OTEL_EXPORTER_OTLP_ENDPOINT` it configured a second global provider
+  (`unknown_service`), duplicated every server span, and would have exported
+  logs carrying exception messages and rejected input values. `create_app`
+  turns it off whenever FastAPI has the switch; FastAPI's own spans are not
+  recorded, by design. Found tracing Cuadra to Jaeger.
 - **`jfast add` reinstalled the previous release over the running one.** A
   `requirements.txt` still pinned to 0.1.0a10 made `jfast add telemetry` run
   `pip install -r` and put a10 -- which does not ship that extra -- over a11.

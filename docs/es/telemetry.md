@@ -200,6 +200,20 @@ exportador; el request nunca lo ve. `tests/test_telemetry.py` reemplaza el trace
 y el backend por objetos que fallan en cada atributo y comprueba que el request se
 atiende igual.
 
+## La telemetría propia de FastAPI está apagada
+
+FastAPI 0.142 trae OpenTelemetry propio, y lee el mismo
+`OTEL_EXPORTER_OTLP_ENDPOINT`. Encendido, configuraba un segundo provider
+global sin nombre de servicio (`unknown_service`), exportaba un duplicado de
+cada span de servidor y habría exportado logs con mensajes de excepción y los
+valores de entrada rechazados -- contenido que este plugin nunca exporta.
+`create_app` lo apaga (`auto_configure`, trazas, métricas, logs y spans de
+operación) siempre que el FastAPI instalado tenga el interruptor, así que sus
+spans -- `fastapi.dependencies`, `fastapi.endpoint`, la serialización -- no se
+registran, a propósito. Las trazas salen solo del plugin `telemetry`.
+Encontrado al trazar un servicio real hacia Jaeger; `tests/test_telemetry.py`
+comprueba un solo span de servidor por petición y el provider global intacto.
+
 ## Probar tus propios spans
 
 ```toml

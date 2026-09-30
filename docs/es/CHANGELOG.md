@@ -414,6 +414,12 @@ los que aplican a tu proyecto, con archivo y línea, y el arreglo.
   de `WHERE`/`AND`** -- un helper del repositorio que sí filtra por tenant.
   Eso no se puede decidir desde el código, así que la regla se calla. Cuadra
   tenía ocho hallazgos, todos falsos.
+- **La telemetría propia de FastAPI 0.142 corría junto al plugin.** Al ver
+  `OTEL_EXPORTER_OTLP_ENDPOINT` configuraba un segundo provider global
+  (`unknown_service`), duplicaba cada span de servidor y habría exportado logs
+  con mensajes de excepción y valores de entrada rechazados. `create_app` la
+  apaga siempre que FastAPI tenga el interruptor; los spans propios de FastAPI
+  no se registran, a propósito. Encontrado al trazar Cuadra hacia Jaeger.
 - **`jfast add` reinstalaba el release anterior encima del que corría.** Un
   `requirements.txt` que seguía fijando 0.1.0a10 hacía que `jfast add
   telemetry` corriera `pip install -r` y pusiera a10 -- que no trae ese extra

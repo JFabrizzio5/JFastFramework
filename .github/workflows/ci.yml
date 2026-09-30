@@ -568,6 +568,25 @@ jobs:
           done
           echo '::error::Jaeger did not answer on 16686'
           exit 1
+      # FastAPI 0.142 ships OpenTelemetry of its own that reads the same
+      # endpoint variable; left on, it doubled every server span under a
+      # second provider. The test that proves create_app turns it off skips on
+      # a FastAPI without the switch, and a developer venv had 0.141 -- so
+      # here the newest FastAPI the ceiling allows is installed explicitly and
+      # a skip fails the step. (The main job's refuse-to-skip list runs the
+      # same test on the matrix.)
+      - name: FastAPI's own telemetry stays off, on the newest FastAPI
+        shell: bash
+        run: |
+          pip install --upgrade "fastapi<1"
+          python -c "import fastapi; print('fastapi', fastapi.__version__)"
+          python -m pytest -q -rs --no-header \
+            tests/test_telemetry.py::test_fastapis_own_telemetry_never_exports_beside_ours \
+            | tee /tmp/native-otel.log
+          if grep -qE '^SKIPPED|no tests ran' /tmp/native-otel.log; then
+            echo '::error::this FastAPI has no native telemetry; the regression test did not run'
+            exit 1
+          fi
       - name: Spans exported over OTLP and read back from Jaeger
         env:
           JAEGER_URL: http://localhost:16686
