@@ -28,7 +28,7 @@ from typing import Annotated, Any
 import typer
 
 from jfastframework.cli import insight, ui
-from jfastframework.cli.exits import MEANING, Code
+from jfastframework.cli.exits import Code
 from jfastframework.multitenant.readiness import RULES, Readiness, readiness
 from jfastframework.multitenant.switch import SwitchError, SwitchPlan, plan_switch
 
@@ -320,10 +320,12 @@ def _enable(
         lines.extend(f"  {line}" for line in diff.split("\n"))
     lines.append("")
     lines.append("  what is left, in order:")
-    for number, step in enumerate(steps, start=1):
+    number = 0
+    for step in steps:
         if step == "ROLE_SQL":
             lines.extend(f"        {line}" for line in ROLE_SQL.splitlines())
             continue
+        number += 1
         wrapped = _wrap(step, 7)
         wrapped[0] = f"  {number:>2}. " + wrapped[0].lstrip()
         lines.extend(wrapped)
@@ -331,7 +333,7 @@ def _enable(
     typer.echo("")
     typer.echo(render_readiness(report, project=root.name))
     if dry_run:
-        typer.echo(f"\n  dry run: nothing written ({MEANING[int(Code.OK)]}).")
+        typer.echo("\n  dry run: nothing written.")
 
 
 def register(app: typer.Typer) -> None:

@@ -570,6 +570,12 @@ def plan_switch(
             "service was switched before. Delete that revision if it was never applied, or "
             "write the next change by hand."
         )
+    if not found_heads:
+        raise SwitchError(
+            f"no revision under {directory.relative_to(root)} yet, so nothing has created the "
+            "tables this would backfill. Create them first (alembic revision --autogenerate, "
+            "alembic upgrade head), then run this again."
+        )
     if len(found_heads) > 1:
         raise SwitchError(
             f"the revisions have {len(found_heads)} heads ({', '.join(found_heads)}). Merge "

@@ -380,7 +380,9 @@ class _RouteScan:
                 deps.factories.append(target)
         return deps, direct
 
-    def routes(self) -> Iterator[tuple[SourceFile, ast.FunctionDef | ast.AsyncFunctionDef, list]]:
+    def routes(
+        self,
+    ) -> Iterator[tuple[SourceFile, ast.FunctionDef | ast.AsyncFunctionDef, list[ast.expr]]]:
         for source in self.files:
             router_tenant = any(
                 isinstance(node, ast.Call)
@@ -539,14 +541,15 @@ def _enclosing_assignment(
     for node in ast.walk(function):
         targets: list[ast.expr] = []
         value: ast.expr | None = None
+        line = getattr(node, "lineno", -1)
         if isinstance(node, ast.Assign):
             targets, value = list(node.targets), node.value
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
             targets, value = [node.target], node.value
-        if value is None or not (found_line < node.lineno < before):
+        if value is None or not (found_line < line < before):
             continue
         if any(isinstance(t, ast.Name) and t.id == name for t in targets):
-            found, found_line = _text(source, value), node.lineno
+            found, found_line = _text(source, value), line
     return found
 
 

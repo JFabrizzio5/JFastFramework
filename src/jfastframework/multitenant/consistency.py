@@ -103,7 +103,7 @@ def _current_tenant_uses(files: Sequence[SourceFile]) -> list[tuple[SourceFile, 
                 isinstance(node, ast.Attribute) and node.attr == "current_tenant"
             )
             if used and isinstance(getattr(node, "ctx", None), ast.Load):
-                found.append((source, node.lineno))
+                found.append((source, getattr(node, "lineno", 1)))
     return found
 
 
@@ -275,7 +275,9 @@ def consistency_findings(
     # -- tenancy on, with sources that can never answer -----------------
     if "tenancy" in plugins:
         sources = list(settings.get("tenancy", "sources") or [])
-        line = config_line(root, "plugin.tenancy", "sources") or config_line(root, "plugin.tenancy")
+        where = config_line(root, "plugin.tenancy", "sources") or config_line(
+            root, "plugin.tenancy"
+        )
         if "subdomain" in sources and not str(settings.get("tenancy", "base_domain") or ""):
             findings.append(
                 Finding(
@@ -288,7 +290,7 @@ def consistency_findings(
                         'remove "subdomain" from sources (the default list includes it).'
                     ),
                     path=CONFIG_FILE,
-                    line=line,
+                    line=where,
                 )
             )
         needing = [name for name in sources if name in NEEDS_AUTH]
@@ -308,7 +310,7 @@ def consistency_findings(
                         '(`"subdomain"` with a base_domain).'
                     ),
                     path=CONFIG_FILE,
-                    line=line,
+                    line=where,
                 )
             )
 
