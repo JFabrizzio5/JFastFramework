@@ -64,8 +64,8 @@ until they pass. The partials, and what is missing from each:
   instead. `jfast bench` exports k6 but has no mocked-model scenario and names a
   saturated dependency only through `/ready`. MinIO verified locally; the CI job
   runs a community fork because MinIO stopped publishing images. PgBouncer RLS
-  verified; read replicas under load not. RAG measured at 300k chunks, not 1M, with
-  a known unindexed write in the pgvector store.
+  verified; read replicas under load not. RAG measured at 300k chunks, not 1M; the
+  unindexed pgvector write it found is fixed.
 - **Still open:** long AI work through the queue by default (Phase 2), tested
   recipes (Phase 3).
 

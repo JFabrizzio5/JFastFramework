@@ -219,11 +219,11 @@ total. What this means for a deployment:
   which in a container is `/dev/shm`; the generated compose sets
   `shm_size: 1gb`, and `maintenance_work_mem` above it fails the build with
   "could not resize shared memory segment".
-- **Known problem, not fixed here:** the store's writes find a document's
-  rows with `tenant_id IS NOT DISTINCT FROM`, which no btree serves. At
-  300,000 chunks one document's DELETE took 19.2 ms instead of 0.03 ms, and it
-  grows with the table. `tests/test_rag_scale.py` asks the planner and is a
-  strict expected failure until the store is fixed.
+- **Fixed in 0.1.0a11:** the store's writes used to find a document's rows
+  with `tenant_id IS NOT DISTINCT FROM`, which no btree serves. At 300,000
+  chunks one document's DELETE took 19.2 ms instead of 0.03 ms, growing with
+  the table. They now match `tenant_id = :tenant`, and
+  `tests/test_rag_scale.py` asks the planner that the index serves them.
 
 ## Aggregates that stay fast with data
 

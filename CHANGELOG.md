@@ -323,6 +323,12 @@ that apply to your project, with file and line, and the remedy.
 
 ### Fixed
 
+- **pgvector store writes went through a sequential scan.** They matched a
+  document's rows with `tenant_id IS NOT DISTINCT FROM`, which no btree
+  serves: one document's delete took 19.2 ms instead of 0.03 ms at 300k
+  chunks, growing with the table. They use `tenant_id = :tenant` (or `IS
+  NULL` for an unscoped store); `tests/test_rag_scale.py` asks the planner.
+
 - **Outbox `/ready` said `ok` while messages failed to send.** It is degraded
   from the first failed attempt and quotes the latest dead reason; the
   relay's log line includes the cause; a row that can never be delivered goes
@@ -432,10 +438,7 @@ produces it.
   base branch instead -- a step not yet run in CI; the telemetry plugin as a
   budgeted scenario; `jfast bench` naming the saturated dependency beyond
   `/ready`, and a mocked-model scenario.
-- **Found, not fixed:** the pgvector store's writes filter with `tenant_id IS
-  NOT DISTINCT FROM`, which no btree serves -- one document's delete took
-  19.2 ms instead of 0.03 ms at 300k chunks (a strict xfail in
-  `tests/test_rag_scale.py`); a 405's problem+json response drops the `Allow`
+- **Found, not fixed:** a 405's problem+json response drops the `Allow`
   header.
 - **The MinIO CI job runs a community fork** (`pgsty/minio`): MinIO stopped
   publishing images, and the suite was verified locally only against the last

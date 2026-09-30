@@ -339,6 +339,13 @@ los que aplican a tu proyecto, con archivo y línea, y el arreglo.
 
 ### Corregido
 
+- **Las escrituras del store de pgvector recorrían la tabla completa.**
+  Buscaban las filas de un documento con `tenant_id IS NOT DISTINCT FROM`, que
+  ningún btree sirve: borrar un documento tomaba 19.2 ms en vez de 0.03 ms con
+  300k fragmentos, y crecía con la tabla. Ahora usan `tenant_id = :tenant` (o
+  `IS NULL` en un store sin tenant); `tests/test_rag_scale.py` se lo pregunta
+  al planner.
+
 - **`/ready` del outbox decía `ok` con mensajes fallando.** Queda degradado
   desde el primer intento fallido y cita la última razón de muerte; la línea
   de log del relay trae la causa; una fila imposible de entregar muere en su
@@ -458,11 +465,8 @@ produce.
   no corre en CI; el plugin de telemetría como escenario del presupuesto;
   `jfast bench` nombrando la dependencia saturada más allá de `/ready`, y un
   escenario con modelo simulado.
-- **Encontrado, sin arreglar:** las escrituras del store de pgvector filtran
-  con `tenant_id IS NOT DISTINCT FROM`, que ningún btree sirve -- borrar un
-  documento tomó 19.2 ms en vez de 0.03 ms con 300k fragmentos (un xfail
-  estricto en `tests/test_rag_scale.py`); la respuesta problem+json de un 405
-  pierde el header `Allow`.
+- **Encontrado, sin arreglar:** la respuesta problem+json de un 405 pierde el
+  header `Allow`.
 - **El job de MinIO en CI corre un fork de la comunidad** (`pgsty/minio`):
   MinIO dejó de publicar imágenes, y la suite solo se verificó en local contra
   la última oficial, `RELEASE.2025-09-07T16-13-09Z`.

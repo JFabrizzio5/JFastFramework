@@ -227,11 +227,11 @@ MB en total. Lo que significa para un despliegue:
   grafo en memoria compartida, que en un contenedor es `/dev/shm`; el compose
   generado pone `shm_size: 1gb`, y un `maintenance_work_mem` por encima hace
   fallar la construcción con "could not resize shared memory segment".
-- **Problema conocido, no corregido aquí:** las escrituras del store buscan
-  las filas de un documento con `tenant_id IS NOT DISTINCT FROM`, que ningún
-  btree sirve. Con 300,000 chunks el DELETE de un documento tomó 19.2 ms en vez
-  de 0.03 ms, y crece con la tabla. `tests/test_rag_scale.py` le pregunta al
-  planner y es una falla esperada estricta hasta que se corrija el store.
+- **Corregido en 0.1.0a11:** las escrituras del store buscaban las filas de un
+  documento con `tenant_id IS NOT DISTINCT FROM`, que ningún btree sirve. Con
+  300,000 chunks el DELETE de un documento tomaba 19.2 ms en vez de 0.03 ms, y
+  crecía con la tabla. Ahora comparan `tenant_id = :tenant`, y
+  `tests/test_rag_scale.py` le pregunta al planner si el índice las sirve.
 
 ## Agregados que siguen rápidos con datos
 
