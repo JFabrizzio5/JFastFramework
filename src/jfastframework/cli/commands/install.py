@@ -32,6 +32,7 @@ from jfastframework.cli.scaffold import (
     RECOMMENDED,
     Scaffolder,
     check_frontend_template,
+    format_generated,
     module_context,
     module_trees,
     plugin_importable,
@@ -125,11 +126,12 @@ def start(
     # real one so the first `pytest` and the first migration have a subject.
     scaffolder = Scaffolder()
     module = module_context("item", modules_dir="modules", access=api_context["route_access"])
-    scaffolder.render_trees(
+    written = scaffolder.render_trees(
         module_trees(DEFAULT_LAYOUT, "api", api_dir / "modules", api_dir),
         module,
         force=force,
     )
+    format_generated([file.path for file in written if file.created], api_dir)
     ui.created(f"{api_dir}/modules/item/", "a real module, so the first test has a subject")
 
     # `jfast new module` mounts what it generates, and so does this path. A

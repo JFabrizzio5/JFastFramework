@@ -51,7 +51,7 @@ class InMemory{{ Module }}Repository:
 
 {% for unique in uniques %}
     {{ fit("async def " ~ unique.port_finder ~ "(", ["self"] + unique.parameter_list, ") -> " ~ Module ~ " | None:", indent=4) }}
-        {{ fit("found = next(", ["(e for e in self._items.values() if " ~ unique.matches("e") ~ ")", "None"], ")", indent=8) }}
+        {{ fit("found = next(", ["(" ~ unique.loop_variable ~ " for " ~ unique.loop_variable ~ " in self._items.values() if " ~ unique.matches(unique.loop_variable) ~ ")", "None"], ")", indent=8) }}
         return replace(found) if found is not None else None
 
 {% endfor %}

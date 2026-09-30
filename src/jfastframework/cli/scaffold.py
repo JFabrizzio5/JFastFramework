@@ -476,6 +476,39 @@ class Scaffolder:
         stamp_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
 
+def format_generated(paths: Sequence[Path], root: Path) -> bool:
+    """Sort imports and format the Python files a command just wrote, with ruff.
+
+    The templates are written in ruff's format, but a name is only known at
+    generation time, and `PresupuestoHexagonalUseCases(SqlPresupuestoHexagonal
+    Repository(session, ...))` is a line no template can wrap in advance. The
+    project's own ruff.toml is used (``cwd=root``), so the result is exactly
+    what `ruff format --check .` expects. Only the files passed in are touched:
+    a file the user already edited is never reformatted behind their back.
+
+    Returns False when ruff is not installed where `jfast` runs -- it is in
+    ``jfastframework[dev]``, which a generated requirements-dev.txt installs --
+    and the files are then left as rendered.
+    """
+    import importlib.util
+    import shutil
+    import subprocess
+    import sys
+
+    files = [str(path) for path in paths if path.suffix == ".py" and path.is_file()]
+    if not files:
+        return True
+    if importlib.util.find_spec("ruff") is not None:
+        command = [sys.executable, "-m", "ruff"]
+    elif (found := shutil.which("ruff")) is not None:
+        command = [found]
+    else:
+        return False
+    for arguments in (["check", "--fix", "--select", "I", "--quiet"], ["format", "--quiet"]):
+        subprocess.run([*command, *arguments, *files], cwd=root, check=False, capture_output=True)
+    return True
+
+
 def module_context(
     name: str,
     *,

@@ -65,6 +65,28 @@ RESERVED = frozenset(
     {"id", "tenant_id", "created_at", "updated_at", "version", "metadata", "registry"}
 )
 
+#: Names the generated code already uses for something else -- a parameter of
+#: every rule, a method every Pydantic model has -- so a field called one of
+#: them would shadow it. Pydantic also keeps the ``model_`` prefix to itself.
+SHADOWING = frozenset(
+    {
+        "self",
+        "repository",
+        "exclude_id",
+        "payload",
+        "changes",
+        "session",
+        "values",
+        "copy",
+        "dict",
+        "json",
+        "schema",
+        "construct",
+        "validate",
+        "apply",
+    }
+)
+
 #: What `jfast new module` generates with no --fields and no --bare: the
 #: example the templates have always carried, now expressed in the grammar so
 #: one set of templates renders both.
@@ -313,6 +335,13 @@ class UniqueSpec:
     @property
     def arguments(self) -> str:
         return ", ".join(self.names)
+
+    @property
+    def loop_variable(self) -> str:
+        """A name for "each stored row" that cannot shadow one of the key's parameters."""
+        return next(
+            name for name in ("stored", "candidate", "existing_row") if name not in self.names
+        )
 
     def matches(self, item: str) -> str:
         """``i.a == a and i.b == b``: the key compared on one stored object."""
@@ -624,6 +653,11 @@ def parse_field(text: str) -> FieldSpec:
         raise FieldSpecError(
             f"field {name!r} is already on every generated entity (id, tenant_id and the "
             f"timestamps come from the mixins): drop it from --fields, or rename it"
+        )
+    if name in SHADOWING or name.startswith("model_"):
+        raise FieldSpecError(
+            f"field {name!r} would shadow a name the generated code or Pydantic already uses: "
+            f"rename it (e.g. {name}_value)"
         )
     if kind not in TYPES:
         raise FieldSpecError(

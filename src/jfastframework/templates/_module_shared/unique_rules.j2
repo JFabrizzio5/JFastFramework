@@ -16,5 +16,5 @@
     """
     existing = await repository.{{ unique.finder }}({{ unique.arguments }})
     if existing is not None and existing.id != exclude_id:
-        {{ fit("raise ConflictError(", ['f"' ~ Module ~ ' with ' ~ unique.described ~ ' already exists"'], ")", indent=8) }}
+        {{ fit("raise ConflictError(", ['f"' ~ unique.described ~ ' is already taken"'], ")", indent=8) }}
 {% endfor %}

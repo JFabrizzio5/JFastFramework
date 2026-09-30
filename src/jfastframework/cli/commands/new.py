@@ -44,6 +44,7 @@ from jfastframework.cli.scaffold import (
     check_frontend_template,
     detect_frontend,
     detect_frontend_template,
+    format_generated,
     module_context,
     module_trees,
     route_access_for,
@@ -243,7 +244,12 @@ def new_module(
     # function. The spinner is reached through the package to say which is meant.
     with cli_ui.working(f"scaffolding {name}"):
         written = scaffolder.render_trees(trees, context, force=force, dry_run=dry_run)
+        created = [file.path for file in written if file.created]
+        formatted = dry_run or format_generated(created, root)
     _report(written)
+    if not formatted:
+        cli_ui.note("ruff is not installed here: long names may leave lines past 100 characters.")
+        cli_ui.note("    pip install -r requirements-dev.txt && ruff format .")
 
     module = context["module"]
     if not dry_run:
