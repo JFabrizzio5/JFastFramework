@@ -1,0 +1,17 @@
+{#
+  Create, Update and Read models from the declared fields. `versioned` adds
+  the optimistic-locking field the layered layout's entity carries.
+#}
+{% set versioned = versioned|default(false) %}
+from __future__ import annotations
+
+{% for line in import_lines(spec.model_stdlib()) %}
+{{ line }}
+{% endfor %}
+
+{% for line in import_lines(spec.pydantic(versioned=versioned)) %}
+{{ line }}
+{% endfor %}
+
+
+{% include "_module_shared/pydantic_classes.j2" %}

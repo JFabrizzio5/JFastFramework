@@ -303,8 +303,15 @@ contexts.
 
 ### What the generated tests actually test
 
-**Layered layout** — service-level tests against a fake repository. No
-database, no containers.
+They test the declared fields, not a placeholder: a create stores every field,
+each `--unique` key is refused when taken and refused again on an update that
+moves onto it (and not when a row keeps its own), a missing id is a 404, an
+update changes only what was sent, an explicit `null` for a NOT NULL column is
+a 422, and a string past its column's length is refused before the INSERT.
+
+**Layered and modular layouts** — service-level tests against an in-memory
+repository that holds real entity objects, so the type checker sees every
+attribute a test reads. No database, no containers.
 
 **Screaming layout** — two files, deliberately separated:
 
@@ -317,6 +324,34 @@ database, no containers.
 Both mark themselves with `pytest.mark.asyncio` explicitly rather than relying
 on `asyncio_mode = auto`, so they pass in a project that has not configured
 pytest-asyncio.
+
+### The generated project's gates
+
+A generated service ships the configuration its gates run with, so `ruff
+check .` means the same on every machine and every ruff release:
+
+| File | What it pins |
+| --- | --- |
+| `ruff.toml` | the rule set (`E F W I UP B SIM RUF ASYNC`), line length 100, FastAPI's `Depends`/`Query`/... as immutable calls so B008 does not flag the framework's own idiom, and a `framework` import section for `jfastframework` between third-party and your code |
+| `mypy.ini` | `strict = True`; `migrations/versions/` excluded -- revisions are reviewed as migrations, not typed as code |
+| `pytest.ini` | `asyncio_mode = auto`, `modules` and `tests` as test paths |
+
+Freshly generated, with nothing edited, all four pass:
+
+```bash
+pip install -r requirements-dev.txt
+ruff check . && ruff format --check . && mypy . && pytest
+```
+
+`scripts/smoke_generated_quality.sh` holds that true on every change to the
+framework: it generates `jfast start` single-tenant and multitenant and a
+service with every plugin that needs no server of its own, adds a module per
+layout with example fields, with `--fields ... --unique ...` and `--bare`, plus
+one with every type in the grammar, and runs the four gates on each project --
+and `jfast check --ci`, and for the multitenant one `jfast check
+--multitenant-ready`, which must find nothing in code the generator wrote.
+`JFAST_SMOKE_GENERATED=1 pytest tests/test_smoke_generated_quality.py` runs it
+from the suite; it takes about a minute with a warm mypy cache.
 
 ### Integration tests
 
@@ -340,6 +375,8 @@ Plus, for anything that touches templates:
 ```bash
 bash scripts/smoke.sh              # renders both layouts, runs their tests, checks alembic
 bash scripts/smoke_workspace.sh    # workspace, gateway, frontends, patching
+bash scripts/smoke_generated_quality.sh   # every generated shape passes ruff, format, mypy, pytest
+bash scripts/smoke_upgrade.sh      # the previous release's project, upgraded to this checkout
 ```
 
 Templates are the part that breaks silently — they render fine and produce code

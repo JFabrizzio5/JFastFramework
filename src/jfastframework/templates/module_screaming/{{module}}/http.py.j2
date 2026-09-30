@@ -1,3 +1,4 @@
+{% import "_module_shared/access.j2" as access_m with context %}
 """HTTP surface for {{ module_title }}.
 
 Router and wire schemas together, because they change together. The router
@@ -6,50 +7,27 @@ translates HTTP into use-case calls and nothing else -- no rules live here.
 
 from __future__ import annotations
 
-from datetime import datetime
+{% for line in import_lines(spec.model_stdlib()) %}
+{{ line }}
+{% endfor %}
 
-from fastapi import APIRouter, Depends, Query, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+{{ access_m.fastapi_import()|trim }}
+{% for line in import_lines(spec.pydantic()) %}
+{{ line }}
+{% endfor %}
 
-from jfastframework.plugins.builtin.database import DbSession
+{{ access_m.framework_imports()|trim }}
 
 from .storage import {{ Module }}Repository
 from .use_cases import {{ Module }}UseCases
 
-router = APIRouter(prefix="/{{ table }}", tags=["{{ module }}"])
+{{ access_m.router()|trim }}
 
 
-class {{ Module }}Create(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    description: str | None = Field(default=None, max_length=2000)
-    is_active: bool = True
+{% include "_module_shared/pydantic_classes.j2" %}
 
 
-class {{ Module }}Update(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=200)
-    description: str | None = Field(default=None, max_length=2000)
-    is_active: bool | None = None
-
-
-class {{ Module }}Read(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    name: str
-    description: str | None
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-
-# DbSession commits when the endpoint returns, before the response is sent,
-# so a write that fails to commit is a 500 and not a 201 for a missing row.
-# `async def`, not `def`, although nothing here awaits: FastAPI runs a plain
-# `def` dependency in its threadpool, a hop that costs more per request than
-# the whole middleware stack.
-async def get_use_cases(request: Request, session: DbSession) -> {{ Module }}UseCases:
-    tenant_id = getattr(request.state, "tenant_id", None)
-    return {{ Module }}UseCases({{ Module }}Repository(session, tenant_id=tenant_id))
+{{ access_m.dependency("get_use_cases", Module ~ "UseCases", Module ~ "UseCases(" ~ Module ~ "Repository(session, tenant_id=tenant_id))")|trim }}
 
 
 @router.get("", response_model=list[{{ Module }}Read], summary="List {{ module }}")

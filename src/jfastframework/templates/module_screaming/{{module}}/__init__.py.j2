@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from typing import Any
 
+# The payload type is part of the module's public surface, not an
+# implementation detail: the HTMX overlay is layout-agnostic and has to
+# build one without knowing which layout it is talking to.
+from .http import {{ Module }}Create as CreatePayload
 from .http import router
 from .storage import {{ Module }}Repository
 from .use_cases import {{ Module }}UseCases
@@ -26,10 +30,5 @@ def build_service(session: Any, tenant_id: str | None = None) -> {{ Module }}Use
     """
     return {{ Module }}UseCases({{ Module }}Repository(session, tenant_id=tenant_id))
 
-
-# The payload type is part of the module's public surface, not an
-# implementation detail: the HTMX overlay is layout-agnostic and has to
-# build one without knowing which layout it is talking to.
-from .http import {{ Module }}Create as CreatePayload
 
 __all__ = ["CreatePayload", "build_service", "router"]

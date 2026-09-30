@@ -1,7 +1,13 @@
 """Business rules for the {{ module_title }} module."""
 
 from __future__ import annotations
+{% set rules = (uniques|map(attribute="rule")|list) + (["ensure_can_deactivate"] if example else []) %}
+{% if rules %}
 
-from .{{ module }}_validation import ensure_can_deactivate, ensure_name_is_available
+from .{{ module }}_validation import {{ rules|sort|join(", ") }}
 
-__all__ = ["ensure_can_deactivate", "ensure_name_is_available"]
+__all__ = [{% for rule in rules|sort %}"{{ rule }}"{{ ", " if not loop.last }}{% endfor %}]
+{% else %}
+
+__all__: list[str] = []
+{% endif %}

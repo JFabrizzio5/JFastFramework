@@ -25,33 +25,8 @@ A caller declares the dependency in contracts.toml:
     depends_on = ["{{ module }}"]
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-from .repository import {{ Module }}Repository
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-
-@dataclass(frozen=True, slots=True)
-class {{ Module }}Summary:
-    """What other modules may know about a {{ module }}. Add fields deliberately."""
-
-    id: int
-    name: str
-    is_active: bool
-
-
-async def get_{{ module }}(
-    session: AsyncSession, *, tenant_id: str | None, {{ module }}_id: int
-) -> {{ Module }}Summary | None:
-    """One {{ module }}, or None when it does not exist for this tenant."""
-    # A read with no rule to enforce goes straight to the repository. A write
-    # added here goes through the service, so its rules hold for every caller.
-    item = await {{ Module }}Repository(session, tenant_id=tenant_id).get({{ module }}_id)
-    if item is None:
-        return None
-    return {{ Module }}Summary(id=item.id, name=item.name, is_active=item.is_active)
+{% set read_from = "item" %}
+{% set repository_import = "from .repository import " ~ Module ~ "Repository" %}
+{% set fetch = "item = await " ~ Module ~ "Repository(session, tenant_id=tenant_id).get(" ~ module ~ "_id)" %}
+{% set fetch_note = "# A read with no rule to enforce goes straight to the repository. A write\n    # added here goes through the service, so its rules hold for every caller." %}
+{% include "_module_shared/public_body.j2" %}

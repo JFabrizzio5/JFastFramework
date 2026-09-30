@@ -6,46 +6,5 @@ file. That constraint keeps the domain testable in microseconds and portable
 across whatever storage you use this year.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from datetime import datetime
-
-
-class {{ Module }}RuleViolation(Exception):
-    """A {{ module }} was asked to enter a state its rules forbid."""
-
-
-@dataclass
-class {{ Module }}:
-    """The {{ module_title }} entity."""
-
-    name: str
-    description: str | None = None
-    is_active: bool = True
-    id: int | None = None
-    tenant_id: str | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    tags: list[str] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        self.validate()
-
-    def validate(self) -> None:
-        if not self.name or not self.name.strip():
-            raise {{ Module }}RuleViolation("name must not be empty")
-        if len(self.name) > 200:
-            raise {{ Module }}RuleViolation("name must be at most 200 characters")
-
-    def rename(self, name: str) -> None:
-        self.name = name
-        self.validate()
-
-    def deactivate(self) -> None:
-        if not self.is_active:
-            raise {{ Module }}RuleViolation("already inactive")
-        self.is_active = False
-
-    def activate(self) -> None:
-        self.is_active = True
+{% set domain_extra = [] %}
+{% include "_module_shared/domain_entity.j2" %}

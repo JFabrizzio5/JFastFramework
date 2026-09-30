@@ -269,3 +269,42 @@ como hacen las entradas de `auth`.
 Escribe la entrada con `detect=None` solo cuando nada en disco pueda decidir la
 pregunta, y dilo en `detail`. Es la diferencia entre una nota informativa honesta
 y una advertencia que la gente aprende a ignorar.
+
+Después dale dos tests en `tests/test_upgrade_detectors.py` -- un proyecto que
+marca y el más parecido que no debe marcar -- y regístralos en `AFFECTED` y
+`CLEAN`. El último test de ese archivo los compara con `CHANGES`, así que una
+entrada sin ellos rompe la suite.
+
+## El smoke de actualización
+
+`scripts/smoke_upgrade.sh` recorre el camino que recorre un usuario, en cada
+cambio:
+
+1. un virtualenv con la versión **anterior** desde PyPI;
+2. un proyecto generado con ella -- un módulo en cada layout, y los plugins
+   `auth`, `tenancy`, `metrics`, `rag` y `queue`;
+3. el wheel de este checkout instalado encima;
+4. `jfast upgrade --check --json`, cuyos códigos de cambio deben ser
+   **exactamente** los de `scripts/smoke_upgrade.expected` -- uno que falta
+   significa que un detector dejó de ver su caso, uno de más que empezó a ver
+   uno que no está;
+5. el remedio de cada código, escrito en el smoke como lo describe el `remedy`
+   de la entrada;
+6. la app importada y `GET /health` respondido en el mismo proceso;
+7. el `pytest` del propio proyecto y `jfast check --ci`.
+
+Lo que mantiene honesto es lo que promete esta página: que `upgrade --check`
+nombra todo lo que un proyecto tiene que cambiar. Una rotura que no nombra
+aparece en el paso 6 o 7 sin nada en el paso 4 -- así encontró que la plantilla
+hexagonal de 0.1.0a10 no pasa su propio test (el init del paquete importa
+FastAPI a través de `CreatePayload`).
+
+```bash
+PY=python3.12 scripts/smoke_upgrade.sh              # anterior = esta versión menos una
+PREVIOUS=0.1.0a9 scripts/smoke_upgrade.sh           # o nómbrala
+KEEP_WORK=1 scripts/smoke_upgrade.sh                # deja el proyecto para revisarlo
+```
+
+Un `Change` nuevo que aplica al proyecto generado necesita su código en el
+archivo esperado y un `case` en `remedy()` del smoke; el smoke falla y lo dice
+hasta que estén los dos.

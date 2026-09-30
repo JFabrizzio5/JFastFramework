@@ -10,68 +10,25 @@ Run from the project root::
     pytest modules/{{ module }}/tests
 """
 
-from __future__ import annotations
-
-import subprocess
-import sys
-from pathlib import Path
-
-import pytest
-
-from modules.{{ module }}.domain.entities import (
-    MAX_NAME_LENGTH,
-    {{ Module }},
-    {{ Module }}RuleViolation,
-)
-from modules.{{ module }}.domain.ports import {{ Module }}Repository
-from modules.{{ module }}.tests import InMemory{{ Module }}Repository
-
-# modules/<name>/tests/this_file.py -> the project root, whatever the cwd is.
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-
-def test_a_valid_entity_is_accepted() -> None:
-    entity = {{ Module }}(name="valid", description="fine")
-    assert entity.is_active is True
-    assert entity.id is None
-
-
-def test_an_empty_name_is_rejected() -> None:
-    with pytest.raises({{ Module }}RuleViolation):
-        {{ Module }}(name="   ")
-
-
-def test_an_overlong_name_is_rejected() -> None:
-    with pytest.raises({{ Module }}RuleViolation):
-        {{ Module }}(name="x" * (MAX_NAME_LENGTH + 1))
-
-
-def test_rename_revalidates() -> None:
-    entity = {{ Module }}(name="valid")
-    with pytest.raises({{ Module }}RuleViolation):
-        entity.rename("")
-
-
-def test_deactivating_twice_is_a_rule_violation() -> None:
-    entity = {{ Module }}(name="valid")
-    entity.deactivate()
-    assert entity.is_active is False
-    with pytest.raises({{ Module }}RuleViolation):
-        entity.deactivate()
+{% set domain_module = "modules." ~ module ~ ".domain.entities" %}
+{% set hexagonal = true %}
+{% include "_module_shared/domain_tests.j2" %}
+{% if fields %}
 
 
 def test_apply_merges_and_revalidates() -> None:
-    entity = {{ Module }}(name="before", description="keep")
-    entity.apply({"name": "after"})
-    assert entity.name == "after"
-    assert entity.description == "keep"
-
-    with pytest.raises({{ Module }}RuleViolation):
-        entity.apply({"name": ""})
+    entity = valid()
+    entity.apply({{ spec.sample_dict(1, only=[fields[0].name]) }})
+    assert {{ fields[0].check("entity." ~ fields[0].name, 1) }}
+{% for f in fields[1:] %}
+    assert {{ f.check("entity." ~ f.name, 0) }}
+{% endfor %}
+{% endif %}
 
 
 def test_apply_refuses_fields_storage_owns() -> None:
-    entity = {{ Module }}(name="valid", id=7, tenant_id="acme")
+    entity = valid()
+    entity.tenant_id = "acme"
     with pytest.raises({{ Module }}RuleViolation):
         entity.apply({"tenant_id": "someone-else"})
     assert entity.tenant_id == "acme"

@@ -1,0 +1,22 @@
+{#
+  What the Pydantic models refuse before a service ever runs: an explicit null
+  for a NOT NULL column, and a string past its column's length. Only for the
+  layouts whose payloads are those models.
+#}
+{% if spec.non_nullable %}
+{% set required = spec.non_nullable[0] %}
+
+
+async def test_an_update_may_not_null_a_required_field() -> None:
+    with pytest.raises(pydantic.ValidationError):
+        {{ Module }}Update.model_validate({"{{ required.name }}": None})
+{% endif %}
+{% for f in fields if f.too_long %}
+{% if loop.first %}
+
+
+async def test_a_value_longer_than_its_column_is_refused() -> None:
+    with pytest.raises(pydantic.ValidationError):
+        {{ Module }}Create.model_validate(first().model_dump() | {"{{ f.name }}": {{ f.too_long }}})
+{% endif %}
+{% endfor %}

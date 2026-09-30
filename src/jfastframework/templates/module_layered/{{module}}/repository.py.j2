@@ -7,6 +7,12 @@ BaseRepository, not here.
 
 from __future__ import annotations
 
+{% if spec.key_stdlib() %}
+{% for line in import_lines(spec.key_stdlib()) %}
+{{ line }}
+{% endfor %}
+
+{% endif %}
 from jfastframework.db import BaseRepository
 
 from .models import {{ Module }}
@@ -14,9 +20,4 @@ from .models import {{ Module }}
 
 class {{ Module }}Repository(BaseRepository[{{ Module }}]):
     model = {{ Module }}
-
-    async def active(self) -> list[{{ Module }}]:
-        return await self.find(is_active=True)
-
-    async def by_name(self, name: str) -> {{ Module }} | None:
-        return await self.find_one(name=name)
+{% include "_module_shared/finders.j2" %}

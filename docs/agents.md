@@ -100,6 +100,28 @@ generated code:
 
 ---
 
+## Generate the module you mean, then build on it
+
+An agent handed `jfast new module invoice` used to spend its first edits
+deleting the example -- `name`, `description`, `is_active` and their tests --
+and the diff a reviewer read was mostly that. Give the generator the fields
+instead, and the first draft has nothing to delete:
+
+```bash
+jfast new module invoice --fields "customer_id:int, number:str(20), total:money, paid:bool=false" \
+  --unique "number"
+```
+
+What it writes already passes `ruff check .`, `ruff format --check .`,
+`mypy .` (strict) and `pytest`, in every layout, so a red gate after an
+agent's edit is the agent's edit. The routes are guarded as the service is
+configured (`current_tenant` with tenancy, `require_auth` with auth), and the
+module has a `tasks.py` for its background work. The grammar is in
+[Modules](modules.md#fields-generate-the-module-you-meant); `--bare` is the
+structure with no fields at all.
+
+---
+
 ## Waive a line, do not delete the rule
 
 ```python
@@ -138,9 +160,9 @@ service, so it scales with your service. Measured on generated services —
 
 | modules | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 9,078 | 3,001 |
-| 3 | 11,108 | 4,563 |
-| 5 | 13,156 | 6,139 |
+| 1 | 9,525 | 3,016 |
+| 3 | 11,555 | 4,578 |
+| 5 | 13,603 | 6,154 |
 
 A generated service is the floor, because nothing is wrong with it yet. The
 same five-module service after some work in it — two modules `main.py` never

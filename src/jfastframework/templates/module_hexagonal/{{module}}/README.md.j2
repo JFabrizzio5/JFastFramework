@@ -9,6 +9,9 @@ declaration.
 <!-- One paragraph: what this module owns. If you cannot write it in one
      paragraph, the module is doing two jobs. -->
 
+
+{% include "_module_shared/readme_fields.j2" %}
+
 ## Structure
 
 | Path | Role | May import |
@@ -37,7 +40,9 @@ lines is what keeps `application/` free of infrastructure.
 class {{ Module }}Repository(Protocol):
     async def list(self, *, limit: int, offset: int) -> {{ Module }}Page: ...
     async def get(self, item_id: int) -> {{ Module }} | None: ...
-    async def find_by_name(self, name: str) -> {{ Module }} | None: ...
+{% for unique in uniques %}
+    {{ fit("async def " ~ unique.port_finder ~ "(", ["self"] + unique.parameter_list, ") -> " ~ Module ~ " | None: ...", indent=4) }}
+{% endfor %}
     async def add(self, entity: {{ Module }}) -> {{ Module }}: ...
     async def save(self, entity: {{ Module }}) -> {{ Module }}: ...
     async def remove(self, item_id: int) -> None: ...
