@@ -119,8 +119,6 @@ TLS, plus the global `ask` endpoint that gates it:
 {
 	on_demand_tls {
 		ask http://api:8000/internal/tenant-exists
-		interval 2m
-		burst 5
 	}
 }
 ```

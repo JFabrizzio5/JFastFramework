@@ -271,3 +271,133 @@ def test_production_leaves_automatic_https_on() -> None:
     )
     assert "auto_https off" not in caddyfile
     assert caddyfile.count("app.example.com {") == 1
+
+
+# -- the Caddyfile Caddy actually accepts --------------------------------
+
+CADDY_SHAPES = {
+    "one": lambda: ws(api("billing", 8010), spa("admin", 8020)),
+    "gateway": lambda: ws(api("billing", 8010), api("catalog", 8020), gateway(8030)),
+    "several": lambda: ws(api("billing", 8010), api("catalog", 8020), spa("admin", 8040)),
+}
+CADDY_VARIANTS: dict[str, dict[str, object]] = {
+    "plain": {},
+    "wildcard": {"wildcard_tenants": True},
+    "production": {"hostname": "app.example.com", "local_dev": False},
+    "production-wildcard": {
+        "hostname": "app.example.com",
+        "local_dev": False,
+        "wildcard_tenants": True,
+    },
+}
+
+
+def _every_caddyfile() -> dict[str, str]:
+    return {
+        f"{shape}-{variant}": render_caddyfile(build(), **options)  # type: ignore[arg-type]
+        for shape, build in CADDY_SHAPES.items()
+        for variant, options in CADDY_VARIANTS.items()
+    }
+
+
+def _site_level(caddyfile: str) -> list[str]:
+    """Directive names at depth one: inside a site block, outside any other."""
+    depth = 0
+    found: list[str] = []
+    for raw in caddyfile.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line == "}":
+            depth -= 1
+            continue
+        if depth == 1:
+            found.append(line.split()[0])
+        if line.endswith("{"):
+            depth += 1
+    return found
+
+
+@pytest.mark.parametrize("name", sorted(_every_caddyfile()))
+def test_no_header_up_at_site_level(name: str) -> None:
+    """0.1.0a12 wrote `header_up` at site level for --wildcard-tenants, and
+    Caddy refused the file: `unrecognized directive: header_up`. It is not
+    written at all now -- reverse_proxy already sends Host and
+    X-Forwarded-Host, and Caddy calls the explicit one unnecessary."""
+    caddyfile = _every_caddyfile()[name]
+    assert "header_up" not in _site_level(caddyfile)
+    assert "\theader_up" not in caddyfile
+    if "wildcard" in name:
+        assert "*.localhost" in caddyfile or "*.app.example.com" in caddyfile
+
+
+def test_on_demand_tls_carries_only_ask() -> None:
+    """Caddy 2.11 refuses on_demand_tls `interval` and `burst`."""
+    caddyfile = render_caddyfile(
+        ws(api("billing", 8010)),
+        hostname="app.example.com",
+        local_dev=False,
+        wildcard_tenants=True,
+    )
+    assert "ask http://billing:8010/internal/tenant-exists" in caddyfile
+    assert "interval" not in caddyfile
+    assert "burst" not in caddyfile
+
+
+def _docker() -> str | None:
+    import shutil
+
+    for candidate in (
+        shutil.which("docker"),
+        "/usr/local/bin/docker",
+        "/Applications/Docker.app/Contents/Resources/bin/docker",
+    ):
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
+def test_caddy_validates_every_generated_caddyfile(tmp_path: Path) -> None:
+    """The real binary, not a reading of the grammar: the image compose runs."""
+    import subprocess  # nosec B404 - fixed argv
+
+    docker = _docker()
+    if docker is None:
+        pytest.skip("docker is not installed")
+    if subprocess.run([docker, "info"], capture_output=True, check=False).returncode != 0:  # nosec B603
+        pytest.skip("the docker daemon is not running")
+    for name, caddyfile in _every_caddyfile().items():
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "Caddyfile").write_text(caddyfile, encoding="utf-8")
+    script = (
+        "for f in /configs/*/Caddyfile; do "
+        'echo "== $f"; caddy validate --adapter caddyfile --config "$f" || exit 1; '
+        "done"
+    )
+    done = subprocess.run(  # nosec B603
+        [
+            docker,
+            "run",
+            "--rm",
+            "-v",
+            f"{tmp_path}:/configs:ro",
+            "caddy:2-alpine",
+            "sh",
+            "-c",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    if done.returncode != 0 and "Unable to find image" in done.stderr and "== " not in done.stdout:
+        pytest.skip("caddy:2-alpine could not be pulled")
+    assert done.returncode == 0, done.stdout[-4000:] + done.stderr[-4000:]
+    assert done.stdout.count("Valid configuration") + done.stderr.count(
+        "Valid configuration"
+    ) == len(_every_caddyfile()), done.stdout + done.stderr
+    # Not only accepted: nothing Caddy would complain about on every start --
+    # an unformatted file, a redundant header, a deprecated option.
+    warnings = [line for line in done.stderr.splitlines() if '"level":"warn"' in line]
+    assert warnings == [], "\n".join(warnings)

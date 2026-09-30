@@ -174,6 +174,21 @@ with urllib.request.urlopen(request, timeout=10) as response:
 assert answer == {"bytes": 14}, answer
 PY
 
+step "Caddy accepts every Caddyfile jfast workspace caddy writes"
+# The plain one is already running above. The tenant variants are not, and
+# 0.1.0a12's --wildcard-tenants put `header_up` where Caddy refuses it -- the
+# container restarted in a loop. `caddy validate` is the binary's own parser.
+"${JFAST}" workspace caddy --wildcard-tenants -o Caddyfile.wildcard > /dev/null
+"${JFAST}" workspace caddy --hostname app.example.com --production --wildcard-tenants \
+  -o Caddyfile.production > /dev/null
+for variant in Caddyfile Caddyfile.wildcard Caddyfile.production; do
+  docker run --rm -v "$(pwd)/${variant}:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+    caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile > /dev/null 2>&1 \
+    || { docker run --rm -v "$(pwd)/${variant}:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+           caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile 2>&1 | tail -5
+         fail "caddy refuses the generated ${variant}"; }
+done
+
 docker compose -p "${WORKSPACE_PROJECT}" down -v > /dev/null 2>&1 || true
 
 

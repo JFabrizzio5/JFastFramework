@@ -120,8 +120,6 @@ on-demand, más el endpoint `ask` global que lo controla:
 {
 	on_demand_tls {
 		ask http://api:8000/internal/tenant-exists
-		interval 2m
-		burst 5
 	}
 }
 ```
