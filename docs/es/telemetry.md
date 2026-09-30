@@ -220,13 +220,13 @@ termina.
 
 Medido en proceso para 0.1.0a11: un `GET /users/{user_id}` llamado directo por la
 app ASGI (sin sockets ni cliente HTTP), `observability` en `WARNING`, mediana de
-siete rondas de 5,000 requests, laptop Apple serie M:
+siete rondas de 5,000 requests, tres corridas, laptop Apple serie M:
 
 | | us por request | sobre sin plugin |
 | --- | --- | --- |
-| Sin plugin `telemetry` | BENCH_WITHOUT | -- |
-| `telemetry` habilitado, sin endpoint | BENCH_NOEP | BENCH_NOEP_DELTA |
-| `telemetry` exportando (exportador en memoria) | BENCH_MEM | BENCH_MEM_DELTA |
+| Sin plugin `telemetry` | 41 | -- |
+| `telemetry` habilitado, sin endpoint | 41 | dentro del ruido entre corridas (±5) |
+| `telemetry` exportando (exportador en memoria) | 66 | +19 a +29 (mediana +24) |
 
 Sin endpoint el costo no es medible -- no hay nada instalado que cueste. Exportando,
 es el precio de un span de servidor por request y sus atributos; frente a un
@@ -250,5 +250,9 @@ spans de `llm` y `rag` con sus conteos y costo y sin texto de prompt, documento 
 respuesta en ningún atributo ni evento; un tracer roto, un backend roto y un
 exportador que falla sin romper nunca un request; la salida de compose.
 
-**No probado en CI:** exportar a un collector real por la red, y los contenedores
-Collector + Jaeger generados (revisados a mano, ver las notas de la versión).
+**Revisado a mano, no en CI** (2026-09-30): el par generado para compose --
+`otel/opentelemetry-collector:0.136.0` con su configuración en línea y
+`jaegertracing/jaeger:2.10.0` -- arrancó, un servicio exportó por OTLP/HTTP al
+collector, y las trazas se leyeron de vuelta en la API de Jaeger bajo el nombre del
+servicio, con la plantilla de ruta como nombre de span. **No probado:** un backend
+hospedado (Honeycomb, Tempo, Datadog) ni TLS hacia el collector.
