@@ -34,7 +34,10 @@ class FakeRepository:
 {% for unique in uniques %}
 
     {{ fit("async def " ~ unique.finder ~ "(", ["self"] + unique.parameter_list, ") -> " ~ entity_class ~ " | None:", indent=4) }}
-        {{ fit("return next(", ["(" ~ unique.loop_variable ~ " for " ~ unique.loop_variable ~ " in self.items.values() if " ~ unique.matches(unique.loop_variable) ~ ")", "None"], ")", indent=8) }}
+        for {{ unique.loop_variable }} in self.items.values():
+            if {{ unique.matches(unique.loop_variable) }}:
+                return {{ unique.loop_variable }}
+        return None
 {% endfor %}
 
     async def create(self, **values: Any) -> {{ entity_class }}:
