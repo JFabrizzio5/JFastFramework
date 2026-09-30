@@ -32,6 +32,14 @@ class {{ Module }}Stage(StrEnum):
     DRAFT = "draft"
     ACTIVE = "active"
     ARCHIVED = "archived"
+{% elif spec.enum_fields %}
+
+from enum import StrEnum
+{% for f in spec.enum_fields %}
+
+
+{{ str_enum_source(f.enum_class, f.members, doc="The values of " ~ module ~ "." ~ f.name ~ ".")|trim }}
+{% endfor %}
 {% else %}
 
 # None yet: `jfast new enum {{ Module }}Status --module {{ module }} --values a,b`.

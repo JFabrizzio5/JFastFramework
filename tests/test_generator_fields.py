@@ -28,6 +28,7 @@ from jfastframework.cli.fields import (
     parse_fields,
     parse_unique,
     split_fields,
+    str_enum_source,
 )
 from jfastframework.cli.main import app
 from jfastframework.cli.scaffold import MODULE_LAYOUTS
@@ -55,6 +56,7 @@ CUADRA = "cartera_id:int, mes:str(7), gasto:money, leida:bool=false, nota:text?"
         ("a:date", "date", "mapped_column()"),
         ("a:datetime", "datetime", "mapped_column(UTCDateTime())"),
         ("a:json", "dict[str, Any]", "mapped_column(JSON_COLUMN)"),
+        ("a:enum(x,y)", "A", "mapped_column(_by_value(A))"),
     ],
 )
 def test_every_type_maps_to_a_python_type_and_a_column(
@@ -117,11 +119,48 @@ def test_a_datetime_on_the_wire_must_carry_its_zone() -> None:
         ("b:bool=yes", "true or false"),
         ("mes:str(3)=abcd", "at most 3 characters"),
         ("dia:date=today", "set it in the service"),
+        ("tipo:enum", "at least two values"),
+        ("tipo:enum(solo)", "at least two values"),
+        ("tipo:enum(Personal,empresa)", "not snake_case"),
+        ("tipo:enum(a-b,c)", "not snake_case"),
+        ("tipo:enum(a,b,a)", "repeated"),
+        ("tipo:enum(a,b)=c", "one of its values: a, b"),
     ],
 )
 def test_every_mistake_names_its_fix(text: str, fix: str) -> None:
     with pytest.raises(FieldSpecError, match=fix):
         parse_field(text)
+
+
+def test_an_enum_is_a_str_enum_named_after_the_module_and_the_field() -> None:
+    field = parse_field("tipo:enum(personal, empresa,en_revision)=empresa", owner="Cartera")
+    assert field.members == ("personal", "empresa", "en_revision")
+    assert field.enum_class == "CarteraTipo"
+    assert field.annotation == "CarteraTipo"
+    # The default is a member, so the column, the model and the entity agree.
+    assert field.default == "CarteraTipo.EMPRESA"
+    assert field.create_declaration() == "tipo: CarteraTipo = CarteraTipo.EMPRESA"
+    assert field.update_declaration() == "tipo: CarteraTipo | None = None"
+    assert field.column == "mapped_column(_by_value(CarteraTipo), default=CarteraTipo.EMPRESA)"
+    assert field.check_arguments == ['_one_of("tipo", CarteraTipo)', 'name="tipo"']
+    assert [field.sample(0), field.sample(1)] == ["CarteraTipo.PERSONAL", "CarteraTipo.EMPRESA"]
+    assert (
+        parse_field("tipo:enum(a,b)?", owner="X").create_declaration()
+        == "tipo: XTipo | None = None"
+    )
+
+
+def test_an_enum_named_like_a_class_the_module_generates_is_refused() -> None:
+    # `read` would make CarteraRead, which is already the read model.
+    with pytest.raises(FieldSpecError, match="already uses for its read class"):
+        module_fields("read:enum(a,b)", (), bare=False, table="t", owner="Cartera")
+
+
+def test_the_enum_source_is_what_jfast_new_enum_writes() -> None:
+    assert str_enum_source("Estado", ["abierto", "en_revision"]) == (
+        'class Estado(StrEnum):\n    """Estado."""\n\n'
+        '    ABIERTO = "abierto"\n    EN_REVISION = "en_revision"\n'
+    )
 
 
 def test_a_field_declared_twice_is_refused() -> None:
@@ -214,11 +253,21 @@ FORMS = {
     "every-type": [
         "--fields",
         "a:int, b:bigint?, c:str(20)=abierto, d:text?, e:bool=true, f:float?, "
-        "g:decimal(12,2)=0, h:money, i:date, j:datetime?, k:json?",
+        "g:decimal(12,2)=0, h:money, i:date, j:datetime?, k:json?, "
+        "m:enum(abierta,en_revision,cerrada)=abierta",
         "--unique",
         "a",
         "--unique",
         "c,i",
+    ],
+    # Enums on their own: required, defaulted, optional, and one in a unique
+    # key, so its class reaches the finders and the rules as well.
+    "enums": [
+        "--fields",
+        "tipo:enum(personal,empresa,otra), estado:enum(abierto,cerrado)=abierto, "
+        "prioridad:enum(baja,alta)?, nombre:str(40)",
+        "--unique",
+        "nombre,tipo",
     ],
 }
 
@@ -402,3 +451,68 @@ def test_a_required_unique_key_keeps_its_constraint(service: Path) -> None:
     )
     assert "UniqueConstraint(" in everything and "postgresql_where" not in everything
     assert "is None:" not in everything.split("ensure_folio_is_available")[1][:400]
+
+
+#: Where each layout keeps what an enum field must reach.
+ENUM_FILES = {
+    "modular": {
+        "enums": "enums.py",
+        "table": "models/cartera_entity.py",
+        "wire": "models/cartera_models.py",
+    },
+    "layered": {"enums": "enums.py", "table": "models.py", "wire": "schemas.py"},
+    "screaming": {"enums": "enums.py", "table": "storage.py", "wire": "http.py"},
+    "hexagonal": {
+        "enums": "domain/enums.py",
+        "table": "infrastructure/orm.py",
+        "wire": "adapters/http.py",
+    },
+}
+
+
+@pytest.mark.parametrize("layout", MODULE_LAYOUTS)
+def test_an_enum_field_reaches_every_layer(service: Path, layout: str) -> None:
+    # Found building a SaaS from scratch: `--fields` had no enum, so the field
+    # was a str in Create/Update/Read and the StrEnum was wired by hand, three
+    # places per enum.
+    result = runner.invoke(
+        app,
+        [
+            *["new", "module", "cartera", "--layout", layout],
+            *["--fields", "nombre:str(40), tipo:enum(personal,empresa,otra)=personal"],
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    module = service / "modules" / "cartera"
+    files = {
+        key: (module / path).read_text(encoding="utf-8") for key, path in ENUM_FILES[layout].items()
+    }
+
+    assert "class CarteraTipo(StrEnum):" in files["enums"]
+    assert 'EMPRESA = "empresa"' in files["enums"]
+    assert "None yet" not in files["enums"]
+    assert "tipo: Mapped[CarteraTipo] = mapped_column(" in files["table"]
+    assert 'CheckConstraint(_one_of("tipo", CarteraTipo), name="tipo")' in files["table"]
+    assert "native_enum=False" in files["table"]
+    assert "tipo: CarteraTipo = CarteraTipo.PERSONAL" in files["wire"]
+    assert "tipo: CarteraTipo | None = None" in files["wire"]
+    assert "    tipo: CarteraTipo\n" in files["wire"]
+    assert "tipo: CarteraTipo\n" in (module / "public.py").read_text(encoding="utf-8")
+    readme = (module / "README.md").read_text(encoding="utf-8")
+    assert "enum(personal, empresa, otra) -- `CarteraTipo`" in readme
+
+
+def test_jfast_new_enum_drops_the_placeholder_it_replaces(service: Path) -> None:
+    result = runner.invoke(app, ["new", "module", "cartera", "--fields", "nombre:str(40)"])
+    assert result.exit_code == 0, result.output
+    enums = service / "modules" / "cartera" / "enums.py"
+    assert "# None yet: `jfast new enum" in enums.read_text(encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["new", "enum", "TipoCartera", "--module", "cartera", "--values", "personal,empresa"]
+    )
+    assert result.exit_code == 0, result.output
+    source = enums.read_text(encoding="utf-8")
+    assert "None yet" not in source
+    assert "class TipoCartera(StrEnum):" in source
+    _gates(service)

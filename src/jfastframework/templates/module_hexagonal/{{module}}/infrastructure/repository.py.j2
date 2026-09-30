@@ -24,6 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jfastframework.db import BaseRepository
 
 from ..domain.entities import {{ Module }}
+{% if spec.enum_names(keys=true) %}
+{{ spec.enum_import("..domain.enums", keys=true) }}
+{% endif %}
 from ..domain.ports import {{ Module }}Page
 from .orm import {{ Module }}Row, to_columns
 

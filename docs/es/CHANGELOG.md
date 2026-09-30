@@ -82,6 +82,27 @@ imagen de producción, el frontend generado en un navegador, una subida.
   lista cada firma de fachada que admite None (`str | None`, `Optional[str]`,
   `= None`) como paso previo al cambio. `jfast upgrade --check`:
   `facade-tenant-optional`, para servicios con tenancy.
+- **`jfast new enum` dejaba el comentario `# None yet: jfast new enum ...` del
+  módulo arriba del enum que escribía.** El marcador se quita cuando llega el
+  primer enum.
+
+### Agregado
+
+- **`--fields` conoce los enums: `tipo:enum(personal,empresa,otra)`** (con `?`
+  y `=personal` como cualquier otro tipo, y permitido en una llave `--unique`).
+  Escribe `class CarteraTipo(StrEnum)` en el archivo de enums del módulo -- la
+  forma que escribe `jfast new enum` -- y lo usa en la columna, en los modelos
+  Create/Update/Read (cualquier otro valor es un 422, y las pruebas generadas
+  lo comprueban), en la entidad de dominio y en el DTO de `public.py`, en los
+  cuatro layouts. La columna es `Enum(native_enum=False)` guardando el valor
+  del miembro, más un CHECK con nombre construido desde el enum: autogenerate
+  lo escribe como una columna y un `CheckConstraint` (con
+  `create_constraint=True` escribía el CHECK dos veces), se lee de vuelta como
+  el enum, y SQLite crea la misma tabla. Verificado en PostgreSQL y SQLite: la
+  migración generada se aplica, un segundo autogenerate no encuentra nada, y
+  un INSERT crudo con otro valor se rechaza. Autogenerate no compara
+  restricciones CHECK, así que un miembro nuevo necesita una migración escrita
+  a mano (docs/modules.md dice cuál).
 
 ## [0.1.0a11] - 2026-09-30
 

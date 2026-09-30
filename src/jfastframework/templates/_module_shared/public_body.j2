@@ -9,6 +9,9 @@ from __future__ import annotations
 {{ line }}
 {% endfor %}
 
+{% if spec.enum_fields %}
+{{ spec.enum_import(enum_module) }}
+{% endif %}
 {{ repository_import }}
 
 if TYPE_CHECKING:

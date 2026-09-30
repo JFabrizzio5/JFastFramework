@@ -553,6 +553,7 @@ campo := nombre ":" tipo ["?"] ["=" default]
 | `date` | `date` | `DATE` | |
 | `datetime` | `datetime` | `TIMESTAMPTZ` | `AwareDatetime`: una sin zona es un 422 |
 | `json` | `dict[str, Any]` | `JSONB` (`JSON` fuera de PostgreSQL) | |
+| `enum(a,b,...)` | un `StrEnum`, `<Modulo><Campo>` | `VARCHAR` + `CHECK (campo IN ('a', 'b'))` | el enum: cualquier otro valor es un 422 |
 
 - `?` lo hace nulable, y opcional al crear.
 - `=valor` es el default, escrito en la sintaxis del tipo: `=0`, `=false`,
@@ -564,6 +565,23 @@ campo := nombre ":" tipo ["?"] ["=" default]
   `tenant_id` en la misma tabla compartirían el del naming convention.
 - `money` es entero a propósito. Los floats no suman al centavo; `decimal(12,2)`
   es la alternativa cuando el monto tiene de verdad una escala fija.
+- `enum(personal,empresa,otra)` escribe `class CarteraTipo(StrEnum)` en el
+  archivo de enums del módulo (`domain/enums.py` en hexagonal), con la misma
+  forma que escribe `jfast new enum`, y la usa en todos los lugares donde
+  aparece el campo: la columna, los modelos de creación/actualización/lectura,
+  la entidad de dominio y `public.py`. Los valores van en snake_case, al menos
+  dos; el miembro es el valor en mayúsculas (`en_revision` es `EN_REVISION`). El
+  default es uno de ellos (`=personal`), `?` lo hace opcional, y puede formar
+  parte de una llave `--unique`.
+  La columna es `Enum(native_enum=False)` de SQLAlchemy guardando el *valor*
+  del miembro -- un `VARCHAR`, así que la fila se lee de vuelta como el enum y
+  el SQLite en memoria de una prueba crea la misma tabla -- más un CHECK con
+  nombre (`ck_<tabla>_<campo>`) construido desde el enum. No un `ENUM` nativo
+  de PostgreSQL: autogenerate escribe el par como una columna `sa.Enum(...)` y
+  un `sa.CheckConstraint`, donde `create_constraint=True` escribía el CHECK dos
+  veces. Autogenerate no compara restricciones CHECK, así que un miembro nuevo
+  necesita una migración que borre `ck_<tabla>_<campo>` y lo cree de nuevo (y
+  que ensanche la columna si el valor nuevo es más largo que el más largo).
 
 Cada error se rechaza antes de escribir un archivo, con el arreglo en el
 mensaje: un tipo desconocido lista los que existen, `id` o `tenant_id` avisa que

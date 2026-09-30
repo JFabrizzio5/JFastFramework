@@ -31,6 +31,7 @@ A caller declares the dependency in contracts.toml:
 """
 
 {% set read_from = "entity" %}
+{% set enum_module = ".domain.enums" %}
 {% set repository_import = "from .infrastructure.repository import Sql" ~ Module ~ "Repository" %}
 {% set fetch = "entity = await Sql" ~ Module ~ "Repository(session, tenant_id=tenant_id).get(" ~ module ~ "_id)" %}
 {% set fetch_note = "# Through the port's adapter, which already turns rows into entities: the\n    # facade only decides which of the entity's fields are promised outside.\n    # A write added here calls the use case, so the rules run whoever asked." %}

@@ -27,6 +27,9 @@ import pytest
 from jfastframework.db import Page
 from jfastframework.errors import {{ (["NotFoundError", "ValidationError"] + (["ConflictError"] if uniques else []))|sort|join(", ") }}
 
+{% if spec.enum_fields %}
+{{ spec.enum_import("modules." ~ module ~ ".enums") }}
+{% endif %}
 from modules.{{ module }}.storage import {{ Module }}Row
 from modules.{{ module }}.use_cases import {{ Module }}UseCases
 

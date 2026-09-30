@@ -7,8 +7,8 @@ touches only this file.
 
 from __future__ import annotations
 
-{% if spec.stdlib() %}
-{% for line in import_lines(spec.stdlib()) %}
+{% if spec.entity_stdlib() %}
+{% for line in import_lines(spec.entity_stdlib()) %}
 {{ line }}
 {% endfor %}
 
@@ -20,7 +20,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from jfastframework.db import Base, BaseRepository, TenantMixin, TimestampMixin{{ ", UTCDateTime" if spec.needs_utc_datetime }}
 
-from .{{ module }} import {{ Module }}
+{% for line in import_lines(["." ~ module ~ "." ~ Module] + spec.enum_dotted(".enums")) %}
+{{ line }}
+{% endfor %}
 {% set entity_class = Module ~ "Row" %}
 {% set entity_bases = "Base, TimestampMixin, TenantMixin" %}
 {% include "_module_shared/entity_body.j2" %}

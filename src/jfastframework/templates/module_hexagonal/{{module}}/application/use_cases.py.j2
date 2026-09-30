@@ -19,6 +19,9 @@ from __future__ import annotations
 from jfastframework.errors import {{ (["NotFoundError", "ValidationError"] + (["ConflictError"] if uniques else []))|sort|join(", ") }}
 
 from ..domain.entities import {{ Module }}, {{ Module }}RuleViolation
+{% if spec.enum_names(keys=true) %}
+{{ spec.enum_import("..domain.enums", keys=true) }}
+{% endif %}
 from ..domain.ports import {{ Module }}Page, {{ Module }}Repository
 
 # An unbounded page size is how one client takes the service down for

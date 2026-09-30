@@ -12,7 +12,7 @@ they change for different reasons.
 
 from __future__ import annotations
 
-{% for line in import_lines(spec.stdlib() + ["typing.Any"]) %}
+{% for line in import_lines(spec.entity_stdlib() + ["typing.Any"]) %}
 {{ line }}
 {% endfor %}
 
@@ -24,6 +24,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from jfastframework.db import Base, TenantMixin, TimestampMixin{{ ", UTCDateTime" if spec.needs_utc_datetime }}
 
 from ..domain.entities import {{ Module }}
+{% if spec.enum_fields %}
+{{ spec.enum_import("..domain.enums") }}
+{% endif %}
 {% set entity_class = Module ~ "Row" %}
 {% set entity_bases = "Base, TimestampMixin, TenantMixin" %}
 {% include "_module_shared/entity_body.j2" %}

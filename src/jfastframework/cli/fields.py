@@ -17,12 +17,19 @@ Grammar, one field per comma (commas inside parentheses do not split)::
     field    := name ":" type ["?"] ["=" default]
     type     := int | bigint | str | str(N) | text | bool | float
               | decimal(P,S) | money | date | datetime | json
+              | enum(value, value, ...)
 
 ``?`` makes the column nullable. ``=default`` is the value a create without
 the field gets; it is written in the type's own syntax (``=0``, ``=true``,
 ``=pending``, ``="two words"``, ``=0.00``). ``date``, ``datetime`` and ``json``
 take no default: a default date is a decision about "now" that belongs in the
 service, where the tenant's zone is known.
+
+``enum(personal,empresa,otra)`` generates a ``StrEnum`` in the module's enums
+file, named after the module and the field (``CarteraTipo``), stores its value
+in a string column that a CHECK constraint holds to those values, and types the
+Create/Update/Read models with it, so any other value is a 422. Its default is
+one of the values (``=personal``).
 
 Every parse error names the field, what was wrong, and the fix, because the
 person reading it is typing a command line, not reading this docstring.
@@ -53,6 +60,7 @@ TYPES = (
     "date",
     "datetime",
     "json",
+    "enum",
 )
 
 #: `str` without a length. VARCHAR(255) is a limit nobody chose, which is why
@@ -94,6 +102,22 @@ EXAMPLE_FIELDS = "name:str(200), description:str(2000)?, is_active:bool=true"
 EXAMPLE_UNIQUE = ("name",)
 
 _NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+#: The classes a module already generates, as ``<Module><suffix>``: an enum
+#: named like one of them would shadow it in the file that imports both.
+_GENERATED_SUFFIXES = frozenset(
+    {
+        "Create",
+        "Update",
+        "Read",
+        "Summary",
+        "Row",
+        "Page",
+        "RuleViolation",
+        "UseCases",
+        "Service",
+        "Repository",
+    }
+)
 _TYPE = re.compile(r"(?P<type>[a-z]+)(?:\((?P<args>[^)]*)\))?(?P<nullable>\?)?")
 _POSTGRES_IDENTIFIER_LIMIT = 63
 
@@ -115,6 +139,9 @@ class FieldSpec:
     #: The Python literal of the default, or None when there is none. A
     #: nullable field with no default defaults to None, which is not this.
     default: str | None = None
+    #: ``enum`` only: the values, in declaration order, and the StrEnum's name.
+    members: tuple[str, ...] = ()
+    enum_class: str | None = None
 
     # -- Python ---------------------------------------------------------
 
@@ -132,6 +159,7 @@ class FieldSpec:
             "date": "date",
             "datetime": "datetime",
             "json": "dict[str, Any]",
+            "enum": self.enum_class or "str",
         }[self.type]
 
     @property
@@ -166,6 +194,7 @@ class FieldSpec:
             "decimal": f"Numeric({self.precision}, {self.scale})",
             "datetime": "UTCDateTime()",
             "json": "JSON_COLUMN",
+            "enum": f"_by_value({self.enum_class})",
         }.get(self.type)
         if sa_type:
             args.append(sa_type)
@@ -187,6 +216,7 @@ class FieldSpec:
             "text": {"Text"},
             "decimal": {"Numeric"},
             "json": {"JSON"},
+            "enum": {"CheckConstraint", "Enum"},
         }.get(self.type, set())
 
     # -- Pydantic -------------------------------------------------------
@@ -266,7 +296,25 @@ class FieldSpec:
             return f"date(2026, 1, {n})"
         if self.type == "datetime":
             return f"datetime(2026, 1, {n}, 12, 0, tzinfo=UTC)"
+        if self.type == "enum":
+            return self.member(self.members[min(index, len(self.members) - 1)])
         return f'{{"key": {n}}}'
+
+    def member(self, value: str) -> str:
+        """``CarteraTipo.PERSONAL``: one value of an enum field, as source."""
+        return f"{self.enum_class}.{value.upper()}"
+
+    @property
+    def outside(self) -> str | None:
+        """A value the enum does not have, or None for any other type."""
+        if self.type != "enum":
+            return None
+        return _quoted(f"not_a_{self.name}")
+
+    @property
+    def check_arguments(self) -> list[str]:
+        """``CheckConstraint(...)``'s arguments: the CHECK holding an enum column to its values."""
+        return [f'_one_of("{self.name}", {self.enum_class})', f'name="{self.name}"']
 
     def check(self, source: str, index: int) -> str:
         """``source == sample``, or ``is`` for a bool, the way ruff wants it compared."""
@@ -431,6 +479,33 @@ class ModuleFields:
     def unique_names(self) -> set[str]:
         return {name for unique in self.uniques for name in unique.names}
 
+    @property
+    def enum_fields(self) -> tuple[FieldSpec, ...]:
+        return tuple(f for f in self.fields if f.type == "enum")
+
+    def enum_names(self, *, keys: bool = False) -> list[str]:
+        """The StrEnum classes a file uses: every field's, or only the unique keys'."""
+        chosen = (
+            [f for u in self.uniques for f in u.fields if f.type == "enum"]
+            if keys
+            else list(self.enum_fields)
+        )
+        return sorted({f.enum_class for f in chosen if f.enum_class})
+
+    def enum_dotted(self, module: str, *, keys: bool = False) -> list[str]:
+        """``["..enums.CarteraTipo"]``: the enums as dotted names for import_lines()."""
+        return [f"{module}.{name}" for name in self.enum_names(keys=keys)]
+
+    def enum_import(self, module: str, *, keys: bool = False) -> str:
+        """``from ..enums import CarteraTipo``, or "" when the file needs none."""
+        lines = import_lines(self.enum_dotted(module, keys=keys))
+        return lines[0] if lines else ""
+
+    def entity_stdlib(self) -> list[str]:
+        """What a table's file needs from the standard library: its fields', and
+        ``StrEnum`` for the column helper an enum field brings."""
+        return sorted({*self.stdlib(), *(["enum.StrEnum"] if self.enum_fields else [])})
+
     def stdlib(self, *, wire: bool = False) -> list[str]:
         """Dotted standard-library names the fields' types need.
 
@@ -552,6 +627,7 @@ class ModuleFields:
             "bare": not self.fields,
             "spec": self,
             "import_lines": import_lines,
+            "str_enum_source": str_enum_source,
             "tuple_source": tuple_source,
             "fit": fit,
             **self.extra,
@@ -625,10 +701,16 @@ def import_lines(names: Iterable[str]) -> list[str]:
     for dotted in names:
         module, _, name = dotted.rpartition(".")
         grouped.setdefault(module, set()).add(name)
-    return [
-        f"from {module} import {', '.join(sorted(found, key=_isort_key))}"
-        for module, found in sorted(grouped.items())
-    ]
+    lines: list[str] = []
+    for module, found in sorted(grouped.items()):
+        ordered = sorted(found, key=_isort_key)
+        line = f"from {module} import {', '.join(ordered)}"
+        if len(line) > LINE_LENGTH:
+            # Past the limit isort wraps it one name per line -- a table with
+            # an enum, a JSON column and a unique key imports eight names.
+            line = f"from {module} import (\n" + "".join(f"    {n},\n" for n in ordered) + ")"
+        lines.append(line)
+    return lines
 
 
 def split_fields(text: str) -> list[str]:
@@ -650,8 +732,27 @@ def split_fields(text: str) -> list[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
-def parse_field(text: str) -> FieldSpec:
-    """One ``name:type[?][=default]`` into a FieldSpec, or FieldSpecError."""
+def _pascal(snake: str) -> str:
+    return "".join(part[:1].upper() + part[1:] for part in snake.split("_") if part)
+
+
+def str_enum_source(class_name: str, values: Sequence[str], *, doc: str | None = None) -> str:
+    """A ``StrEnum`` class as source: what `jfast new enum` and ``enum(...)`` write.
+
+    Each member is its value upper-cased, so ``in_review`` is ``IN_REVIEW`` and
+    the value -- the wire format -- is exactly what was typed.
+    """
+    lines = [f"class {class_name}(StrEnum):", f'    """{doc or class_name + "."}"""', ""]
+    lines += [f'    {value.upper()} = "{value}"' for value in values]
+    return "\n".join(lines) + "\n"
+
+
+def parse_field(text: str, *, owner: str = "") -> FieldSpec:
+    """One ``name:type[?][=default]`` into a FieldSpec, or FieldSpecError.
+
+    ``owner`` is the module's class name; an enum field's StrEnum is named
+    after it and the field (``Cartera`` + ``tipo`` is ``CarteraTipo``).
+    """
     name, colon, rest = text.strip().partition(":")
     type_text, equals, raw = rest.partition("=")
     # The default is the one place spaces are meaningful ("=two words").
@@ -688,14 +789,26 @@ def parse_field(text: str) -> FieldSpec:
         )
 
     length = precision = scale = None
+    members: tuple[str, ...] = ()
+    enum_class: str | None = None
     if kind == "str":
         length = _parse_length(name, args)
     elif kind == "decimal":
         precision, scale = _parse_precision(name, args)
+    elif kind == "enum":
+        members = _parse_members(name, args)
+        enum_class = f"{owner}{_pascal(name)}"
+        suffix = _pascal(name)
+        if owner and suffix in _GENERATED_SUFFIXES:
+            raise FieldSpecError(
+                f"field {name!r}: its enum would be called {enum_class}, which the module "
+                f"already uses for its {suffix.lower()} class. Rename the field "
+                f"(e.g. {name}_kind)"
+            )
     elif args is not None:
         raise FieldSpecError(
             f"field {name!r}: {kind} takes no arguments, but got ({args}). "
-            f"Only str(N) and decimal(P,S) have them"
+            f"Only str(N), decimal(P,S) and enum(a,b) have them"
         )
 
     spec = FieldSpec(
@@ -705,6 +818,8 @@ def parse_field(text: str) -> FieldSpec:
         length=length,
         precision=precision,
         scale=scale,
+        members=members,
+        enum_class=enum_class,
     )
     if raw_default is None:
         return spec
@@ -724,6 +839,27 @@ def _parse_length(name: str, args: str | None) -> int:
             f"Use text for a string with no limit"
         )
     return length
+
+
+def _parse_members(name: str, args: str | None) -> tuple[str, ...]:
+    values = [part.strip() for part in (args or "").split(",")]
+    example = f"{name}:enum(personal,empresa,otra)"
+    if len([v for v in values if v]) < 2:
+        raise FieldSpecError(
+            f"field {name!r}: enum needs at least two values, e.g. {example}. "
+            f"A field with one possible value is a constant"
+        )
+    bad = [value for value in values if not _NAME.match(value)]
+    if bad:
+        raise FieldSpecError(
+            f"field {name!r}: enum value(s) {', '.join(map(repr, bad))} are not snake_case: "
+            f"use lowercase letters, digits and underscores, starting with a letter, "
+            f"e.g. {example}. The value is what is stored and sent over the wire"
+        )
+    repeated = sorted({value for value in values if values.count(value) > 1})
+    if repeated:
+        raise FieldSpecError(f"field {name!r}: enum value(s) {', '.join(repeated)} repeated")
+    return tuple(values)
 
 
 def _parse_precision(name: str, args: str | None) -> tuple[int, int]:
@@ -779,15 +915,21 @@ def _parse_default(spec: FieldSpec, raw: str) -> str:
         if spec.length is not None and len(value) > spec.length:
             raise wrong(f"at most {spec.length} characters")
         return _quoted(value)
+    if spec.type == "enum":
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if value not in spec.members:
+            raise wrong(f"one of its values: {', '.join(spec.members)}")
+        return spec.member(value)
     raise FieldSpecError(
         f"field {name!r}: a {spec.type} takes no default. Make it nullable ({name}:{spec.type}?) "
         f"and set it in the service, where the request's tenant and zone are known"
     )
 
 
-def parse_fields(text: str) -> tuple[FieldSpec, ...]:
+def parse_fields(text: str, *, owner: str = "") -> tuple[FieldSpec, ...]:
     """The whole ``--fields`` value."""
-    specs = tuple(parse_field(part) for part in split_fields(text))
+    specs = tuple(parse_field(part, owner=owner) for part in split_fields(text))
     if not specs:
         raise FieldSpecError('--fields is empty: pass at least one, e.g. --fields "name:str(120)"')
     seen: set[str] = set()
@@ -835,6 +977,7 @@ def module_fields(
     *,
     bare: bool,
     table: str,
+    owner: str = "",
 ) -> ModuleFields:
     """What the three ways of calling `jfast new module` mean.
 
@@ -855,5 +998,5 @@ def module_fields(
             )
         example = parse_fields(EXAMPLE_FIELDS)
         return ModuleFields(example, parse_unique(EXAMPLE_UNIQUE, example, table), example=True)
-    specs = parse_fields(fields)
+    specs = parse_fields(fields, owner=owner)
     return ModuleFields(specs, parse_unique(unique, specs, table))

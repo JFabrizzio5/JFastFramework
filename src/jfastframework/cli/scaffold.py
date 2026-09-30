@@ -582,7 +582,7 @@ def module_context(
     snake = to_snake(name)
     plural = pluralize(snake, language)
     resolved_table = table or plural
-    declared = module_fields(fields, unique, bare=bare, table=resolved_table)
+    declared = module_fields(fields, unique, bare=bare, table=resolved_table, owner=to_pascal(name))
     return {
         "module": snake,
         "Module": to_pascal(name),

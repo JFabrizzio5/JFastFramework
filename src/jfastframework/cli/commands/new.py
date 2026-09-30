@@ -15,7 +15,7 @@ from jfastframework.cli import modules as module_registry
 from jfastframework.cli import ui
 from jfastframework.cli import ui as cli_ui
 from jfastframework.cli.common import _report
-from jfastframework.cli.fields import FieldSpecError
+from jfastframework.cli.fields import FieldSpecError, str_enum_source
 from jfastframework.cli.generate import (
     _generate_gateway,
     _print_next_steps,
@@ -159,7 +159,8 @@ def new_module(
         help=(
             'The real fields, e.g. "cartera_id:int, mes:str(7), leida:bool=false, nota:text?". '
             "Types: int, bigint, str(N), text, bool, float, decimal(P,S), money, date, "
-            "datetime, json; ? = nullable; =value = default. See docs/modules.md."
+            "datetime, json, enum(a,b) (a StrEnum); ? = nullable; =value = default. "
+            "See docs/modules.md."
         ),
     ),
     unique: list[str] = typer.Option(
@@ -456,11 +457,12 @@ def _import_str_enum(source: str) -> str:
     return "from enum import StrEnum\n\n" + source
 
 
+#: The comment a generated module's enums file carries until it has an enum.
+_PLACEHOLDER = re.compile(r"^# None yet: `jfast new enum .*\n", flags=re.MULTILINE)
+
+
 def _render_enum(class_name: str, members: list[str]) -> str:
-    lines = [f"class {class_name}(StrEnum):", f'    """{class_name}."""', ""]
-    for member in members:
-        lines.append(f'    {to_snake(member).upper()} = "{to_snake(member)}"')
-    return "\n".join(lines) + "\n"
+    return str_enum_source(class_name, [to_snake(member) for member in members])
 
 
 @new_app.command("enum")
@@ -540,7 +542,9 @@ def new_enum(
         if f"class {class_name}(" in existing:
             typer.echo(f"{class_name} is already in {target}.")
             raise typer.Exit(1)
-        existing = _import_str_enum(existing)
+        # The generated file's "None yet: jfast new enum ..." is not true any
+        # more, and left above the first enum it reads as if it were.
+        existing = _import_str_enum(_PLACEHOLDER.sub("", existing))
         target.write_text(existing.rstrip("\n") + "\n\n\n" + body, encoding="utf-8")
     else:
         target.write_text(ENUM_HEADER + body, encoding="utf-8")

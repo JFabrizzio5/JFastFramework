@@ -11,6 +11,13 @@ async def test_an_update_may_not_null_a_required_field() -> None:
     with pytest.raises(pydantic.ValidationError):
         {{ Module }}Update.model_validate({"{{ required.name }}": None})
 {% endif %}
+{% for f in fields if f.outside %}
+
+
+async def test_a_{{ f.name }}_outside_its_enum_is_refused() -> None:
+    with pytest.raises(pydantic.ValidationError):
+        {{ fit(Module ~ "Create.model_validate(", ["first().model_dump() | {" ~ f.name|tojson ~ ": " ~ f.outside ~ "}"], ")", indent=8) }}
+{% endfor %}
 {% for f in fields if f.too_long %}
 {% if loop.first %}
 

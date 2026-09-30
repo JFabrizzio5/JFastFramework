@@ -27,6 +27,9 @@ from jfastframework.errors import {{ (["NotFoundError", "ValidationError"] + (["
 
 from modules.{{ module }}.application.use_cases import MAX_PAGE_SIZE, {{ Module }}UseCases
 from modules.{{ module }}.domain.entities import {{ Module }}
+{% if spec.enum_fields %}
+{{ spec.enum_import("modules." ~ module ~ ".domain.enums") }}
+{% endif %}
 from modules.{{ module }}.tests import InMemory{{ Module }}Repository
 
 # Explicit rather than relying on `asyncio_mode = auto`, so these pass in a
