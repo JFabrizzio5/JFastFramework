@@ -18,6 +18,7 @@ from jfastframework.cli import explain as explain_cli
 from jfastframework.cli import migrations as migrations_cli
 from jfastframework.cli import upgrade as upgrade_cli
 from jfastframework.cli.commands import add as add_cli
+from jfastframework.cli.commands import bench as bench_cli
 from jfastframework.cli.commands import contracts as contracts_cli
 from jfastframework.cli.commands import deploy as deploy_cli
 from jfastframework.cli.commands import describe as describe_cli
@@ -83,6 +84,7 @@ migrations_cli.register(app)
 check_cli.register(app)
 ai_cli.register(app)
 upgrade_cli.register(app)
+bench_cli.register(app)
 explain_cli.register(app)
 
 
