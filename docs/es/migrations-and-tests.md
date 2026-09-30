@@ -243,7 +243,11 @@ generó una versión vieja, y el hallazgo es correcto.
 #### Los conteos de filas necesitan una base de datos
 
 La línea `Reason` de `plan` da un conteo real cuando resuelve un DSN — `--dsn`,
-después `JFAST_DB_DSN`, después `.env` en la raíz del proyecto:
+después `JFAST_DB_DSN`, después `.env` en la raíz del proyecto. En un workspace
+ese `.env` se lee traducido para el host, como lo leen `jfast serve` y `jfast
+exec` (los nombres de contenedor pasan a `localhost:<puerto publicado>` y
+`${...}` se llena desde el `.env` del workspace), así que `jfast migration
+check` en el host llega a la base que publica el archivo de compose:
 
 ```
 Migration:  0004_add_status

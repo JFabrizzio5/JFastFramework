@@ -12,6 +12,8 @@ calls ``auth.issuer`` for you. A service with its own user store calls
 ``auth.issuer`` from its own login route instead.
 """
 
+from typing import TYPE_CHECKING
+
 from jfastframework.auth.jwks import JWKSClient, JWKSError
 from jfastframework.auth.principal import Grant, Principal, current_principal
 from jfastframework.auth.store import MemoryTokenStore, RedisTokenStore, TokenStore
@@ -22,6 +24,19 @@ from jfastframework.auth.tokens import (
     issue,
     verify,
 )
+
+if TYPE_CHECKING:
+    # What the type checker sees in place of ``__getattr__`` below, which it can
+    # only type as ``object``: under mypy --strict the documented
+    # ``Depends(require_auth)`` was an error in every project that followed
+    # the docs. Never executed, so the lazy import stays lazy.
+    from jfastframework.plugins.builtin.auth import (
+        optional_auth,
+        principal_of,
+        require_auth,
+        require_roles,
+        require_scopes,
+    )
 
 __all__ = [
     "SUPPORTED_ALGORITHMS",

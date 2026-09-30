@@ -195,8 +195,6 @@ on-demand, más el endpoint `ask` global que lo controla:
 {
 	on_demand_tls {
 		ask http://api:8000/internal/tenant-exists
-		interval 2m
-		burst 5
 	}
 }
 ```
@@ -224,6 +222,12 @@ nuevo que ve Caddy, incluidos los que te están sondeando.
 
 También necesitas un registro DNS wildcard (`*.app.example.com`) apuntando a la
 misma dirección.
+
+Un SPA servido desde un host que inicia sesión en el subdominio de cada tenant
+hace un request de otro origen, y `cors_origins` es una lista de orígenes
+exactos. `cors_origin_regex = 'https://[a-z0-9-]+\.app\.example\.com'` en
+`[app]` permite a todos los tenants de una vez -- ver [Despliegue,
+CORS](deploy.md#cors).
 
 ## Exigir un tenant
 

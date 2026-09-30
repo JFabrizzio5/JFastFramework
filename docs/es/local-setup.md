@@ -190,8 +190,13 @@ cableado está mal lo ves de inmediato y no en tu primer feature de verdad.
 
 ```bash
 cd ~/projects/shop
+(cd shop-web && npm install && npm run build)   # el SPA que sirve Caddy
 docker compose up --build
 ```
+
+Caddy sirve el frontend desde `shop-web/dist`, que es donde escribe `npm run
+build`; el compose no corre ningún contenedor de Node, así que el build va
+primero. Sin él la API sigue respondiendo bajo `/api` y `/` sale vacío.
 
 ---
 

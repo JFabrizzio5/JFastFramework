@@ -92,7 +92,11 @@ Un disco de `storage` con `driver = "local"` recibe un volumen nombrado,
 montado bajo el WORKDIR de la imagen. Sin él los archivos subidos viven en el
 filesystem del propio contenedor y el siguiente `docker build` los tira,
 mientras las filas que los referencian se quedan. Los dos generadores lo emiten
-y lo nombran igual, `<service>_<disk>_data`.
+y lo nombran igual, `<service>_<disk>_data`. El Dockerfile tiene que crear las
+mismas raíces para `appuser`, o Docker crea el punto de montaje como root y el
+disco no puede escribir: `jfast deploy dockerfile` las lee de
+`[plugin.storage.disks]` -- ver
+[Storage](storage.md#discos-locales-en-la-imagen-de-producción).
 
 ### Nombres de contenedor
 
@@ -318,6 +322,28 @@ Un valor explícito siempre gana, incluido un `0` explícito: la subida llena un
 setting que nadie eligió, nunca pisa uno que alguien sí eligió. `[plugins]
 disabled` también gana — un servicio que deshabilita `storage` vuelve al par
 normal.
+
+### CORS
+
+Apagado hasta que se lista un origen. `cors_origins` es una lista de orígenes
+exactos; `cors_origin_regex` es un patrón para los que una lista no puede
+escribir -- uno por subdominio de tenant, cuando el SPA en `app.example.com`
+inicia sesión en `acme.example.com/api/auth/login`:
+
+```toml
+[app]
+cors_origins = ["https://app.example.com"]
+# Cadena literal de TOML: las barras invertidas llegan a la regex tal cual.
+cors_origin_regex = 'https://[a-z0-9-]+\.example\.com'
+cors_allow_credentials = true
+```
+
+Un origen se permite si está en la lista **o** cumple el patrón. El patrón se
+compara contra el origen completo (`allow_origin_regex` de Starlette,
+`fullmatch`), así que `https://acme.example.com.evil.com` no pasa por su
+prefijo; escapa los puntos, o `.` también acepta el `-` de
+`https://evil-example.com`. Un patrón que no compila detiene el arranque.
+`JFAST_CORS_ORIGIN_REGEX` lo pone desde el entorno.
 
 ### Proxies de confianza
 

@@ -333,6 +333,9 @@ def add_plugin(name: str, target: Path, *, install: bool) -> list[str]:
     added = _with_requirements(name, enabled)
     if not added:
         ui.note(f"{target.name} already enables {name}.")
+        if name == "storage":
+            # Run again after declaring a disk: the image still has to create it.
+            refresh_dockerfile_storage(target)
         return []
     write_enabled(config, [*enabled, *added])
     ui.created(str(config), f"[plugins].enabled + {', '.join(added)}")
@@ -361,9 +364,44 @@ def add_plugin(name: str, target: Path, *, install: bool) -> list[str]:
         )
         ui.summary(plugin, [("next", line) for line in lines])
 
+    if "storage" in added:
+        refresh_dockerfile_storage(target)
+
     if install and requirements.is_file() and extras:
         _pip_install(requirements)
     return added
+
+
+def refresh_dockerfile_storage(target: Path) -> None:
+    """Give the image every local disk root in jfast.toml, owned by appuser.
+
+    The image runs as appuser, and a volume compose mounts on a directory the
+    image does not have is created as root: the disk cannot write, /ready
+    answers 503 and the first upload a 500. Only the storage line of the
+    Dockerfile is rewritten; the rest may have been edited.
+    """
+    from jfastframework.deploy.compose import read_storage_disks, refresh_storage_block
+
+    dockerfile = target / "Dockerfile"
+    if not dockerfile.is_file():
+        return
+    text = dockerfile.read_text(encoding="utf-8")
+    refreshed = refresh_storage_block(text, read_storage_disks(target / "jfast.toml"))
+    if refreshed is None:
+        ui.warn(f"{dockerfile} has no generated storage line to update.")
+        ui.note(
+            "The image must create each local disk root owned by appuser: "
+            "`jfast deploy dockerfile` regenerates it, and `jfast upgrade --check` "
+            "names what is missing."
+        )
+    elif refreshed != text:
+        dockerfile.write_text(refreshed, encoding="utf-8")
+        ui.created(str(dockerfile), "creates every local disk root for appuser")
+    # The volumes live in the compose file, which this command does not own.
+    ui.note(
+        "Regenerate the compose file so each local disk keeps a volume: "
+        "`jfast workspace compose` (or `jfast deploy compose` for a lone service)."
+    )
 
 
 def remove_plugin(

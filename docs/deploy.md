@@ -91,6 +91,10 @@ A `storage` disk with `driver = "local"` gets a named volume, mounted under the
 image's WORKDIR. Without one the uploads live in the container's own filesystem
 and the next `docker build` throws them away, while the rows referencing them
 stay. Both generators emit it and name it the same way, `<service>_<disk>_data`.
+The Dockerfile has to create the same roots for `appuser`, or Docker creates
+the mount point as root and the disk cannot write: `jfast deploy dockerfile`
+reads them from `[plugin.storage.disks]` -- see
+[Storage](storage.md#local-disks-in-the-production-image).
 
 ### Container names
 
@@ -306,6 +310,28 @@ changes nothing while `storage` is enabled.
 An explicit value always wins, including an explicit `0`: the raise fills in a
 setting nobody chose, it never overrules one somebody did. `[plugins] disabled`
 wins too — a service that disables `storage` is back on the plain pair.
+
+### CORS
+
+Off until an origin is listed. `cors_origins` is a list of exact origins;
+`cors_origin_regex` is a pattern for the ones a list cannot spell -- one per
+tenant subdomain, when the SPA on `app.example.com` signs a user in at
+`acme.example.com/api/auth/login`:
+
+```toml
+[app]
+cors_origins = ["https://app.example.com"]
+# A TOML literal string, so the backslashes reach the regex as written.
+cors_origin_regex = 'https://[a-z0-9-]+\.example\.com'
+cors_allow_credentials = true
+```
+
+An origin is allowed when it is in the list **or** matches the pattern. The
+pattern is matched against the whole origin (Starlette's `allow_origin_regex`,
+`fullmatch`), so `https://acme.example.com.evil.com` does not pass on its
+prefix; escape the dots, or `.` also matches the `-` in
+`https://evil-example.com`. A pattern that does not compile stops the boot.
+`JFAST_CORS_ORIGIN_REGEX` sets it from the environment.
 
 ### Trusted proxies
 

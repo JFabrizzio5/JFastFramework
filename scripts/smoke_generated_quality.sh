@@ -130,6 +130,34 @@ mkdir -p "${WORK}/everything" && cd "${WORK}/everything"
 if "${JFAST}" new service todo --with "${EVERYTHING}" > new.log 2>&1; then
   cd todo
   modules everything
+  # The imports the docs show, gated by the project's own mypy --strict. In
+  # 0.1.0a12 `jfastframework.auth` exposed them through a `__getattr__` typed
+  # `-> object`, and `Depends(require_auth)` failed every strict project.
+  mkdir -p shared
+  cat > shared/documented_auth.py <<'PY'
+"""The auth imports as docs/auth.md writes them."""
+
+from fastapi import APIRouter, Depends
+
+from jfastframework.auth import Principal, optional_auth, require_auth, require_scopes
+
+router = APIRouter()
+
+
+@router.get("/me")
+async def me(caller: Principal = Depends(require_auth)) -> str:
+    return caller.subject
+
+
+@router.post("/things")
+async def create(caller: Principal = Depends(require_scopes("things:write"))) -> str:
+    return caller.subject
+
+
+@router.get("/maybe")
+async def maybe(caller: Principal | None = Depends(optional_auth)) -> str:
+    return caller.subject if caller else ""
+PY
   gates everything
 else
   cat new.log

@@ -2001,27 +2001,65 @@ def _own_database_error_handlers(project: Project) -> list[str]:
     return found
 
 
+def _dockerfile_owned_dirs(text: str) -> tuple[set[str], set[str]]:
+    """The directories a Dockerfile hands to appuser: ``(chown'd, chown -R'd)``.
+
+    Read from ``chown appuser...`` commands with their continuation lines
+    joined, which is how both the generated line and a hand-written one say it.
+    """
+    joined = text.replace("\\\n", " ")
+    plain: set[str] = set()
+    recursive: set[str] = set()
+    for line in joined.splitlines():
+        for command in re.split(r"&&|;|\|\|", line):
+            words = command.split()
+            if "chown" not in words:
+                continue
+            args = words[words.index("chown") + 1 :]
+            flags = {a for a in args if a.startswith("-")}
+            operands = [a for a in args if not a.startswith("-")]
+            if len(operands) < 2 or not operands[0].startswith("appuser"):
+                continue
+            target = recursive if flags & {"-R", "--recursive"} else plain
+            target.update(p.rstrip("/") or "/" for p in operands[1:])
+    return plain, recursive
+
+
 def _image_cannot_write_local_storage(project: Project) -> list[str]:
-    """A local storage disk, and a generated Dockerfile that leaves /app to root."""
+    """A local storage disk whose root a USER appuser image leaves to root."""
     if "storage" not in _active_plugins(project):
         return []
     dockerfile = project.root / "Dockerfile"
     if not dockerfile.is_file():
         return []
     text = dockerfile.read_text(encoding="utf-8", errors="replace")
-    if "USER appuser" not in text or "chown appuser:appuser /app " in text:
+    if "USER appuser" not in text:
         return []
     disks = _table(_config(project), "plugin", "storage").get("disks")
-    if (
-        isinstance(disks, dict)
-        and disks
-        and not any(
-            isinstance(spec, dict) and spec.get("driver", "local") == "local"
-            for spec in disks.values()
-        )
-    ):
+
+    from jfastframework.deploy.compose import IMAGE_WORKDIR, local_disk_dirs
+
+    local = local_disk_dirs(disks if isinstance(disks, dict) else None)
+    if not local:
         return []
-    return ["Dockerfile: USER appuser, and /app is still owned by root"]
+    plain, recursive = _dockerfile_owned_dirs(text)
+    if IMAGE_WORKDIR not in plain | recursive:
+        return ["Dockerfile: USER appuser, and /app is still owned by root"]
+
+    def owned(directory: str) -> bool:
+        if directory in plain or directory in recursive:
+            return True
+        return any(directory.startswith(parent + "/") for parent in recursive)
+
+    # A disk's root has to exist in the image, owned by appuser, or the volume
+    # compose mounts on it is created as root and the disk cannot write:
+    # 0.1.0a12's Dockerfile created only the default disks.
+    return [
+        f"Dockerfile: {directory} (disk {name}) is not created for appuser; "
+        "a volume mounted there starts out owned by root"
+        for name, directory in local.items()
+        if not owned(directory)
+    ]
 
 
 def _nullable_unique_keys(project: Project) -> list[str]:
@@ -2452,19 +2490,22 @@ CHANGES: tuple[Change, ...] = (
         version="0.1.0a12",
         kind="breaking",
         code="image-cannot-write-local-storage",
-        summary="The generated image cannot create its local storage directory; it stops at boot.",
+        summary="The generated image cannot write a local storage disk: boot fails or /ready 503s.",
         detail=(
             "The Dockerfile runs as appuser, but WORKDIR created /app as root and --chown only "
             "reached the copied files, so local storage could not create storage/ and the "
             "service failed to start. A volume mounted on a path the image never created is "
-            "created as root too. Development on the host never sees it."
+            "created as root too: a disk other than public and private (storage/adjuntos) "
+            "answered /ready 503 and every upload 500 with PermissionError. Development on "
+            "the host never sees it."
         ),
         detect=_image_cannot_write_local_storage,
         remedy=(
-            "Regenerate it with `jfast deploy dockerfile`, or add after the COPY lines: "
-            "RUN mkdir -p /app/storage/public /app/storage/private && chown appuser:appuser "
-            "/app /app/storage /app/storage/public /app/storage/private -- plus one directory "
-            "per other local disk root."
+            "Regenerate it with `jfast deploy dockerfile` (it reads [plugin.storage.disks]), "
+            "or run `jfast add storage` to rewrite only its storage line. By hand: RUN mkdir "
+            "-p <each local disk root> && chown appuser:appuser /app <each root and its "
+            "parents>. A volume docker already created as root keeps root: chown it once "
+            "(docs/storage.md, `A volume created as root`)."
         ),
     ),
     Change(

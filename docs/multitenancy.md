@@ -190,8 +190,6 @@ TLS, plus the global `ask` endpoint that gates it:
 {
 	on_demand_tls {
 		ask http://api:8000/internal/tenant-exists
-		interval 2m
-		burst 5
 	}
 }
 ```
@@ -218,6 +216,11 @@ hostname Caddy sees, including the ones probing you.
 
 You also need a wildcard DNS record (`*.app.example.com`) pointing at the same
 address.
+
+A SPA served from one host that signs users in at their tenant's subdomain
+makes a cross-origin request, and `cors_origins` is a list of exact origins.
+`cors_origin_regex = 'https://[a-z0-9-]+\.app\.example\.com'` in `[app]`
+allows every tenant at once -- see [Deploy, CORS](deploy.md#cors).
 
 ## Requiring a tenant
 

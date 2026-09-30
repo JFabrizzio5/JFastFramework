@@ -98,6 +98,11 @@ SCRIPT = textwrap.dedent(
     version = runner.invoke(app, ["version"])
     if version.exit_code != 0:
         failures.append(("version", repr(version.exception)))
+    # Generating the image reads the storage disks, which must not need the
+    # storage extra: the Dockerfile is written before anything is installed.
+    dockerfile = runner.invoke(app, ["deploy", "dockerfile", "--stdout"])
+    if dockerfile.exit_code != 0 or "chown appuser:appuser /app" not in dockerfile.output:
+        failures.append(("deploy dockerfile", repr(dockerfile.exception)))
     for where, why in failures:
         print(f"FAIL {where}: {why}")
     sys.exit(1 if failures else 0)
