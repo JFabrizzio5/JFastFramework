@@ -90,6 +90,13 @@ configured; a refresh token (`typ: refresh`) is not a bearer. A bad token on
 an open route is ignored, not rejected; `RequireAuth` answers 401,
 `RequireTenant` 401 without a session and 403 without a tenant.
 
+With auth on, a subdomain, path or header only *names* a tenant
+(`jfast.TenantRequestedFrom`, for a sign-in page); `TenantFrom` returns a
+tenant only when the verified caller backs it. No session is a 401, a token
+whose tenant differs is a 403, and a token with no tenant is a 403 unless
+`JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS=true` -- the Python rule, in
+docs/multitenancy.md. `curl -H "Host: acme.example.com"` needs no DNS.
+
 What is **not** done here:
 
 - **Revocation.** The Python services look revoked token ids up in Redis on

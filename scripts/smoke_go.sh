@@ -163,6 +163,33 @@ grep -q 'revoked tokens are not checked' "${WORK}/auth-log.txt" \
   || fail "no startup line saying revocation is not checked"
 kill "${PID}"; PID=""
 
+step "with auth on, a subdomain names a tenant but never grants one"
+# 0.1.0a12's F1: `curl -H "Host: acme.localhost"` needs no DNS. The routes are
+# open, so a refused tenant shows up as an empty tenant, never as acme's rows.
+JFAST_PORT=9126 JFAST_AUTH_SECRET="${SECRET}" JFAST_AUTH_AUDIENCE=edge \
+  JFAST_TENANCY_SOURCES='["token","subdomain"]' JFAST_TENANCY_BASE_DOMAIN=localhost \
+  "${WORK}/edge-bin" > "${WORK}/subdomain-log.txt" 2>&1 &
+PID=$!
+for _ in $(seq 1 40); do
+  curl -fsS localhost:9126/health > /dev/null 2>&1 && break
+  sleep 0.25
+done
+curl -fsS localhost:9126/health > /dev/null || fail "the service did not start with a subdomain source"
+curl -fsS -X POST localhost:9126/items -H 'Host: acme.localhost:9126' -H 'content-type: application/json' \
+  -H "Authorization: Bearer ${ACME}" -d '{"name":"acme-secret","is_active":true}' \
+  | grep -q '"acme-secret"' || fail "acme cannot write on its own subdomain"
+curl -fsS localhost:9126/items -H 'Host: acme.localhost:9126' -H "Authorization: Bearer ${ACME}" \
+  | grep -q '"acme-secret"' || fail "acme does not see its item on its subdomain"
+curl -fsS localhost:9126/items -H 'Host: acme.localhost:9126' \
+  | grep -q '"acme-secret"' && fail "an anonymous request on acme.localhost read acme's items"
+curl -fsS -X POST localhost:9126/items -H 'Host: acme.localhost:9126' -H 'content-type: application/json' \
+  -d '{"name":"planted","is_active":true}' > /dev/null || true
+curl -fsS localhost:9126/items -H 'Host: acme.localhost:9126' -H "Authorization: Bearer ${ACME}" \
+  | grep -q '"planted"' && fail "an anonymous POST on acme.localhost wrote into acme"
+curl -fsS localhost:9126/items -H 'Host: acme.localhost:9126' -H "Authorization: Bearer ${GLOBEX}" \
+  | grep -q '"acme-secret"' && fail "globex's token on acme.localhost read acme's items"
+kill "${PID}"; PID=""
+
 step "a configuration the service cannot enforce stops it"
 if JFAST_PORT=9125 JFAST_AUTH_MODE=jwks JFAST_AUTH_JWKS_URL=https://id.example.test/jwks.json \
   "${WORK}/edge-bin" > "${WORK}/jwks-log.txt" 2>&1; then

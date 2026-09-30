@@ -108,7 +108,7 @@ func loadSecurity(cfg jfast.Config, logger *slog.Logger) (*jfast.Auth, *jfast.Te
 	if err != nil {
 		return nil, nil, err
 	}
-	tenancy, err := jfast.NewTenancy(tenancyConfig, cfg, logger)
+	tenancy, err := jfast.NewTenancy(tenancyConfig, cfg, auth, logger)
 	if err != nil {
 		return nil, nil, err
 	}

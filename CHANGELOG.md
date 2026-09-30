@@ -57,6 +57,19 @@ One addition came with it: enums in `--fields`.
   multi-company help desk; every row of the rule is tested over HTTP,
   including that curl and its POST (401). `jfast upgrade --check`:
   `unsigned-tenant-needs-a-session`.
+- **The Go scaffold had the same hole.** Its `ResolveTenant` took the first
+  source that yielded a tenant, so with auth on, an anonymous request to
+  `acme.<base_domain>` got `TenantFrom` = acme and `RequireTenant` let it
+  through. It now applies the Python rule: the named tenant
+  (`TenantRequestedFrom`) is separate from the granted one; no session is a
+  401; a claim that disagrees is a 403; a token with no tenant is a 403 unless
+  `JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS=true`; without auth, nothing
+  changes. `NewTenancy` now takes the service's `*Auth`, so whether auth is on
+  cannot be left out when wiring it. `tests/test_go_service.py` sends the same
+  seven requests (host plus token) to a JFast app and to the compiled Go
+  chain, with the opt-in on and off, and requires the same status and tenant
+  from both. `scripts/smoke_go.sh` runs the curl from the log against the
+  built binary; the old template fails that step.
 - **`JFAST_ENV=prod` did nothing in a project `jfast start` generated.** The
   generator wrote `[app] env = "local"`, and `JFastConfig.load` passed `[app]`
   to the settings as arguments, which beat environment variables -- so the

@@ -58,6 +58,19 @@ llamada a un modelo desde un worker. Llegó con ello una adición: enums en
   mesa de ayuda multi-empresa; cada fila de la regla está probada por HTTP,
   incluido ese curl y su POST (401). `jfast upgrade --check`:
   `unsigned-tenant-needs-a-session`.
+- **El scaffold de Go tenía el mismo hueco.** Su `ResolveTenant` tomaba la
+  primera fuente que daba un tenant, así que con auth activo un request anónimo
+  a `acme.<base_domain>` obtenía acme de `TenantFrom` y `RequireTenant` lo
+  dejaba pasar. Ahora aplica la regla de Python: el tenant nombrado
+  (`TenantRequestedFrom`) va aparte del otorgado; sin sesión es 401; un claim
+  que no coincide es 403; un token sin tenant es 403 salvo
+  `JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS=true`; sin auth, nada cambia.
+  `NewTenancy` ahora recibe el `*Auth` del servicio, así que al conectarlo no
+  se puede omitir si auth está activo. `tests/test_go_service.py` manda los
+  mismos siete requests (host más token) a una app JFast y a la cadena de Go
+  compilada, con la opción activa y apagada, y exige el mismo status y tenant
+  en los dos. `scripts/smoke_go.sh` corre el curl de la bitácora contra el
+  binario compilado; la plantilla vieja falla ese paso.
 - **`JFAST_ENV=prod` no hacía nada en un proyecto generado por `jfast start`.**
   El generador escribía `[app] env = "local"`, y `JFastConfig.load` le pasaba
   `[app]` a los settings como argumentos, que le ganan a las variables de
