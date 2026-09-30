@@ -146,7 +146,7 @@ func TestCrossLanguage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenancy, err := NewTenancy(tenancyConfig, Config{Env: "local"}, logger)
+	tenancy, err := NewTenancy(tenancyConfig, Config{Env: "local"}, auth, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,10 +199,12 @@ func TestCrossLanguage(t *testing.T) {
 """
 
 
-def _run_go(root: Path, env: dict[str, str]) -> dict[str, Any]:
+def _run_go(
+    root: Path, env: dict[str, str], harness: str = HARNESS, test: str = "TestCrossLanguage"
+) -> dict[str, Any]:
     assert GO is not None
-    (root / "internal" / "jfast" / "crosslang_test.go").write_text(HARNESS, encoding="utf-8")
-    command = ["go", "test", "-count=1", "-run", "^TestCrossLanguage$", "./internal/jfast/"]
+    (root / "internal" / "jfast" / "crosslang_test.go").write_text(harness, encoding="utf-8")
+    command = ["go", "test", "-count=1", "-run", f"^{test}$", "./internal/jfast/"]
     if GO:
         docker_env = [arg for key, value in env.items() for arg in ("-e", f"{key}={value}")]
         full = [
@@ -349,3 +351,160 @@ async def test_go_accepts_python_tokens_and_resolves_the_same_tenant(
     # The trace survives the Go hop untouched.
     assert go["traceparent_out"] == TRACEPARENT
     assert go["tracestate_out"] == TRACESTATE
+
+
+# -- the tenancy rule, both sides ----------------------------------------------
+
+# F1 on 0.1.0a12: with auth on, a subdomain names a tenant but never grants one.
+# The same requests -- host, token -- through Python's current_tenant and Go's
+# RequireTenant must answer the same status and tenant.
+MATRIX_HARNESS = r"""package jfast
+
+import (
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"testing"
+)
+
+func TestCrossLanguageTenancy(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	authConfig, err := LoadAuthConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := NewAuth(authConfig, Config{Env: "local"}, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenancyConfig, err := LoadTenancyConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenancy, err := NewTenancy(tenancyConfig, Config{Env: "local"}, auth, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tenant string
+	handler := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenant, _ = TenantFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}), RequestID, Authenticate(auth), ResolveTenant(tenancy), RequireTenant)
+
+	var cases []struct {
+		Name  string `json:"name"`
+		Host  string `json:"host"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(os.Getenv("CROSS_CASES")), &cases); err != nil {
+		t.Fatal(err)
+	}
+	result := map[string]any{}
+	for _, c := range cases {
+		tenant = ""
+		request := httptest.NewRequest(http.MethodGet, "http://"+c.Host+"/tickets", nil)
+		if c.Token != "" {
+			request.Header.Set("Authorization", "Bearer "+c.Token)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		result[c.Name] = map[string]any{"status": recorder.Code, "tenant": tenant}
+	}
+	raw, _ := json.Marshal(result)
+	if err := os.WriteFile(os.Getenv("CROSS_RESULT"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+"""
+
+
+@needs_go
+@pytest.mark.parametrize("trust", [False, True])
+async def test_go_and_python_apply_the_same_unsigned_tenant_rule(
+    tmp_path: Path, trust: bool
+) -> None:
+    def token(tenant: str | None) -> str:
+        minted, _, _ = issue(
+            "user-7",
+            key=SECRET,
+            algorithm="HS256",
+            lifetime=timedelta(minutes=5),
+            audience=AUDIENCE,
+            issuer=ISSUER,
+            tenant_id=tenant,
+        )
+        return minted
+
+    acme, unscoped = token("acme"), token(None)
+    cases = [
+        {"name": "anonymous_on_acme", "host": "acme.localhost:8700", "token": ""},
+        {"name": "anonymous_bare", "host": "localhost:8700", "token": ""},
+        {"name": "acme_on_acme", "host": "acme.localhost:8700", "token": acme},
+        {"name": "acme_bare", "host": "localhost:8700", "token": acme},
+        {"name": "acme_on_globex", "host": "globex.localhost:8700", "token": acme},
+        {"name": "unscoped_on_globex", "host": "globex.localhost:8700", "token": unscoped},
+        {"name": "unscoped_bare", "host": "localhost:8700", "token": unscoped},
+    ]
+
+    router = APIRouter()
+
+    @router.get("/tickets")
+    async def tickets(tenant: str = Depends(current_tenant)) -> dict[str, str]:
+        return {"tenant": tenant}
+
+    tenancy = {
+        "sources": ["token", "subdomain"],
+        "base_domain": "localhost",
+        "trust_unscoped_principals": trust,
+    }
+    auth = {
+        "mode": "secret",
+        "algorithms": ["HS256"],
+        "secret": SECRET,
+        "issuer": ISSUER,
+        "audience": AUDIENCE,
+    }
+    app = build_test_app(
+        plugins=["observability", "auth", "tenancy"],
+        routers=[router],
+        raw={"plugin": {"auth": auth, "tenancy": tenancy}},
+    )
+    python: dict[str, Any] = {}
+    async with client_for(app) as client:
+        for case in cases:
+            headers = {"host": case["host"]}
+            if case["token"]:
+                headers["Authorization"] = f"Bearer {case['token']}"
+            response = await client.get("/tickets", headers=headers)
+            tenant = response.json()["tenant"] if response.status_code == 200 else ""
+            python[case["name"]] = {"status": response.status_code, "tenant": tenant}
+
+    go = _run_go(
+        _generate(tmp_path / "edge"),
+        {
+            "JFAST_AUTH_MODE": "secret",
+            "JFAST_AUTH_SECRET": SECRET,
+            "JFAST_AUTH_ALGORITHMS": '["HS256"]',
+            "JFAST_AUTH_ISSUER": ISSUER,
+            "JFAST_AUTH_AUDIENCE": AUDIENCE,
+            "JFAST_TENANCY_SOURCES": '["token", "subdomain"]',
+            "JFAST_TENANCY_BASE_DOMAIN": "localhost",
+            "JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS": "true" if trust else "false",
+            "CROSS_CASES": json.dumps(cases),
+        },
+        harness=MATRIX_HARNESS,
+        test="TestCrossLanguageTenancy",
+    )
+
+    assert go == python
+    # And the rule itself, so both sides cannot agree on the wrong answer.
+    assert python["anonymous_on_acme"] == {"status": 401, "tenant": ""}
+    assert python["acme_on_acme"] == {"status": 200, "tenant": "acme"}
+    assert python["acme_bare"] == {"status": 200, "tenant": "acme"}
+    assert python["acme_on_globex"]["status"] == 403
+    assert python["unscoped_bare"]["status"] == 403
+    expected = {"status": 200, "tenant": "globex"} if trust else {"status": 403, "tenant": ""}
+    assert python["unscoped_on_globex"] == expected

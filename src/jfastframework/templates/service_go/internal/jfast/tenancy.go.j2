@@ -20,6 +20,21 @@ import (
 //	subdomain  acme.<JFAST_TENANCY_BASE_DOMAIN>                   medium
 //	path       /t/acme/...                                         medium
 //	header     X-Tenant-ID -- whoever sent the request             none
+//
+// With auth on (NewTenancy given a non-nil *Auth), an unsigned source --
+// subdomain, path, header -- only NAMES a tenant; the tenant a request is
+// GRANTED must be backed by the verified caller, exactly as in Python:
+//
+//	no session, any unsigned source            none granted   401
+//	claim a; unsigned says nothing or a        a
+//	claim a; unsigned says b                   none granted   403
+//	signed in, no tenant; unsigned says b      none granted   403
+//	  ... with JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS=true   b
+//
+// A signed source outranks an unsigned one wherever each sits in the list.
+// `curl -H "Host: acme.example.com"` needs no DNS, so a subdomain alone is
+// never access. Without auth there is no caller to check it against and the
+// first source that yields a tenant wins, as before.
 
 var tenancySources = []string{"token", "user", "subdomain", "path", "header"}
 
@@ -41,6 +56,11 @@ type TenancyConfig struct {
 	RequireTenant bool     // JFAST_TENANCY_REQUIRE_TENANT, default false
 	ExemptPaths   []string // JFAST_TENANCY_EXEMPT_PATHS
 	Reserved      []string // JFAST_TENANCY_RESERVED
+	// JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS, default false: with auth on,
+	// let a signed-in caller whose token carries no tenant act in the tenant
+	// an unsigned source names. Only for a service that checks membership
+	// itself; nothing signed says the account belongs there.
+	TrustUnscopedPrincipals bool
 }
 
 // LoadTenancyConfig reads JFAST_TENANCY_*. Tenancy resolution is on when
@@ -55,6 +75,7 @@ func LoadTenancyConfig() (TenancyConfig, error) {
 		ExemptPaths:   []string{"/health", "/ready", "/info", "/metrics", "/docs", "/openapi.json"},
 		Reserved:      reservedSubdomains,
 	}
+	cfg.TrustUnscopedPrincipals = envBool("JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS", false)
 	var err error
 	if cfg.Sources, err = envList("JFAST_TENANCY_SOURCES"); err != nil {
 		return cfg, err
@@ -75,12 +96,15 @@ func LoadTenancyConfig() (TenancyConfig, error) {
 
 // Tenancy resolves the tenant. A nil *Tenancy means resolution is off.
 type Tenancy struct {
-	cfg TenancyConfig
+	cfg  TenancyConfig
+	auth bool
 }
 
 // NewTenancy validates the configuration as the Python plugin does at boot.
-// Returns nil, nil when tenancy is off.
-func NewTenancy(cfg TenancyConfig, app Config, logger *slog.Logger) (*Tenancy, error) {
+// Returns nil, nil when tenancy is off. auth is the service's *Auth (nil when
+// auth is off): it is what decides whether an unsigned source may grant a
+// tenant, so it is a parameter rather than something to remember to set.
+func NewTenancy(cfg TenancyConfig, app Config, auth *Auth, logger *slog.Logger) (*Tenancy, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -106,7 +130,7 @@ func NewTenancy(cfg TenancyConfig, app Config, logger *slog.Logger) (*Tenancy, e
 		logger.Info("tenancy is not using the token claim; the tenant will come from " +
 			"the request rather than from something signed")
 	}
-	return &Tenancy{cfg: cfg}, nil
+	return &Tenancy{cfg: cfg, auth: auth != nil}, nil
 }
 
 // TenantFromHost: `acme.app.example.com` with base `app.example.com` -> `acme`.
@@ -144,39 +168,101 @@ func TenantFromPath(path, prefix string) string {
 	return candidate
 }
 
-func (t *Tenancy) resolve(r *http.Request) (string, string) {
-	claims, _ := ClaimsFrom(r.Context())
-	for _, source := range t.cfg.Sources {
-		switch source {
-		case "token":
-			if claims != nil && claims.TenantID != "" {
-				return claims.TenantID, "token"
-			}
-		case "user":
-			if claims != nil && subjectPattern.MatchString(claims.Subject) {
-				return claims.Subject, "user"
-			}
-		case "subdomain":
-			if tenant := TenantFromHost(r.Host, t.cfg.BaseDomain, t.cfg.Reserved); tenant != "" {
-				return tenant, "subdomain"
-			}
-		case "path":
-			if tenant := TenantFromPath(r.URL.Path, t.cfg.PathPrefix); tenant != "" {
-				return tenant, "path"
-			}
-		case "header":
-			raw := strings.ToLower(r.Header.Get(t.cfg.HeaderName))
-			if raw != "" && tenantSlug.MatchString(raw) {
-				return raw, "header"
-			}
+// from is what one source says, or "".
+func (t *Tenancy) from(source string, r *http.Request, claims *Claims) string {
+	switch source {
+	case "token":
+		if claims != nil {
+			return claims.TenantID
+		}
+	case "user":
+		if claims != nil && subjectPattern.MatchString(claims.Subject) {
+			return claims.Subject
+		}
+	case "subdomain":
+		return TenantFromHost(r.Host, t.cfg.BaseDomain, t.cfg.Reserved)
+	case "path":
+		return TenantFromPath(r.URL.Path, t.cfg.PathPrefix)
+	case "header":
+		raw := strings.ToLower(r.Header.Get(t.cfg.HeaderName))
+		if raw != "" && tenantSlug.MatchString(raw) {
+			return raw
 		}
 	}
-	return "", ""
+	return ""
+}
+
+func signedSource(source string) bool { return source == "token" || source == "user" }
+
+// decide is Python's TenancyMiddleware._decide: what the request is granted,
+// from which source, what an unsigned source named, and the refusal
+// RequireTenant answers instead of a tenant.
+func (t *Tenancy) decide(r *http.Request) resolvedTenant {
+	claims, _ := ClaimsFrom(r.Context())
+	if !t.auth {
+		for _, source := range t.cfg.Sources {
+			if tenant := t.from(source, r, claims); tenant != "" {
+				decision := resolvedTenant{tenant: tenant, source: source}
+				if !signedSource(source) {
+					decision.requested = tenant
+				}
+				return decision
+			}
+		}
+		return resolvedTenant{}
+	}
+
+	var signed, signedFrom, unsigned, unsignedFrom string
+	for _, source := range t.cfg.Sources {
+		tenant := t.from(source, r, claims)
+		if tenant == "" {
+			continue
+		}
+		if signedSource(source) {
+			if signed == "" {
+				signed, signedFrom = tenant, source
+			}
+		} else if unsigned == "" {
+			unsigned, unsignedFrom = tenant, source
+		}
+	}
+	if signed == "" && claims != nil && claims.TenantID != "" {
+		// A claim is what the account is entitled to even when "token" is not
+		// a listed source: TenantFrom falls back to it anyway.
+		signed, signedFrom = claims.TenantID, "token"
+	}
+
+	switch {
+	case claims == nil && unsigned == "":
+		return resolvedTenant{}
+	case claims == nil:
+		// Anyone can type a Host header: a tenant named that way is where the
+		// sign-in routes look for the account, and nothing more.
+		return resolvedTenant{requested: unsigned, deniedStatus: http.StatusUnauthorized, denied: "authentication required"}
+	case signed != "" && (unsigned == "" || unsigned == signed):
+		return resolvedTenant{tenant: signed, source: signedFrom, requested: unsigned}
+	case signed != "":
+		return resolvedTenant{requested: unsigned, deniedStatus: http.StatusForbidden, denied: fmt.Sprintf(
+			"this session is scoped to tenant %q, and the request names %q. Sign in to %q to act there.",
+			signed, unsigned, unsigned)}
+	case unsigned == "":
+		return resolvedTenant{}
+	case t.cfg.TrustUnscopedPrincipals:
+		return resolvedTenant{tenant: unsigned, source: unsignedFrom, requested: unsigned}
+	default:
+		return resolvedTenant{requested: unsigned, deniedStatus: http.StatusForbidden, denied: fmt.Sprintf(
+			"this account is not scoped to tenant %q: its token carries no tenant. Sign in to that "+
+				"tenant, or set JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS=true if the service checks "+
+				"membership itself.", unsigned)}
+	}
 }
 
 type resolvedTenant struct {
-	tenant string
-	source string
+	tenant       string // granted: what TenantFrom returns
+	source       string
+	requested    string // what an unsigned source named, granted or not
+	deniedStatus int    // 401 or 403 when a named tenant was refused
+	denied       string
 }
 
 const tenantKey contextKey = "jfast_tenant"
@@ -191,7 +277,7 @@ func ResolveTenant(tenancy *Tenancy) Middleware {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant, source := tenancy.resolve(r)
+			decision := tenancy.decide(r)
 			exempt := false
 			for _, prefix := range tenancy.cfg.ExemptPaths {
 				if strings.HasPrefix(r.URL.Path, prefix) {
@@ -199,26 +285,36 @@ func ResolveTenant(tenancy *Tenancy) Middleware {
 					break
 				}
 			}
-			if tenant == "" && tenancy.cfg.RequireTenant && !exempt {
+			// A request that NAMES a tenant it was not granted passes, so the
+			// sign-in routes on a subdomain stay reachable; RequireTenant
+			// answers its 401 or 403.
+			if decision.tenant == "" && decision.requested == "" && tenancy.cfg.RequireTenant && !exempt {
 				WriteProblem(w, r, Forbidden("this request is not scoped to a tenant"))
 				return
 			}
 			if fields := logFieldsFrom(r.Context()); fields != nil {
 				// What tenancy resolved is the authority, as in Python --
 				// including "nothing", over a claim a source ranked lower.
-				fields.tenantID = tenant
+				fields.tenantID = decision.tenant
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), tenantKey, resolvedTenant{tenant, source})))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), tenantKey, decision)))
 		})
 	}
 }
 
-// TenantFrom returns this request's tenant: what tenancy resolved, else the
+// TenantFrom returns this request's tenant: what tenancy granted, else the
 // token's tenant claim -- Python's current_tenant. Never a raw header unless
-// "header" is one of JFAST_TENANCY_SOURCES.
+// "header" is one of JFAST_TENANCY_SOURCES, and with auth on never a tenant
+// a subdomain, path or header named without the caller backing it: a
+// refused request has no tenant at all, not the token's.
 func TenantFrom(ctx context.Context) (string, bool) {
-	if resolved, ok := ctx.Value(tenantKey).(resolvedTenant); ok && resolved.tenant != "" {
-		return resolved.tenant, true
+	if resolved, ok := ctx.Value(tenantKey).(resolvedTenant); ok {
+		if resolved.tenant != "" {
+			return resolved.tenant, true
+		}
+		if resolved.denied != "" {
+			return "", false
+		}
 	}
 	if claims, ok := ClaimsFrom(ctx); ok && claims.TenantID != "" {
 		return claims.TenantID, true
@@ -232,6 +328,15 @@ func WithTenant(ctx context.Context, tenant string) context.Context {
 	return context.WithValue(ctx, tenantKey, resolvedTenant{tenant: tenant, source: "context"})
 }
 
+// TenantRequestedFrom is the tenant this request NAMES by subdomain, path or
+// header, granted or not -- Python's requested_tenant. For the sign-in routes
+// and a page public on purpose (a tenant's logo); it proves nothing about the
+// caller, so never choose whose rows to read or write with it.
+func TenantRequestedFrom(ctx context.Context) string {
+	resolved, _ := ctx.Value(tenantKey).(resolvedTenant)
+	return resolved.requested
+}
+
 // TenantSourceFrom says which source the tenant came from ("token", "user",
 // "subdomain", "path", "header"), or "" when tenancy resolved none.
 func TenantSourceFrom(ctx context.Context) string {
@@ -239,12 +344,23 @@ func TenantSourceFrom(ctx context.Context) string {
 	return resolved.source
 }
 
-// RequireTenant answers like Python's current_tenant: 401 when nobody is
-// signed in and no tenant resolved -- a client refreshes its session on a 401
-// and gives up on a 403, so a 403 here would strand every session at its
-// first expiry -- and 403 when the caller is known but not scoped to a tenant.
+// RequireTenant answers like Python's current_tenant: the refusal tenancy
+// decided when a request named a tenant it was not granted (401 with no
+// session, 403 when the caller's tenant disagrees or it has none); otherwise
+// 401 when nobody is signed in and no tenant resolved -- a client refreshes
+// its session on a 401 and gives up on a 403, so a 403 here would strand
+// every session at its first expiry -- and 403 when the caller is known but
+// not scoped to a tenant.
 func RequireTenant(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if resolved, ok := r.Context().Value(tenantKey).(resolvedTenant); ok && resolved.denied != "" {
+			if resolved.deniedStatus == http.StatusUnauthorized {
+				WriteProblem(w, r, Unauthorized(resolved.denied))
+			} else {
+				WriteProblem(w, r, Forbidden(resolved.denied))
+			}
+			return
+		}
 		if _, ok := TenantFrom(r.Context()); ok {
 			next.ServeHTTP(w, r)
 			return

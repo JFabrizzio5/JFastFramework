@@ -185,6 +185,11 @@ Correcciones, y una es de seguridad y cambia respuestas:
   revisa la membresía por su cuenta pone `[plugin.tenancy]
   trust_unscoped_principals = true`. Ver
   [multi-tenancy](multitenancy.md#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-si-sola).
+  **Un servicio de Go** generado antes tiene el mismo hueco en su
+  `internal/jfast/tenancy.go` copiado, y `jfast upgrade --check` no lee Go: si
+  pone `JFAST_TENANCY_SOURCES` con `subdomain`, `path` o `header` y auth está
+  activo, copia `tenancy.go` de un servicio generado por 0.1.0a12 y pásale el
+  `*jfast.Auth` a `jfast.NewTenancy(tenancyConfig, cfg, auth, logger)`.
 
 - `jfast-env-wins-over-the-file` -- `[app] env` (o `debug`) en `jfast.toml`,
   que tiene todo proyecto que generó `jfast start`. `JFAST_ENV` en el entorno

@@ -6,7 +6,20 @@ import (
 	"testing"
 )
 
+// newTestTenancy is tenancy with auth on, as every test here authenticates.
 func newTestTenancy(t *testing.T, cfg TenancyConfig) *Tenancy {
+	t.Helper()
+	return buildTestTenancy(t, cfg, newTestAuth(t, secretConfig()))
+}
+
+// newPublicTenancy is tenancy in a service without auth: a public site with
+// a tenant per subdomain.
+func newPublicTenancy(t *testing.T, cfg TenancyConfig) *Tenancy {
+	t.Helper()
+	return buildTestTenancy(t, cfg, nil)
+}
+
+func buildTestTenancy(t *testing.T, cfg TenancyConfig, auth *Auth) *Tenancy {
 	t.Helper()
 	cfg.Enabled = true
 	if cfg.HeaderName == "" {
@@ -21,7 +34,7 @@ func newTestTenancy(t *testing.T, cfg TenancyConfig) *Tenancy {
 	if cfg.ExemptPaths == nil {
 		cfg.ExemptPaths = []string{"/health", "/ready"}
 	}
-	tenancy, err := NewTenancy(cfg, Config{Env: "local"}, newTestLogger())
+	tenancy, err := NewTenancy(cfg, Config{Env: "local"}, auth, newTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,31 +60,150 @@ func withToken(t *testing.T, request *http.Request, claims map[string]any) *http
 	return request
 }
 
-func TestSourcesAreTriedInOrder(t *testing.T) {
-	tenancy := newTestTenancy(t, TenancyConfig{
-		Sources:    []string{"token", "subdomain", "header"},
+func TestSourcesAreTriedInOrderWithoutAuth(t *testing.T) {
+	// No auth, no caller to check a source against: first hit wins, as in
+	// Python without the auth plugin.
+	tenancy := newPublicTenancy(t, TenancyConfig{
+		Sources:    []string{"subdomain", "header"},
 		BaseDomain: "app.example.com",
 	})
-
-	// The signed claim beats the host and the header.
-	request := withToken(t, httptest.NewRequest(http.MethodGet, "http://globex.app.example.com/x", nil), validClaims())
-	request.Header.Set("X-Tenant-ID", "initech")
-	if tenant, _ := resolved(t, tenancy, request, passThrough); tenant != "acme" {
-		t.Fatalf("tenant = %q, want the token's acme", tenant)
-	}
-
-	// No token: the subdomain, over the header.
-	request = httptest.NewRequest(http.MethodGet, "http://globex.app.example.com/x", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://globex.app.example.com/x", nil)
 	request.Header.Set("X-Tenant-ID", "initech")
 	if tenant, _ := resolved(t, tenancy, request, passThrough); tenant != "globex" {
 		t.Fatalf("tenant = %q, want globex from the host", tenant)
 	}
-
 	// A reserved subdomain is never a tenant; the header is last.
 	request = httptest.NewRequest(http.MethodGet, "http://www.app.example.com/x", nil)
 	request.Header.Set("X-Tenant-ID", "Initech")
 	if tenant, _ := resolved(t, tenancy, request, passThrough); tenant != "initech" {
 		t.Fatalf("tenant = %q, want initech from the header", tenant)
+	}
+}
+
+// -- with auth on, an unsigned source names a tenant but never grants one --
+
+func unsignedTenancy(t *testing.T, trust bool) *Tenancy {
+	return newTestTenancy(t, TenancyConfig{
+		Sources:                 []string{"token", "subdomain", "path", "header"},
+		BaseDomain:              "localhost",
+		TrustUnscopedPrincipals: trust,
+	})
+}
+
+func noTenantClaims() map[string]any {
+	claims := validClaims()
+	delete(claims, "tenant_id")
+	return claims
+}
+
+func TestTheCurlFromTheLogIsA401(t *testing.T) {
+	// curl -H "Host: acme.localhost" localhost:8700/tickets, and its POST.
+	tenancy := unsignedTenancy(t, false)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		request := httptest.NewRequest(method, "http://acme.localhost:8700/tickets", nil)
+		if tenant, code := resolved(t, tenancy, request, RequireTenant); code != http.StatusUnauthorized || tenant != "" {
+			t.Fatalf("%s anonymous on acme.: %d %q, want 401", method, code, tenant)
+		}
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "http://localhost/t/acme/tickets", nil),
+		func() *http.Request {
+			r := httptest.NewRequest(http.MethodGet, "http://localhost/tickets", nil)
+			r.Header.Set("X-Tenant-ID", "acme")
+			return r
+		}(),
+	} {
+		if _, code := resolved(t, tenancy, request, RequireTenant); code != http.StatusUnauthorized {
+			t.Fatalf("anonymous %s: %d, want 401", request.URL, code)
+		}
+	}
+}
+
+func TestANamedTenantIsNotGrantedToAnAnonymousRequest(t *testing.T) {
+	tenancy := unsignedTenancy(t, false)
+	var granted, named string
+	handler := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		granted, _ = TenantFrom(r.Context())
+		named = TenantRequestedFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}), Authenticate(newTestAuth(t, secretConfig())), ResolveTenant(tenancy))
+	// A route that asks no tenant still answers -- a sign-in page reads the
+	// named one.
+	if code := serve(handler, httptest.NewRequest(http.MethodGet, "http://acme.localhost/login", nil)).Code; code != http.StatusOK {
+		t.Fatalf("public route: %d", code)
+	}
+	if granted != "" || named != "acme" {
+		t.Fatalf("granted %q named %q, want none and acme", granted, named)
+	}
+}
+
+func TestATokenOnItsOwnSubdomainIsServed(t *testing.T) {
+	tenancy := unsignedTenancy(t, false)
+	for _, host := range []string{"http://acme.localhost/x", "http://localhost/x"} {
+		request := withToken(t, httptest.NewRequest(http.MethodGet, host, nil), validClaims())
+		if tenant, code := resolved(t, tenancy, request, RequireTenant); code != http.StatusOK || tenant != "acme" {
+			t.Fatalf("%s: %d %q, want acme", host, code, tenant)
+		}
+	}
+}
+
+func TestATokenOfAcmeOnGlobexIsA403(t *testing.T) {
+	tenancy := unsignedTenancy(t, false)
+	request := withToken(t, httptest.NewRequest(http.MethodGet, "http://globex.localhost/x", nil), validClaims())
+	if tenant, code := resolved(t, tenancy, request, RequireTenant); code != http.StatusForbidden || tenant != "" {
+		t.Fatalf("acme token on globex: %d %q, want 403", code, tenant)
+	}
+	// Not served as acme either, even by a handler that skips RequireTenant.
+	request = withToken(t, httptest.NewRequest(http.MethodGet, "http://globex.localhost/x", nil), validClaims())
+	if tenant, _ := resolved(t, tenancy, request, passThrough); tenant != "" {
+		t.Fatalf("TenantFrom = %q on a refused request", tenant)
+	}
+}
+
+func TestSourceOrderDoesNotLetTheSubdomainOutrankTheToken(t *testing.T) {
+	tenancy := newTestTenancy(t, TenancyConfig{Sources: []string{"subdomain", "token"}, BaseDomain: "localhost"})
+	request := withToken(t, httptest.NewRequest(http.MethodGet, "http://globex.localhost/x", nil), validClaims())
+	if _, code := resolved(t, tenancy, request, RequireTenant); code != http.StatusForbidden {
+		t.Fatalf("subdomain listed first: %d, want 403", code)
+	}
+}
+
+func TestAnUnscopedTokenOnASubdomainIsA403UnlessTrusted(t *testing.T) {
+	request := withToken(t, httptest.NewRequest(http.MethodGet, "http://globex.localhost/x", nil), noTenantClaims())
+	if _, code := resolved(t, unsignedTenancy(t, false), request, RequireTenant); code != http.StatusForbidden {
+		t.Fatalf("unscoped token: %d, want 403", code)
+	}
+
+	trusting := unsignedTenancy(t, true)
+	request = withToken(t, httptest.NewRequest(http.MethodGet, "http://globex.localhost/x", nil), noTenantClaims())
+	if tenant, code := resolved(t, trusting, request, RequireTenant); code != http.StatusOK || tenant != "globex" {
+		t.Fatalf("trusted unscoped token: %d %q, want globex", code, tenant)
+	}
+	// The opt-in is about tokens without a tenant, nothing else.
+	if _, code := resolved(t, trusting, httptest.NewRequest(http.MethodGet, "http://globex.localhost/x", nil), RequireTenant); code != http.StatusUnauthorized {
+		t.Fatalf("trusting, anonymous: %d, want 401", code)
+	}
+	request = withToken(t, httptest.NewRequest(http.MethodGet, "http://globex.localhost/x", nil), validClaims())
+	if _, code := resolved(t, trusting, request, RequireTenant); code != http.StatusForbidden {
+		t.Fatalf("trusting, acme token on globex: %d, want 403", code)
+	}
+}
+
+func TestTheUserSourceIsSignedAndTheSubdomainMustMatch(t *testing.T) {
+	tenancy := newTestTenancy(t, TenancyConfig{Sources: []string{"token", "user", "subdomain"}, BaseDomain: "localhost"})
+	request := withToken(t, httptest.NewRequest(http.MethodGet, "http://acme.localhost/x", nil), noTenantClaims())
+	if _, code := resolved(t, tenancy, request, RequireTenant); code != http.StatusForbidden {
+		t.Fatalf("user-1 on acme.: %d, want 403", code)
+	}
+}
+
+func TestRequireTenantSettingLetsANamedTenantThrough(t *testing.T) {
+	tenancy := newTestTenancy(t, TenancyConfig{Sources: []string{"token", "subdomain"}, BaseDomain: "localhost", RequireTenant: true})
+	if _, code := resolved(t, tenancy, httptest.NewRequest(http.MethodGet, "http://acme.localhost/login", nil), passThrough); code != http.StatusOK {
+		t.Fatalf("sign-in page on acme.: %d, want 200", code)
+	}
+	if _, code := resolved(t, tenancy, httptest.NewRequest(http.MethodGet, "http://localhost/login", nil), passThrough); code != http.StatusForbidden {
+		t.Fatalf("no tenant named: %d, want 403", code)
 	}
 }
 
@@ -156,7 +288,7 @@ func TestTenancyConfigurationsPythonRefusesAreRefused(t *testing.T) {
 		"unknown source":           {Enabled: true, Sources: []string{"cookie"}},
 		"subdomain without a base": {Enabled: true, Sources: []string{"subdomain"}},
 	} {
-		if _, err := NewTenancy(cfg, Config{Env: "local"}, newTestLogger()); err == nil {
+		if _, err := NewTenancy(cfg, Config{Env: "local"}, nil, newTestLogger()); err == nil {
 			t.Errorf("%s: started, want a startup error", name)
 		}
 	}
