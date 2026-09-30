@@ -164,7 +164,9 @@ contenedores de producción, corregido antes de publicarla:
   El `__getattr__` perezoso estaba tipado `-> object`, así que
   `Depends(require_auth)` era un error en todo proyecto que siguiera los docs.
   Los nombres se declaran para el type checker; el import sigue siendo
-  perezoso. El smoke de calidad generada revisa los imports documentados.
+  perezoso. El `ruff.toml` generado además deja pasar
+  `Depends(require_scopes(...))` por B008, que lo marcaba. El smoke de calidad
+  generada revisa los imports documentados.
 
 ### Agregado
 

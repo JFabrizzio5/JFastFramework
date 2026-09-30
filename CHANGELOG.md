@@ -157,8 +157,9 @@ containers, fixed before it shipped:
 - **`from jfastframework.auth import require_auth` failed `mypy --strict`.**
   The lazy `__getattr__` was typed `-> object`, so `Depends(require_auth)` was
   an error in every project that followed the docs. The names are declared
-  for the type checker; the import stays lazy. The generated-quality smoke
-  gates the documented imports.
+  for the type checker; the import stays lazy. The generated `ruff.toml` also
+  lets `Depends(require_scopes(...))` through B008, which it flagged. The
+  generated-quality smoke gates the documented imports.
 
 ### Added
 
