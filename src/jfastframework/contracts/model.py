@@ -28,6 +28,7 @@ by the person who owns the service, not generated and forgotten:
 
     [modules.asesor]
     depends_on = ["comprobante"]   # may call modules/comprobante/public.py
+    publishes = ["asesor.recomendacion_lista"]   # event types it may publish
 
 Three consumers, one file:
 
@@ -235,6 +236,10 @@ class Contract:
     # module with no block depends on nothing, so a new edge in the graph is
     # always a line someone added to this file and a reviewer saw.
     module_deps: dict[str, list[str]] = field(default_factory=dict)
+    # `[modules.<name>] publishes`: the event types each module may publish.
+    # Subscriptions are read from the code; publishing is declared, so an
+    # event is a reviewed part of a module's API like its facade is.
+    module_publishes: dict[str, list[str]] = field(default_factory=dict)
     source: Path | None = None
 
     # -- loading -------------------------------------------------------
@@ -302,6 +307,7 @@ class Contract:
             async_safety=_async_safety(rules.get("async_safety", {})),
             enforce_placement=bool(rules.get("placement", {}).get("enabled", True)),
             module_deps=_module_deps(raw.get("modules", {})),
+            module_publishes=_module_list(raw.get("modules", {}), "publishes"),
             source=path,
         )
 
@@ -383,7 +389,11 @@ class Contract:
                 },
             },
             "modules": {
-                name: {"depends_on": list(deps)} for name, deps in sorted(self.module_deps.items())
+                name: {
+                    "depends_on": list(self.module_deps.get(name, [])),
+                    "publishes": list(self.module_publishes.get(name, [])),
+                }
+                for name in sorted(set(self.module_deps) | set(self.module_publishes))
             },
             "provides": [_interface_dict(i) for i in self.provides],
             "consumes": [_interface_dict(i) for i in self.consumes],
@@ -427,6 +437,19 @@ def _module_deps(table: Any) -> dict[str, list[str]]:
         listed = block.get("depends_on", [])
         deps[str(name)] = [str(item) for item in listed] if isinstance(listed, list) else []
     return deps
+
+
+def _module_list(table: Any, key: str) -> dict[str, list[str]]:
+    """``[modules.<name>] <key>`` for every block that has it."""
+    if not isinstance(table, dict):
+        return {}
+    found: dict[str, list[str]] = {}
+    for name, block in table.items():
+        if not isinstance(block, dict) or key not in block:
+            continue
+        listed = block[key]
+        found[str(name)] = [str(item) for item in listed] if isinstance(listed, list) else []
+    return found
 
 
 def append_module_block(path: Path, module: str) -> bool:

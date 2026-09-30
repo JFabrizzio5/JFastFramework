@@ -39,6 +39,14 @@ from pathlib import Path
 
 from jfastframework.contracts._scan import Violation, python_files, resolve_relative, waived
 from jfastframework.contracts.model import Contract
+from jfastframework.contracts.wiring import (
+    ORPHAN_RULE,
+    UNDECLARED_EVENT_RULE,
+    UNUSED_RULE,
+    Wiring,
+    scan_tree,
+    toml_line,
+)
 
 RULE = "cross-module"
 SHARED_RULE = "shared-direction"
@@ -49,7 +57,18 @@ SQL_RULE = "cross-module-sql"
 UNKNOWN_RULE = "unknown-dependency"
 
 #: Every rule this file reports. `[rules.placement] enabled` turns them all off.
-RULES = (RULE, SHARED_RULE, UNDECLARED_RULE, CYCLE_RULE, LEAK_RULE, SQL_RULE, UNKNOWN_RULE)
+RULES = (
+    RULE,
+    SHARED_RULE,
+    UNDECLARED_RULE,
+    CYCLE_RULE,
+    LEAK_RULE,
+    SQL_RULE,
+    UNKNOWN_RULE,
+    ORPHAN_RULE,
+    UNDECLARED_EVENT_RULE,
+    UNUSED_RULE,
+)
 
 #: The facade's file name. Fixed rather than configurable: every generator,
 #: template and doc names it, and a knob that only the checker honoured would
@@ -590,6 +609,134 @@ def _check_declared(contract: Contract, root: Path, source: str) -> list[Violati
     return found
 
 
+def _check_task_refs(
+    contract: Contract, wiring: Wiring, edges: dict[str, dict[str, _Import]]
+) -> list[Violation]:
+    """A job queued by name for a task another module owns is a call into it.
+
+    Added to ``edges`` so the cycle check sees it: the string spelling is how
+    a cycle between two modules hides from every import-based check.
+    """
+    owners = wiring.task_owners()
+    found: list[Violation] = []
+    for ref in wiring.job_refs:
+        owner = owners.get(ref.name)
+        if owner is None or owner == ref.module or ref.waived:
+            continue
+        edges.setdefault(ref.module, {}).setdefault(
+            owner, _Import(ref.file, ref.line, f"task {ref.name}", (), False)
+        )
+        if owner in contract.module_deps.get(ref.module, []):
+            continue
+        found.append(
+            Violation(
+                ref.file,
+                ref.line,
+                UNDECLARED_RULE,
+                f"module {ref.module!r} queues task {ref.name!r}, which module {owner!r} "
+                f"owns, but does not declare {owner!r} in depends_on",
+                f"a task name is a call into the module that declares it, spelt so nothing "
+                f"sees it. To react to something {ref.module!r} did, publish an event "
+                f"(declare it under [modules.{ref.module}] publishes) and @subscribe to it in "
+                f'{owner!r} -- no dependency either way. Otherwise add "{owner}" to '
+                f"depends_on under [modules.{ref.module}]",
+            )
+        )
+    return found
+
+
+def _check_events(contract: Contract, wiring: Wiring, source: str) -> list[Violation]:
+    declared = {event for events in contract.module_publishes.values() for event in events}
+    found: list[Violation] = []
+    for sub in wiring.subscriptions:
+        if sub.waived or sub.name in declared:
+            continue
+        found.append(
+            Violation(
+                sub.file,
+                sub.line,
+                ORPHAN_RULE,
+                f"module {sub.module!r} subscribes to {sub.name!r}, which no module declares "
+                f"under publishes",
+                f'declare it -- publishes = ["{sub.name}"] under the publishing module\'s '
+                f"[modules.<name>] in {source} -- or fix the name: a subscription to an event "
+                f"nobody publishes never runs, and says nothing. An event from another service "
+                f"arrives over Kafka: use @on(topic) for it, not @subscribe",
+            )
+        )
+    for pub in wiring.publications:
+        if pub.waived or pub.name in contract.module_publishes.get(pub.module, []):
+            continue
+        found.append(
+            Violation(
+                pub.file,
+                pub.line,
+                UNDECLARED_EVENT_RULE,
+                f"module {pub.module!r} publishes {pub.name!r} but does not declare it",
+                f'add "{pub.name}" to publishes under [modules.{pub.module}] in {source}: an '
+                f"event is part of a module's API, and its subscribers are only checked "
+                f"against events someone declared",
+            )
+        )
+    return found
+
+
+def _check_unused(
+    contract: Contract, files: list[_File], wiring: Wiring, root: Path
+) -> list[Violation]:
+    """A depends_on entry nothing uses: the graph has started to lie.
+
+    Any import of the other module counts as use, waived or not, and so does
+    queuing one of its tasks: the finding is about the declaration, not about
+    whether the use is legal -- the other rules decide that.
+    """
+    used: dict[str, set[str]] = {}
+    for scanned in files:
+        if scanned.module is None:
+            continue
+        for imported in scanned.imports:
+            other = _imported_module(imported.dotted)
+            if other is not None and other != scanned.module:
+                used.setdefault(scanned.module, set()).add(other)
+    owners = wiring.task_owners()
+    for ref in wiring.job_refs:
+        owner = owners.get(ref.name)
+        if owner is not None and owner != ref.module:
+            used.setdefault(ref.module, set()).add(owner)
+
+    modules_dir = root / "modules"
+    present = (
+        {p.name for p in modules_dir.iterdir() if p.is_dir()} if modules_dir.is_dir() else set()
+    )
+    lines: list[str] = []
+    if contract.source is not None and contract.source.is_file():
+        lines = contract.source.read_text(encoding="utf-8").splitlines()
+    source = contract.source.name if contract.source else "contracts.toml"
+
+    found: list[Violation] = []
+    for module, deps in sorted(contract.module_deps.items()):
+        if module not in present:
+            continue  # unknown-dependency already says so
+        for dep in deps:
+            if dep == module or dep not in present or dep in used.get(module, set()):
+                continue
+            line = toml_line(lines, f"modules.{module}", "depends_on", dep)
+            if waived(lines, line) is not None:
+                continue
+            found.append(
+                Violation(
+                    source,
+                    line,
+                    UNUSED_RULE,
+                    f"[modules.{module}] depends_on lists {dep!r}, but module {module!r} never "
+                    f"calls modules.{dep}.public or queues one of its tasks",
+                    "remove it: a stale edge is how the declared graph stops matching the "
+                    "code, and it can report a cycle that does not exist or hide one that does",
+                )
+            )
+    return found
+
+
 def check_placement(contract: Contract, root: Path) -> list[Violation]:
     """Every module-boundary rule, in one pass over the tree."""
     if not contract.enforce_placement:
@@ -601,26 +748,35 @@ def check_placement(contract: Contract, root: Path) -> list[Violation]:
     for module, found in sorted(entities.items()):
         for table in found.values():
             owners.setdefault(table.lower(), module)
+    wiring = Wiring()
+    for scanned in files:
+        scan_tree(scanned.tree, scanned.relative, scanned.lines, wiring)
 
     source = contract.source.name if contract.source else "contracts.toml"
     violations, edges = _check_imports(contract, files, root, entities)
+    violations += _check_task_refs(contract, wiring, edges)
+    violations += _check_events(contract, wiring, source)
     violations += _check_defined_entities(files)
     violations += _check_sql(files, owners)
     violations += _check_cycles(contract, edges, source)
     violations += _check_declared(contract, root, source)
+    violations += _check_unused(contract, files, wiring, root)
     return violations
 
 
 __all__ = [
     "CYCLE_RULE",
     "LEAK_RULE",
+    "ORPHAN_RULE",
     "PUBLIC_FILE",
     "RULE",
     "RULES",
     "SHARED_RULE",
     "SQL_RULE",
+    "UNDECLARED_EVENT_RULE",
     "UNDECLARED_RULE",
     "UNKNOWN_RULE",
+    "UNUSED_RULE",
     "check_placement",
     "crosses_to_facade",
     "facade_path",
