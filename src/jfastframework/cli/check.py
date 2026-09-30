@@ -378,7 +378,7 @@ def environment_overrides(source: Path, raw: dict[str, Any]) -> list[Finding]:
         lines = config_lines(source.read_text(encoding="utf-8"))
     except OSError:
         lines = {}
-    return [
+    found = [
         Finding(
             severity="medium",
             code="environment-overrides-file",
@@ -398,6 +398,8 @@ def environment_overrides(source: Path, raw: dict[str, Any]) -> list[Finding]:
         for owned in owned_in_file(raw)
         if owned.disagrees
     ]
+    # In file order, which is how a reader walks jfast.toml to fix one.
+    return sorted(found, key=lambda notice: notice.line or 0)
 
 
 def _plugins_check(root: Path, state: _State) -> CheckResult:

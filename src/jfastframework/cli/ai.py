@@ -671,7 +671,9 @@ def environment_payload(root: Path, plugins: Sequence[str]) -> dict[str, Any]:
     except (OSError, tomllib.TOMLDecodeError):
         text, raw = "", {}
     lines = config_lines(text)
-    owned = owned_in_file(raw, tables={"app", *plugins})
+    owned = sorted(
+        owned_in_file(raw, tables={"app", *plugins}), key=lambda item: line_of(lines, item) or 0
+    )
     return {
         "rule": ENVIRONMENT_RULE,
         "in_file": [
