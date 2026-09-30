@@ -1,0 +1,312 @@
+package jfast
+
+import (
+	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/hmac"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/sha512"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"hash"
+	"math"
+	"math/big"
+	"strings"
+	"time"
+)
+
+// A JWT verifier on the standard library, for the algorithms the Python auth
+// plugin verifies (jfastframework.auth.tokens.SUPPORTED_ALGORITHMS):
+// HS256/384/512, RS256/384/512, ES256/384. `none` is not among them and never
+// will be.
+//
+// Every rule below is the one PyJWT applies with the options the Python
+// plugin passes, so a token is accepted here exactly when it is accepted
+// there. When in doubt, read jfastframework/auth/tokens.py: that is the spec.
+
+var errTokenMalformed = errors.New("token is malformed")
+
+// algorithm describes one JWS "alg".
+type algorithm struct {
+	family string // "HS", "RS" or "ES"
+	hash   crypto.Hash
+	curve  elliptic.Curve // ES only
+}
+
+var algorithms = map[string]algorithm{
+	"HS256": {family: "HS", hash: crypto.SHA256},
+	"HS384": {family: "HS", hash: crypto.SHA384},
+	"HS512": {family: "HS", hash: crypto.SHA512},
+	"RS256": {family: "RS", hash: crypto.SHA256},
+	"RS384": {family: "RS", hash: crypto.SHA384},
+	"RS512": {family: "RS", hash: crypto.SHA512},
+	"ES256": {family: "ES", hash: crypto.SHA256, curve: elliptic.P256()},
+	"ES384": {family: "ES", hash: crypto.SHA384, curve: elliptic.P384()},
+}
+
+func newHash(h crypto.Hash) func() hash.Hash {
+	switch h {
+	case crypto.SHA384:
+		return sha512.New384
+	case crypto.SHA512:
+		return sha512.New
+	default:
+		return sha256.New
+	}
+}
+
+// verifyKeys holds whichever key material the configured mode uses.
+type verifyKeys struct {
+	secret []byte
+	rsa    *rsa.PublicKey
+	ecdsa  *ecdsa.PublicKey
+}
+
+func decodeSegment(segment string) ([]byte, error) {
+	// JWS uses unpadded base64url; PyJWT tolerates padding, so strip it.
+	return base64.RawURLEncoding.DecodeString(strings.TrimRight(segment, "="))
+}
+
+// verifySignature checks the JWS signature with the algorithm the
+// *configuration* allows. The token's own "alg" only has to be one of those:
+// trusting it beyond that is the algorithm-confusion attack.
+func verifySignature(token string, allowed []string, keys verifyKeys) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, errTokenMalformed
+	}
+
+	rawHeader, err := decodeSegment(parts[0])
+	if err != nil {
+		return nil, errTokenMalformed
+	}
+	var header map[string]any
+	if err := json.Unmarshal(rawHeader, &header); err != nil || header == nil {
+		return nil, errTokenMalformed
+	}
+	alg, _ := header["alg"].(string)
+	if !contains(allowed, alg) {
+		return nil, fmt.Errorf("token is invalid: the specified alg value %q is not allowed", alg)
+	}
+	if crit, present := header["crit"]; present && crit != nil {
+		// Extensions this verifier does not implement must fail closed
+		// (RFC 7515 4.1.11), which is what PyJWT does too.
+		return nil, errors.New("token is invalid: unsupported critical header parameters")
+	}
+	if kid, present := header["kid"]; present {
+		if _, ok := kid.(string); !ok {
+			return nil, errors.New("token is invalid: key ID header parameter must be a string")
+		}
+	}
+	spec, ok := algorithms[alg]
+	if !ok {
+		return nil, fmt.Errorf("token is invalid: algorithm %q not supported", alg)
+	}
+
+	signature, err := decodeSegment(parts[2])
+	if err != nil {
+		return nil, errTokenMalformed
+	}
+	signingInput := []byte(parts[0] + "." + parts[1])
+
+	switch spec.family {
+	case "HS":
+		if keys.secret == nil {
+			return nil, errors.New("token is invalid: no HMAC secret configured")
+		}
+		mac := hmac.New(newHash(spec.hash), keys.secret)
+		mac.Write(signingInput)
+		if !hmac.Equal(mac.Sum(nil), signature) {
+			return nil, errors.New("token is invalid: signature verification failed")
+		}
+	case "RS":
+		if keys.rsa == nil {
+			return nil, errors.New("token is invalid: no RSA public key configured")
+		}
+		digest := newHash(spec.hash)()
+		digest.Write(signingInput)
+		if err := rsa.VerifyPKCS1v15(keys.rsa, spec.hash, digest.Sum(nil), signature); err != nil {
+			return nil, errors.New("token is invalid: signature verification failed")
+		}
+	case "ES":
+		if keys.ecdsa == nil {
+			return nil, errors.New("token is invalid: no EC public key configured")
+		}
+		if keys.ecdsa.Curve != spec.curve {
+			return nil, fmt.Errorf("token is invalid: %s needs a %s key", alg, spec.curve.Params().Name)
+		}
+		size := (spec.curve.Params().BitSize + 7) / 8
+		if len(signature) != 2*size {
+			return nil, errors.New("token is invalid: signature verification failed")
+		}
+		digest := newHash(spec.hash)()
+		digest.Write(signingInput)
+		r := new(big.Int).SetBytes(signature[:size])
+		s := new(big.Int).SetBytes(signature[size:])
+		if !ecdsa.Verify(keys.ecdsa, digest.Sum(nil), r, s) {
+			return nil, errors.New("token is invalid: signature verification failed")
+		}
+	}
+
+	rawPayload, err := decodeSegment(parts[1])
+	if err != nil {
+		return nil, errTokenMalformed
+	}
+	decoder := json.NewDecoder(bytes.NewReader(rawPayload))
+	decoder.UseNumber()
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil || payload == nil {
+		return nil, errors.New("token is invalid: payload must be a JSON object")
+	}
+	return payload, nil
+}
+
+// numericDate reads a NumericDate claim. PyJWT truncates with int(); so does this.
+func numericDate(payload map[string]any, name string) (int64, bool, error) {
+	value, present := payload[name]
+	if !present || value == nil {
+		return 0, false, nil
+	}
+	number, ok := value.(json.Number)
+	if !ok {
+		return 0, true, fmt.Errorf("token is invalid: %s must be a number", name)
+	}
+	parsed, err := number.Float64()
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return 0, true, fmt.Errorf("token is invalid: %s must be a number", name)
+	}
+	return int64(parsed), true, nil
+}
+
+// validateClaims mirrors jfastframework.auth.tokens.verify: exp, iat and sub
+// required; iat, nbf and exp checked against now with the leeway; iss and aud
+// checked only when configured, and then required.
+func validateClaims(payload map[string]any, cfg AuthConfig, now time.Time) error {
+	for _, name := range []string{"exp", "iat", "sub"} {
+		if value, present := payload[name]; !present || value == nil {
+			return fmt.Errorf("token is missing a required claim: Token is missing the %q claim", name)
+		}
+	}
+	if _, ok := payload["sub"].(string); !ok {
+		return errors.New("token is invalid: Subject must be a string")
+	}
+	if jti, present := payload["jti"]; present {
+		if _, ok := jti.(string); !ok {
+			return errors.New("token is invalid: JWT ID must be a string")
+		}
+	}
+
+	leeway := float64(cfg.Leeway)
+	current := float64(now.UnixNano()) / 1e9
+
+	iat, _, err := numericDate(payload, "iat")
+	if err != nil {
+		return err
+	}
+	if float64(iat) > current+leeway {
+		return errors.New("token is invalid: The token is not yet valid (iat)")
+	}
+	nbf, hasNbf, err := numericDate(payload, "nbf")
+	if err != nil {
+		return err
+	}
+	if hasNbf && float64(nbf) > current+leeway {
+		return errors.New("token is invalid: The token is not yet valid (nbf)")
+	}
+	exp, _, err := numericDate(payload, "exp")
+	if err != nil {
+		return err
+	}
+	if float64(exp) <= current-leeway {
+		return errors.New("token has expired")
+	}
+
+	if iss, present := payload["iss"]; present {
+		if _, ok := iss.(string); !ok {
+			return errors.New("token is invalid: Issuer (iss) must be a string")
+		}
+	}
+	if cfg.Issuer != "" {
+		iss, present := payload["iss"].(string)
+		if !present {
+			return errors.New("token is missing a required claim: Token is missing the \"iss\" claim")
+		}
+		if iss != cfg.Issuer {
+			return errors.New("token was issued by an unexpected issuer")
+		}
+	}
+
+	if cfg.Audience != "" {
+		raw, present := payload["aud"]
+		var audiences []string
+		switch value := raw.(type) {
+		case string:
+			if value != "" {
+				audiences = []string{value}
+			}
+		case []any:
+			for _, item := range value {
+				text, ok := item.(string)
+				if !ok {
+					return errors.New("token was issued for a different audience")
+				}
+				audiences = append(audiences, text)
+			}
+		case nil:
+		default:
+			return errors.New("token was issued for a different audience")
+		}
+		if !present || len(audiences) == 0 {
+			return errors.New("token is missing a required claim: Token is missing the \"aud\" claim")
+		}
+		if !contains(audiences, cfg.Audience) {
+			return errors.New("token was issued for a different audience")
+		}
+	}
+	return nil
+}
+
+// parsePublicKey reads a PEM public key: SPKI ("PUBLIC KEY"), PKCS#1
+// ("RSA PUBLIC KEY") or the key inside a certificate.
+func parsePublicKey(text string) (any, error) {
+	block, _ := pem.Decode([]byte(text))
+	if block == nil && strings.Contains(text, `\n`) {
+		// An env var that went through a tool which does not expand "\n".
+		block, _ = pem.Decode([]byte(strings.ReplaceAll(text, `\n`, "\n")))
+	}
+	if block == nil {
+		return nil, errors.New("JFAST_AUTH_PUBLIC_KEY is not a PEM block")
+	}
+	switch block.Type {
+	case "PUBLIC KEY":
+		return x509.ParsePKIXPublicKey(block.Bytes)
+	case "RSA PUBLIC KEY":
+		return x509.ParsePKCS1PublicKey(block.Bytes)
+	case "CERTIFICATE":
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return cert.PublicKey, nil
+	default:
+		// A private key here means it was copied from the signing side, and
+		// this service does not need the half that mints tokens.
+		return nil, fmt.Errorf("JFAST_AUTH_PUBLIC_KEY holds a %q block; it needs the public key", block.Type)
+	}
+}
+
+func contains(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,163 @@
+package jfast
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func newTestTenancy(t *testing.T, cfg TenancyConfig) *Tenancy {
+	t.Helper()
+	cfg.Enabled = true
+	if cfg.HeaderName == "" {
+		cfg.HeaderName = "X-Tenant-ID"
+	}
+	if cfg.PathPrefix == "" {
+		cfg.PathPrefix = "/t"
+	}
+	if cfg.Reserved == nil {
+		cfg.Reserved = reservedSubdomains
+	}
+	if cfg.ExemptPaths == nil {
+		cfg.ExemptPaths = []string{"/health", "/ready"}
+	}
+	tenancy, err := NewTenancy(cfg, Config{Env: "local"}, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tenancy
+}
+
+// resolved runs one request through auth and tenancy and returns the tenant
+// the handler sees and the status of the response.
+func resolved(t *testing.T, tenancy *Tenancy, request *http.Request, guard Middleware) (string, int) {
+	t.Helper()
+	var seen string
+	handler := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, _ = TenantFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}), Authenticate(newTestAuth(t, secretConfig())), ResolveTenant(tenancy), guard)
+	return seen, serve(handler, request).Code
+}
+
+func passThrough(next http.Handler) http.Handler { return next }
+
+func withToken(t *testing.T, request *http.Request, claims map[string]any) *http.Request {
+	request.Header.Set("Authorization", "Bearer "+mint(t, "HS256", []byte(testSecret), claims))
+	return request
+}
+
+func TestSourcesAreTriedInOrder(t *testing.T) {
+	tenancy := newTestTenancy(t, TenancyConfig{
+		Sources:    []string{"token", "subdomain", "header"},
+		BaseDomain: "app.example.com",
+	})
+
+	// The signed claim beats the host and the header.
+	request := withToken(t, httptest.NewRequest(http.MethodGet, "http://globex.app.example.com/x", nil), validClaims())
+	request.Header.Set("X-Tenant-ID", "initech")
+	if tenant, _ := resolved(t, tenancy, request, passThrough); tenant != "acme" {
+		t.Fatalf("tenant = %q, want the token's acme", tenant)
+	}
+
+	// No token: the subdomain, over the header.
+	request = httptest.NewRequest(http.MethodGet, "http://globex.app.example.com/x", nil)
+	request.Header.Set("X-Tenant-ID", "initech")
+	if tenant, _ := resolved(t, tenancy, request, passThrough); tenant != "globex" {
+		t.Fatalf("tenant = %q, want globex from the host", tenant)
+	}
+
+	// A reserved subdomain is never a tenant; the header is last.
+	request = httptest.NewRequest(http.MethodGet, "http://www.app.example.com/x", nil)
+	request.Header.Set("X-Tenant-ID", "Initech")
+	if tenant, _ := resolved(t, tenancy, request, passThrough); tenant != "initech" {
+		t.Fatalf("tenant = %q, want initech from the header", tenant)
+	}
+}
+
+func TestTheHeaderIsIgnoredUnlessItIsASource(t *testing.T) {
+	tenancy := newTestTenancy(t, TenancyConfig{Sources: []string{"token"}})
+	request := httptest.NewRequest(http.MethodGet, "/x", nil)
+	request.Header.Set("X-Tenant-ID", "acme")
+	if tenant, _ := resolved(t, tenancy, request, passThrough); tenant != "" {
+		t.Fatalf("tenant = %q from an unsigned header", tenant)
+	}
+}
+
+func TestUserSourceUsesTheSubject(t *testing.T) {
+	tenancy := newTestTenancy(t, TenancyConfig{Sources: []string{"token", "user"}})
+	claims := validClaims()
+	delete(claims, "tenant_id")
+	request := withToken(t, httptest.NewRequest(http.MethodGet, "/x", nil), claims)
+	if tenant, _ := resolved(t, tenancy, request, passThrough); tenant != "user-1" {
+		t.Fatalf("tenant = %q, want the subject", tenant)
+	}
+}
+
+func TestPathSource(t *testing.T) {
+	if got := TenantFromPath("/t/Acme/invoices", "/t"); got != "acme" {
+		t.Fatalf("path tenant = %q", got)
+	}
+	if got := TenantFromHost("a.b.app.example.com", "app.example.com", reservedSubdomains); got != "" {
+		t.Fatalf("nested subdomain resolved to %q", got)
+	}
+}
+
+func TestRequireTenantIs401WithoutASessionAnd403WithoutATenant(t *testing.T) {
+	tenancy := newTestTenancy(t, TenancyConfig{Sources: []string{"token"}})
+
+	if _, code := resolved(t, tenancy, httptest.NewRequest(http.MethodGet, "/x", nil), RequireTenant); code != http.StatusUnauthorized {
+		t.Fatalf("no session: %d, want 401", code)
+	}
+
+	claims := validClaims()
+	delete(claims, "tenant_id")
+	request := withToken(t, httptest.NewRequest(http.MethodGet, "/x", nil), claims)
+	if _, code := resolved(t, tenancy, request, RequireTenant); code != http.StatusForbidden {
+		t.Fatalf("session without a tenant: %d, want 403", code)
+	}
+
+	// An expired token is no session: 401, so the client refreshes.
+	expired := validClaims()
+	expired["exp"] = int64(1)
+	request = withToken(t, httptest.NewRequest(http.MethodGet, "/x", nil), expired)
+	if _, code := resolved(t, tenancy, request, RequireTenant); code != http.StatusUnauthorized {
+		t.Fatalf("expired token: %d, want 401", code)
+	}
+
+	request = withToken(t, httptest.NewRequest(http.MethodGet, "/x", nil), validClaims())
+	if tenant, code := resolved(t, tenancy, request, RequireTenant); code != http.StatusOK || tenant != "acme" {
+		t.Fatalf("session with a tenant: %d %q", code, tenant)
+	}
+}
+
+func TestWithoutTenancyTheTokenClaimIsTheTenant(t *testing.T) {
+	// Python's current_tenant falls back to the token claim when the tenancy
+	// plugin is off; so does TenantFrom.
+	request := withToken(t, httptest.NewRequest(http.MethodGet, "/x", nil), validClaims())
+	if tenant, code := resolved(t, nil, request, RequireTenant); code != http.StatusOK || tenant != "acme" {
+		t.Fatalf("no tenancy: %d %q", code, tenant)
+	}
+}
+
+func TestRequireTenantSettingAnswers403OutsideExemptPaths(t *testing.T) {
+	tenancy := newTestTenancy(t, TenancyConfig{Sources: []string{"token"}, RequireTenant: true})
+
+	if _, code := resolved(t, tenancy, httptest.NewRequest(http.MethodGet, "/x", nil), passThrough); code != http.StatusForbidden {
+		t.Fatalf("unscoped request: %d, want 403", code)
+	}
+	if _, code := resolved(t, tenancy, httptest.NewRequest(http.MethodGet, "/health", nil), passThrough); code != http.StatusOK {
+		t.Fatalf("/health: %d, want 200", code)
+	}
+}
+
+func TestTenancyConfigurationsPythonRefusesAreRefused(t *testing.T) {
+	for name, cfg := range map[string]TenancyConfig{
+		"unknown source":           {Enabled: true, Sources: []string{"cookie"}},
+		"subdomain without a base": {Enabled: true, Sources: []string{"subdomain"}},
+	} {
+		if _, err := NewTenancy(cfg, Config{Env: "local"}, newTestLogger()); err == nil {
+			t.Errorf("%s: started, want a startup error", name)
+		}
+	}
+}

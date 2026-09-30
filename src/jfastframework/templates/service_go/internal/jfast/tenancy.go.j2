@@ -1,0 +1,258 @@
+package jfast
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+)
+
+// Which tenant a request is for, resolved the way the Python `tenancy` plugin
+// does (jfastframework/plugins/builtin/tenancy.py): an ordered list of
+// sources, first one that yields a tenant wins. The order is an order of
+// trust:
+//
+//	token      the signed tenant claim (JFAST_AUTH_TENANT_CLAIM)  high
+//	user       the signed subject: the user is the tenant          high
+//	subdomain  acme.<JFAST_TENANCY_BASE_DOMAIN>                   medium
+//	path       /t/acme/...                                         medium
+//	header     X-Tenant-ID -- whoever sent the request             none
+
+var tenancySources = []string{"token", "user", "subdomain", "path", "header"}
+
+// A tenant slug ends up in hostnames, log fields and SQL parameters.
+var tenantSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// A user id is the identity provider's: UUIDs, hex ids, "auth0|abc".
+var subjectPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:@|-]{0,127}$`)
+
+var reservedSubdomains = []string{"admin", "api", "app", "assets", "cdn", "ftp", "localhost", "mail", "static", "www"}
+
+// TenancyConfig is the JFAST_TENANCY_* block, with the Python defaults.
+type TenancyConfig struct {
+	Enabled       bool
+	Sources       []string // JFAST_TENANCY_SOURCES: ["token","subdomain"] or token,subdomain
+	BaseDomain    string   // JFAST_TENANCY_BASE_DOMAIN
+	HeaderName    string   // JFAST_TENANCY_HEADER_NAME, default X-Tenant-ID
+	PathPrefix    string   // JFAST_TENANCY_PATH_PREFIX, default /t
+	RequireTenant bool     // JFAST_TENANCY_REQUIRE_TENANT, default false
+	ExemptPaths   []string // JFAST_TENANCY_EXEMPT_PATHS
+	Reserved      []string // JFAST_TENANCY_RESERVED
+}
+
+// LoadTenancyConfig reads JFAST_TENANCY_*. Tenancy resolution is on when
+// JFAST_TENANCY_SOURCES is set; off, TenantFrom still answers with the
+// token's tenant claim, as Python's current_tenant does without the plugin.
+func LoadTenancyConfig() (TenancyConfig, error) {
+	cfg := TenancyConfig{
+		BaseDomain:    strings.TrimSpace(os.Getenv("JFAST_TENANCY_BASE_DOMAIN")),
+		HeaderName:    env("JFAST_TENANCY_HEADER_NAME", "X-Tenant-ID"),
+		PathPrefix:    env("JFAST_TENANCY_PATH_PREFIX", "/t"),
+		RequireTenant: envBool("JFAST_TENANCY_REQUIRE_TENANT", false),
+		ExemptPaths:   []string{"/health", "/ready", "/info", "/metrics", "/docs", "/openapi.json"},
+		Reserved:      reservedSubdomains,
+	}
+	var err error
+	if cfg.Sources, err = envList("JFAST_TENANCY_SOURCES"); err != nil {
+		return cfg, err
+	}
+	if exempt, err := envList("JFAST_TENANCY_EXEMPT_PATHS"); err != nil {
+		return cfg, err
+	} else if exempt != nil {
+		cfg.ExemptPaths = exempt
+	}
+	if reserved, err := envList("JFAST_TENANCY_RESERVED"); err != nil {
+		return cfg, err
+	} else if reserved != nil {
+		cfg.Reserved = reserved
+	}
+	cfg.Enabled = len(cfg.Sources) > 0
+	return cfg, nil
+}
+
+// Tenancy resolves the tenant. A nil *Tenancy means resolution is off.
+type Tenancy struct {
+	cfg TenancyConfig
+}
+
+// NewTenancy validates the configuration as the Python plugin does at boot.
+// Returns nil, nil when tenancy is off.
+func NewTenancy(cfg TenancyConfig, app Config, logger *slog.Logger) (*Tenancy, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	var unknown []string
+	for _, source := range cfg.Sources {
+		if !contains(tenancySources, source) {
+			unknown = append(unknown, source)
+		}
+	}
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("tenancy sources %s are unknown; choose from %s",
+			strings.Join(unknown, ", "), strings.Join(tenancySources, ", "))
+	}
+	if contains(cfg.Sources, "subdomain") && cfg.BaseDomain == "" {
+		return nil, fmt.Errorf(`tenancy source "subdomain" needs JFAST_TENANCY_BASE_DOMAIN, or every host looks like a tenant`)
+	}
+	if contains(cfg.Sources, "header") && app.IsProduction() {
+		logger.Warn("tenancy trusts the " + cfg.HeaderName + " header in production. Anyone who can reach " +
+			"this service can now choose a tenant. Remove 'header' from JFAST_TENANCY_SOURCES " +
+			"unless a trusted proxy sets it.")
+	}
+	if !contains(cfg.Sources, "token") && !contains(cfg.Sources, "user") {
+		logger.Info("tenancy is not using the token claim; the tenant will come from " +
+			"the request rather than from something signed")
+	}
+	return &Tenancy{cfg: cfg}, nil
+}
+
+// TenantFromHost: `acme.app.example.com` with base `app.example.com` -> `acme`.
+func TenantFromHost(host, baseDomain string, reserved []string) string {
+	if baseDomain == "" {
+		return ""
+	}
+	hostname := strings.TrimRight(strings.ToLower(strings.SplitN(host, ":", 2)[0]), ".")
+	suffix := "." + strings.TrimLeft(strings.ToLower(baseDomain), ".")
+	if !strings.HasSuffix(hostname, suffix) {
+		return ""
+	}
+	label := strings.TrimSuffix(hostname, suffix)
+	// Only the leftmost label, and only one: `a.b.app.example.com` is a
+	// mistake, not a tenant called "a.b".
+	if label == "" || strings.Contains(label, ".") || contains(reserved, label) {
+		return ""
+	}
+	if !tenantSlug.MatchString(label) {
+		return ""
+	}
+	return label
+}
+
+// TenantFromPath: `/t/acme/invoices` -> `acme`.
+func TenantFromPath(path, prefix string) string {
+	marker := strings.TrimRight(prefix, "/") + "/"
+	if !strings.HasPrefix(path, marker) {
+		return ""
+	}
+	candidate := strings.ToLower(strings.SplitN(path[len(marker):], "/", 2)[0])
+	if !tenantSlug.MatchString(candidate) {
+		return ""
+	}
+	return candidate
+}
+
+func (t *Tenancy) resolve(r *http.Request) (string, string) {
+	claims, _ := ClaimsFrom(r.Context())
+	for _, source := range t.cfg.Sources {
+		switch source {
+		case "token":
+			if claims != nil && claims.TenantID != "" {
+				return claims.TenantID, "token"
+			}
+		case "user":
+			if claims != nil && subjectPattern.MatchString(claims.Subject) {
+				return claims.Subject, "user"
+			}
+		case "subdomain":
+			if tenant := TenantFromHost(r.Host, t.cfg.BaseDomain, t.cfg.Reserved); tenant != "" {
+				return tenant, "subdomain"
+			}
+		case "path":
+			if tenant := TenantFromPath(r.URL.Path, t.cfg.PathPrefix); tenant != "" {
+				return tenant, "path"
+			}
+		case "header":
+			raw := strings.ToLower(r.Header.Get(t.cfg.HeaderName))
+			if raw != "" && tenantSlug.MatchString(raw) {
+				return raw, "header"
+			}
+		}
+	}
+	return "", ""
+}
+
+type resolvedTenant struct {
+	tenant string
+	source string
+}
+
+const tenantKey contextKey = "jfast_tenant"
+
+// ResolveTenant runs after Authenticate, so the signed sources are readable.
+// With JFAST_TENANCY_REQUIRE_TENANT it answers 403 for a request that
+// resolves to no tenant, outside the exempt paths. A nil tenancy passes
+// everything through.
+func ResolveTenant(tenancy *Tenancy) Middleware {
+	return func(next http.Handler) http.Handler {
+		if tenancy == nil {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tenant, source := tenancy.resolve(r)
+			exempt := false
+			for _, prefix := range tenancy.cfg.ExemptPaths {
+				if strings.HasPrefix(r.URL.Path, prefix) {
+					exempt = true
+					break
+				}
+			}
+			if tenant == "" && tenancy.cfg.RequireTenant && !exempt {
+				WriteProblem(w, r, Forbidden("this request is not scoped to a tenant"))
+				return
+			}
+			if fields := logFieldsFrom(r.Context()); fields != nil {
+				// What tenancy resolved is the authority, as in Python --
+				// including "nothing", over a claim a source ranked lower.
+				fields.tenantID = tenant
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), tenantKey, resolvedTenant{tenant, source})))
+		})
+	}
+}
+
+// TenantFrom returns this request's tenant: what tenancy resolved, else the
+// token's tenant claim -- Python's current_tenant. Never a raw header unless
+// "header" is one of JFAST_TENANCY_SOURCES.
+func TenantFrom(ctx context.Context) (string, bool) {
+	if resolved, ok := ctx.Value(tenantKey).(resolvedTenant); ok && resolved.tenant != "" {
+		return resolved.tenant, true
+	}
+	if claims, ok := ClaimsFrom(ctx); ok && claims.TenantID != "" {
+		return claims.TenantID, true
+	}
+	return "", false
+}
+
+// WithTenant returns ctx scoped to tenant: for work that runs outside an HTTP
+// request -- a job restoring the tenant it was queued with, or a test.
+func WithTenant(ctx context.Context, tenant string) context.Context {
+	return context.WithValue(ctx, tenantKey, resolvedTenant{tenant: tenant, source: "context"})
+}
+
+// TenantSourceFrom says which source the tenant came from ("token", "user",
+// "subdomain", "path", "header"), or "" when tenancy resolved none.
+func TenantSourceFrom(ctx context.Context) string {
+	resolved, _ := ctx.Value(tenantKey).(resolvedTenant)
+	return resolved.source
+}
+
+// RequireTenant answers like Python's current_tenant: 401 when nobody is
+// signed in and no tenant resolved -- a client refreshes its session on a 401
+// and gives up on a 403, so a 403 here would strand every session at its
+// first expiry -- and 403 when the caller is known but not scoped to a tenant.
+func RequireTenant(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := TenantFrom(r.Context()); ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if _, signedIn := ClaimsFrom(r.Context()); !signedIn {
+			WriteProblem(w, r, Unauthorized("authentication required"))
+			return
+		}
+		WriteProblem(w, r, Forbidden("this request is not scoped to a tenant. Sign in, or check JFAST_TENANCY_SOURCES."))
+	})
+}

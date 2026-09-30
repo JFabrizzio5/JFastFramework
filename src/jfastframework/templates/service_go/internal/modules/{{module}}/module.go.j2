@@ -24,64 +24,81 @@ type {{ Module }} struct {
 
 // Store is the seam. Swap the in-memory implementation for PostgreSQL by
 // implementing this interface -- nothing above it changes.
+//
+// Every method takes the tenant. It is "" when the service runs without
+// tenancy (the default), and then everything lives in one partition; with
+// JFAST_TENANCY_SOURCES set, each tenant sees only its own rows. A real store
+// puts it in the WHERE clause of every query -- the Python BaseRepository
+// does the same with tenant_id.
 type Store interface {
-	List() []{{ Module }}
-	Get(id int64) ({{ Module }}, bool)
-	Create(item {{ Module }}) ({{ Module }}, error)
-	Delete(id int64) bool
+	List(tenant string) []{{ Module }}
+	Get(tenant string, id int64) ({{ Module }}, bool)
+	Create(tenant string, item {{ Module }}) ({{ Module }}, error)
+	Delete(tenant string, id int64) bool
 }
 
 // MemoryStore keeps the generated service runnable with no database. Replace
 // it before this module holds anything you would miss.
 type MemoryStore struct {
 	mu     sync.RWMutex
-	items  map[int64]{{ Module }}
+	items  map[string]map[int64]{{ Module }}
 	nextID int64
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{items: map[int64]{{ Module }}{}, nextID: 1}
+	return &MemoryStore{items: map[string]map[int64]{{ Module }}{}, nextID: 1}
 }
 
-func (s *MemoryStore) List() []{{ Module }} {
+func (s *MemoryStore) List(tenant string) []{{ Module }} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]{{ Module }}, 0, len(s.items))
-	for _, item := range s.items {
+	out := make([]{{ Module }}, 0, len(s.items[tenant]))
+	for _, item := range s.items[tenant] {
 		out = append(out, item)
 	}
 	return out
 }
 
-func (s *MemoryStore) Get(id int64) ({{ Module }}, bool) {
+func (s *MemoryStore) Get(tenant string, id int64) ({{ Module }}, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	item, ok := s.items[id]
+	item, ok := s.items[tenant][id]
 	return item, ok
 }
 
-func (s *MemoryStore) Create(item {{ Module }}) ({{ Module }}, error) {
+func (s *MemoryStore) Create(tenant string, item {{ Module }}) ({{ Module }}, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, existing := range s.items {
+	for _, existing := range s.items[tenant] {
 		if existing.Name == item.Name {
 			return {{ Module }}{}, jfast.Conflict("{{ module }} named " + item.Name + " already exists")
 		}
 	}
+	if s.items[tenant] == nil {
+		s.items[tenant] = map[int64]{{ Module }}{}
+	}
 	item.ID = s.nextID
 	s.nextID++
-	s.items[item.ID] = item
+	s.items[tenant][item.ID] = item
 	return item, nil
 }
 
-func (s *MemoryStore) Delete(id int64) bool {
+func (s *MemoryStore) Delete(tenant string, id int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.items[id]; !ok {
+	if _, ok := s.items[tenant][id]; !ok {
 		return false
 	}
-	delete(s.items, id)
+	delete(s.items[tenant], id)
 	return true
+}
+
+// tenantOf is the request's tenant, or "" without one. The module works
+// either way; to make a route refuse requests with no tenant, wrap it in
+// jfast.RequireTenant (401 without a session, 403 without a tenant).
+func tenantOf(r *http.Request) string {
+	tenant, _ := jfast.TenantFrom(r.Context())
+	return tenant
 }
 
 type Module struct{ store Store }
@@ -92,6 +109,12 @@ func NewModuleWithStore(store Store) *Module { return &Module{store: store} }
 
 // Register mounts the module. Go 1.22+ patterns carry the method, so there is
 // no router dependency and no method-not-allowed handling to write.
+//
+// Routes are open, like a Python route without a dependency. To require a
+// verified caller, a scope or a tenant, wrap the handler:
+//
+//	mux.Handle("POST /{{ table }}", jfast.RequireAuth(http.HandlerFunc(m.create)))
+//	mux.Handle("DELETE /{{ table }}/{id}", jfast.RequireScopes("{{ table }}:write")(http.HandlerFunc(m.delete)))
 func (m *Module) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /{{ table }}", m.list)
 	mux.HandleFunc("POST /{{ table }}", m.create)
@@ -99,8 +122,8 @@ func (m *Module) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /{{ table }}/{id}", m.delete)
 }
 
-func (m *Module) list(w http.ResponseWriter, _ *http.Request) {
-	jfast.WriteJSON(w, http.StatusOK, m.store.List())
+func (m *Module) list(w http.ResponseWriter, r *http.Request) {
+	jfast.WriteJSON(w, http.StatusOK, m.store.List(tenantOf(r)))
 }
 
 func (m *Module) create(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +137,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := m.store.Create(payload)
+	created, err := m.store.Create(tenantOf(r), payload)
 	if err != nil {
 		var problem jfast.Problem
 		if asProblem(err, &problem) {
@@ -133,7 +156,7 @@ func (m *Module) get(w http.ResponseWriter, r *http.Request) {
 		jfast.WriteProblem(w, r, jfast.BadRequest("id must be an integer"))
 		return
 	}
-	item, ok := m.store.Get(id)
+	item, ok := m.store.Get(tenantOf(r), id)
 	if !ok {
 		jfast.WriteProblem(w, r, jfast.NotFound("{{ module }} not found"))
 		return
@@ -147,7 +170,7 @@ func (m *Module) delete(w http.ResponseWriter, r *http.Request) {
 		jfast.WriteProblem(w, r, jfast.BadRequest("id must be an integer"))
 		return
 	}
-	if !m.store.Delete(id) {
+	if !m.store.Delete(tenantOf(r), id) {
 		jfast.WriteProblem(w, r, jfast.NotFound("{{ module }} not found"))
 		return
 	}

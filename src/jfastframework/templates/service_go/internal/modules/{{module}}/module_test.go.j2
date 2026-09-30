@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"{{ service_slug }}/internal/jfast"
 )
 
 func newTestMux() *http.ServeMux {
@@ -80,5 +82,32 @@ func TestEmptyNameIsRejected(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+}
+
+func TestTenantsDoNotSeeEachOthersItems(t *testing.T) {
+	mux := newTestMux()
+	create := httptest.NewRequest(http.MethodPost, "/{{ table }}",
+		strings.NewReader(`{"name":"only-acme","is_active":true}`))
+	create = create.WithContext(jfast.WithTenant(create.Context(), "acme"))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, create)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", recorder.Code)
+	}
+
+	for tenant, want := range map[string]int{"acme": 1, "globex": 0, "": 0} {
+		list := httptest.NewRequest(http.MethodGet, "/{{ table }}", nil)
+		list = list.WithContext(jfast.WithTenant(list.Context(), tenant))
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, list)
+
+		var items []{{ Module }}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &items); err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != want {
+			t.Fatalf("tenant %q sees %d items, want %d", tenant, len(items), want)
+		}
 	}
 }

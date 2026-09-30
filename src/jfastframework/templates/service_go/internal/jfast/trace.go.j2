@@ -1,0 +1,168 @@
+package jfast
+
+import (
+	"context"
+	"net/http"
+	"strings"
+)
+
+// W3C Trace Context (https://www.w3.org/TR/trace-context/), pass-through only.
+//
+// The Python services start and export spans when their telemetry plugin is
+// on, and send the span they are in as `traceparent`. This service does not
+// create spans: it keeps the caller's context, logs its trace id, and hands it
+// unchanged to the next hop. The trace then stays one trace across a Go hop,
+// and every log line of this service can be joined to it by trace_id.
+//
+// Why not mint a child span id here: a span id that is never exported is a
+// parent nobody can find, and the next service's spans would hang off a hole
+// in the tree. Real spans are a dependency choice -- see the README
+// ("Tracing") for wrapping the mux in otelhttp.
+const (
+	TraceparentHeader = "traceparent"
+	TracestateHeader  = "tracestate"
+)
+
+// TraceContext is a validated incoming W3C trace context.
+type TraceContext struct {
+	// Traceparent and Tracestate are the header values exactly as received.
+	Traceparent string
+	Tracestate  string
+	TraceID     string
+	ParentID    string
+	Flags       string
+}
+
+// Sampled reports the sampled flag the caller decided on.
+func (t TraceContext) Sampled() bool {
+	return len(t.Flags) == 2 && (fromHex(t.Flags[1])&1) == 1
+}
+
+const traceKey contextKey = "jfast_trace"
+
+func isLowerHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func allZeros(s string) bool {
+	return strings.Trim(s, "0") == ""
+}
+
+func fromHex(c byte) byte {
+	if c >= 'a' {
+		return c - 'a' + 10
+	}
+	return c - '0'
+}
+
+// ParseTraceparent validates a version-00 traceparent:
+//
+//	00-<32 hex trace-id>-<16 hex parent-id>-<2 hex flags>
+//
+// Lowercase hex only, and neither id may be all zeros -- that is what the
+// spec calls invalid, and an invalid one is dropped rather than repaired.
+// Other versions are refused: this service does not know their format, and
+// relaying something it cannot read is how a malformed header travels a
+// whole call chain.
+func ParseTraceparent(value string) (TraceContext, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) != 55 {
+		return TraceContext{}, false
+	}
+	if value[2] != '-' || value[35] != '-' || value[52] != '-' {
+		return TraceContext{}, false
+	}
+	version, traceID, parentID, flags := value[0:2], value[3:35], value[36:52], value[53:55]
+	if version != "00" {
+		return TraceContext{}, false
+	}
+	if !isLowerHex(traceID) || !isLowerHex(parentID) || !isLowerHex(flags) {
+		return TraceContext{}, false
+	}
+	if allZeros(traceID) || allZeros(parentID) {
+		return TraceContext{}, false
+	}
+	return TraceContext{Traceparent: value, TraceID: traceID, ParentID: parentID, Flags: flags}, true
+}
+
+// Trace reads traceparent/tracestate into the request context. An invalid
+// traceparent is ignored, and so is the tracestate that came with it: the
+// spec ties tracestate to a valid parent.
+func Trace(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		trace, ok := ParseTraceparent(r.Header.Get(TraceparentHeader))
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Several tracestate headers are one list, joined with commas.
+		trace.Tracestate = strings.Join(r.Header.Values(TracestateHeader), ",")
+		if fields := logFieldsFrom(r.Context()); fields != nil {
+			fields.traceID = trace.TraceID
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), traceKey, trace)))
+	})
+}
+
+// TraceFrom returns the request's trace context, if the caller sent a valid one.
+func TraceFrom(ctx context.Context) (TraceContext, bool) {
+	trace, ok := ctx.Value(traceKey).(TraceContext)
+	return trace, ok
+}
+
+// Propagate puts this request's correlation headers on an outgoing request:
+// X-Request-ID, traceparent and tracestate -- the same set the Python `http`
+// client sends. Headers already set on out win, as they do in Python.
+//
+// Not sent, on purpose, as in Python:
+//   - Authorization. The Python client forwards it only for an upstream with
+//     `forward_authorization = true`; do it explicitly when you mean it:
+//     out.Header.Set("Authorization", in.Header.Get("Authorization")).
+//   - The tenant. Python services do not forward a tenant header either: the
+//     next service resolves the tenant from the token it is given.
+func Propagate(ctx context.Context, out *http.Request) {
+	if out.Header == nil {
+		out.Header = http.Header{}
+	}
+	setIfAbsent := func(key, value string) {
+		if value != "" && out.Header.Get(key) == "" {
+			out.Header.Set(key, value)
+		}
+	}
+	setIfAbsent(RequestIDHeader, RequestIDFrom(ctx))
+	if trace, ok := TraceFrom(ctx); ok && out.Header.Get(TraceparentHeader) == "" {
+		out.Header.Set(TraceparentHeader, trace.Traceparent)
+		if trace.Tracestate != "" {
+			out.Header.Set(TracestateHeader, trace.Tracestate)
+		}
+	}
+}
+
+// PropagatingTransport applies Propagate to every request made through it,
+// using the request's own context:
+//
+//	client := &http.Client{Transport: jfast.PropagatingTransport{}}
+//	req, _ := http.NewRequestWithContext(r.Context(), "GET", url, nil)
+//	client.Do(req)
+type PropagatingTransport struct {
+	// Base is the transport that sends the request; nil means
+	// http.DefaultTransport.
+	Base http.RoundTripper
+}
+
+func (t PropagatingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	base := t.Base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	// A RoundTripper must not modify the request it was given.
+	clone := r.Clone(r.Context())
+	Propagate(r.Context(), clone)
+	return base.RoundTrip(clone)
+}

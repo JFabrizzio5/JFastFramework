@@ -1,7 +1,9 @@
 // {{ service_title }} — a JFast service written in Go.
 //
 // It satisfies the same contract every JFast service does: /health, /ready,
-// X-Request-ID propagation, problem+json errors and JFAST_* configuration.
+// X-Request-ID and W3C trace context propagation, problem+json errors,
+// JFAST_* configuration, and -- when configured -- the workspace's JWTs and
+// tenant resolution.
 // That contract is why the gateway can route to it, the workspace can
 // allocate its ports, and Caddy can put it behind one hostname -- none of
 // which know or care that this one is Go.
@@ -29,6 +31,16 @@ func main() {
 	logger := jfast.NewLogger(cfg)
 	slog.SetDefault(logger)
 
+	// Auth and tenancy read the same JFAST_AUTH_* / JFAST_TENANCY_* variables
+	// the Python plugins do, and are off unless configured -- as the plugins
+	// are off unless enabled. A configuration that cannot be enforced stops
+	// the service here rather than letting it answer requests unchecked.
+	auth, tenancy, err := loadSecurity(cfg, logger)
+	if err != nil {
+		logger.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+
 	mux := http.NewServeMux()
 
 	// System endpoints, identical in shape to the Python services.
@@ -38,10 +50,16 @@ func main() {
 	// Domain modules.
 	{{ module }}.NewModule().Register(mux)
 
+	// Outermost first. Authenticate never rejects: routes that need a caller
+	// or a tenant wrap themselves in jfast.RequireAuth / jfast.RequireTenant,
+	// the way a Python route asks for Depends(require_auth).
 	handler := jfast.Chain(mux,
 		jfast.RequestID,
 		jfast.AccessLog(logger),
+		jfast.Trace,
 		jfast.Recover(logger, cfg),
+		jfast.Authenticate(auth),
+		jfast.ResolveTenant(tenancy),
 	)
 
 	server := &http.Server{
@@ -75,4 +93,24 @@ func main() {
 	}
 	<-done
 	logger.Info("stopped")
+}
+
+func loadSecurity(cfg jfast.Config, logger *slog.Logger) (*jfast.Auth, *jfast.Tenancy, error) {
+	authConfig, err := jfast.LoadAuthConfig()
+	if err != nil {
+		return nil, nil, err
+	}
+	auth, err := jfast.NewAuth(authConfig, cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	tenancyConfig, err := jfast.LoadTenancyConfig()
+	if err != nil {
+		return nil, nil, err
+	}
+	tenancy, err := jfast.NewTenancy(tenancyConfig, cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	return auth, tenancy, nil
 }
