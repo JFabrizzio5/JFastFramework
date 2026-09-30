@@ -34,6 +34,10 @@ imagen de producción, el frontend generado en un navegador, una subida.
 
 ### Corregido
 
+- **`GET /queue/stats` respondía a cualquiera, en cualquier entorno.** Lista
+  los nombres de tareas y las profundidades de la cola sin autenticación. Sin
+  configurar, `expose_stats` ahora sigue a `/docs`: encendido en desarrollo,
+  cerrado en producción; configúralo para elegir.
 - **La imagen generada no podía escribir en el storage local, así que se
   detenía al arrancar.** Corre como `appuser`, pero `WORKDIR` creó `/app` como
   root y `--chown` solo alcanzó a los archivos copiados. El Dockerfile ahora crea
