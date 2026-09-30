@@ -82,6 +82,9 @@ class _PluginGraph:
     # Service name -> mounts to add to the service's own container.
     mounts: dict[str, list[str]] = field(default_factory=dict)
     volumes: dict[str, Any] = field(default_factory=dict)
+    # Service name -> how it reaches those containers on the compose network
+    # (``InfraService.client_env``), as the single-service generator writes it.
+    environment: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def _plugins_of(root: Path, service: ServiceEntry) -> tuple[JFastConfig | None, list[Plugin]]:
@@ -178,6 +181,9 @@ def _scan_plugins(workspace: Workspace) -> _PluginGraph:
                     )
                     continue
                 graph.dependencies.setdefault(service.name, []).append(infra.name)
+                # Without it the container falls back to the .env, which holds
+                # the host's address -- `localhost` is the service itself.
+                graph.environment.setdefault(service.name, {}).update(infra.client_env)
                 if infra.name in graph.services:
                     # One container, shared. These advertise their own name as
                     # their hostname -- Kafka tells clients to reconnect to
@@ -241,6 +247,8 @@ def build_workspace_compose(workspace: Workspace, *, with_caddy: bool = True) ->
             },
             "ports": [f"{service.port}:{service.port}"],
         }
+
+        entry["environment"].update(plugins.environment.get(service.name, {}))
 
         bound = workspace.bindings_for(service)
         depends_on: dict[str, Any] = {}

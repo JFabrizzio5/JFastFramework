@@ -170,6 +170,14 @@ degradada.
   siga un request entre servicios. Dentro de un job de la cola es el del job,
   que el worker restaura desde el request que lo encoló; en un script no se
   inventa ninguno.
+- **`traceparent` y `tracestate` de W3C**, cuando el plugin `telemetry` está
+  exportando. Cada llamada es un span de cliente (`GET billing`, con el
+  upstream, el status y el número de reintentos), y el header lleva ese span,
+  así que el span de servidor del upstream es su hijo y una sola traza cubre
+  los dos servicios. Los reintentos comparten el span. La ruta no se registra
+  -- puede traer un id por llamada; el span del upstream nombra la plantilla de
+  la ruta. Con telemetry apagado no se agrega nada. El gateway hace lo mismo
+  con lo que proxea. Ver [telemetry.md](telemetry.md).
 - **El bearer token de quien llama**, solo a upstreams con
   `forward_authorization = true`. Un token se emite para una audiencia;
   mandarlo a un servicio fuera de ella le entrega la identidad de quien llama,

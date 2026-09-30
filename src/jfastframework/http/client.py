@@ -32,6 +32,7 @@ from typing import Any
 
 import httpx
 
+from jfastframework import tracing
 from jfastframework.errors import PluginError
 from jfastframework.http.context import inbound_authorization
 from jfastframework.http.errors import UpstreamTimeoutError, UpstreamUnreachableError
@@ -156,6 +157,7 @@ class ServiceClient:
             upstream.name, max_concurrent=upstream.max_concurrent, max_wait=upstream.bulkhead_wait
         )
         self._transport = transport
+        self._host = httpx.URL(upstream.base_url).host
         self._sleep = sleep
         self._rng = rng or random.Random()  # nosec B311 - jitter, not a secret
         self._client: httpx.AsyncClient | None = None
@@ -195,6 +197,10 @@ class ServiceClient:
                 outgoing["Authorization"] = token
         if idempotency_key is not None:
             outgoing["Idempotency-Key"] = idempotency_key
+        # W3C traceparent/tracestate of the current span -- the client span
+        # this call runs in -- so the upstream's server span is its child and
+        # one trace spans both services. {} when telemetry is off.
+        outgoing.update(tracing.inject())
         # The caller's own headers win over anything propagated.
         outgoing.update(headers or {})
         return outgoing
@@ -218,30 +224,46 @@ class ServiceClient:
         ``retry=True`` asserts that a non-idempotent one is safe to repeat.
         Prefer ``idempotency_key``, which also tells the upstream.
         """
-        client = self._http()
-        request = client.build_request(
-            method.upper(),
-            url,
-            params=params,
-            headers=self._headers(headers, idempotency_key),
-            json=json,
-            content=content,
-            data=data,
-        )
-        retryable = retry if retry is not None else may_retry(request.method, request.headers)
-        self.budget.record_request()
+        verb = method.upper()
+        # One client span around the whole call, retries included: the span's
+        # context is what `_headers` injects, and every attempt carries it.
+        # The path is not an attribute -- it can hold an id per call; the
+        # upstream's own server span names the route template.
+        with tracing.span(
+            f"{verb} {self.name}",
+            **{
+                "span.kind": "client",
+                "http.request.method": verb,
+                "jfast.upstream": self.name,
+                "server.address": self._host,
+            },
+        ):
+            client = self._http()
+            request = client.build_request(
+                verb,
+                url,
+                params=params,
+                headers=self._headers(headers, idempotency_key),
+                json=json,
+                content=content,
+                data=data,
+            )
+            retryable = retry if retry is not None else may_retry(request.method, request.headers)
+            self.budget.record_request()
 
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self.upstream.timeouts.total
-        try:
-            async with asyncio.timeout_at(deadline):
-                return await self._attempts(client, request, retryable, deadline)
-        except TimeoutError:
-            raise UpstreamTimeoutError(
-                f"{request.method} {self.name}{request.url.path} did not complete within "
-                f"{self.upstream.timeouts.total:g}s",
-                upstream=self.name,
-            ) from None
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self.upstream.timeouts.total
+            try:
+                async with asyncio.timeout_at(deadline):
+                    response = await self._attempts(client, request, retryable, deadline)
+            except TimeoutError:
+                raise UpstreamTimeoutError(
+                    f"{request.method} {self.name}{request.url.path} did not complete within "
+                    f"{self.upstream.timeouts.total:g}s",
+                    upstream=self.name,
+                ) from None
+            tracing.annotate(**{"http.response.status_code": response.status_code})
+            return response
 
     async def _attempts(
         self, client: httpx.AsyncClient, request: httpx.Request, retryable: bool, deadline: float
@@ -250,6 +272,8 @@ class ServiceClient:
         attempt = 0
         while True:
             attempt += 1
+            if attempt > 1:
+                tracing.annotate(**{"http.request.resend_count": attempt - 1})
             response: httpx.Response | None = None
             failure: Exception | None = None
 

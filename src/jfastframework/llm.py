@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from jfastframework import tracing
 from jfastframework.errors import ServiceUnavailableError
 
 logger = logging.getLogger("jfast.llm")
@@ -339,6 +340,7 @@ class LLMClient:
                         raise LLMError(f"Model provider unreachable: {type(exc).__name__}") from exc
                     await asyncio.sleep(min(2**attempt, 8))
                     attempt += 1
+                    tracing.annotate(**{"llm.retries": attempt})
                     continue
                 if response.status_code < 400:
                     data: dict[str, Any] = response.json()
@@ -352,6 +354,7 @@ class LLMClient:
                     )
                     await asyncio.sleep(min(delay, 20))
                     attempt += 1
+                    tracing.annotate(**{"llm.retries": attempt})
                     continue
                 # The provider's message only: the request body is the prompt.
                 try:
@@ -394,46 +397,61 @@ class LLMClient:
             body["temperature"] = temperature
         body.update(extra or {})
 
-        reserved = self.cost(model, _estimate_tokens(messages), max_tokens)
-        keys = await self._reserve(tenant_id, reserved)
-        started = time.monotonic()
-        try:
-            data = await self._post("/chat/completions", body)
-        except BaseException:
-            await self._settle(keys, reserved, 0.0)
-            raise
-        usage = data.get("usage") or {}
-        tokens_in, tokens_out = (
-            int(usage.get("prompt_tokens", 0)),
-            int(usage.get("completion_tokens", 0)),
-        )
-        actual = self.cost(model, tokens_in, tokens_out)
-        await self._settle(keys, reserved, actual)
-        result_usage = Usage(
-            tokens_in,
-            tokens_out,
-            round(actual, 6),
-            str(data.get("model") or model),
-            int((time.monotonic() - started) * 1000),
-        )
-        await self._log(purpose, tenant_id, result_usage)
-
-        choice = (data.get("choices") or [{}])[0]
-        text = (choice.get("message") or {}).get("content") or ""
-        finish = choice.get("finish_reason")
-        if finish == "length":
-            raise LLMError(
-                "The model's answer was cut off by max_tokens; raise it or shorten the prompt."
-            )
-        parsed = None
-        if schema is not None:
+        # Model, purpose, tenant and what the call cost -- the ledger's fields,
+        # and like the ledger never the messages or the answer.
+        with tracing.span(
+            "llm.chat",
+            **{
+                "span.kind": "client",
+                "llm.model": model,
+                "llm.purpose": purpose,
+                "jfast.tenant_id": tenant_id,
+                "llm.max_tokens": max_tokens,
+                "llm.structured": schema is not None,
+            },
+        ):
+            reserved = self.cost(model, _estimate_tokens(messages), max_tokens)
+            keys = await self._reserve(tenant_id, reserved)
+            started = time.monotonic()
             try:
-                parsed = json.loads(text)
-            except ValueError as exc:
-                raise LLMError("The model did not return valid JSON for the schema.") from exc
-        return ChatResult(
-            text=text, usage=result_usage, data=parsed, finish_reason=finish, raw=data
-        )
+                data = await self._post("/chat/completions", body)
+            except BaseException:
+                await self._settle(keys, reserved, 0.0)
+                raise
+            usage = data.get("usage") or {}
+            tokens_in, tokens_out = (
+                int(usage.get("prompt_tokens", 0)),
+                int(usage.get("completion_tokens", 0)),
+            )
+            actual = self.cost(model, tokens_in, tokens_out)
+            await self._settle(keys, reserved, actual)
+            result_usage = Usage(
+                tokens_in,
+                tokens_out,
+                round(actual, 6),
+                str(data.get("model") or model),
+                int((time.monotonic() - started) * 1000),
+            )
+            await self._log(purpose, tenant_id, result_usage)
+            _annotate_usage(result_usage)
+
+            choice = (data.get("choices") or [{}])[0]
+            text = (choice.get("message") or {}).get("content") or ""
+            finish = choice.get("finish_reason")
+            tracing.annotate(**{"llm.finish_reason": finish})
+            if finish == "length":
+                raise LLMError(
+                    "The model's answer was cut off by max_tokens; raise it or shorten the prompt."
+                )
+            parsed = None
+            if schema is not None:
+                try:
+                    parsed = json.loads(text)
+                except ValueError as exc:
+                    raise LLMError("The model did not return valid JSON for the schema.") from exc
+            return ChatResult(
+                text=text, usage=result_usage, data=parsed, finish_reason=finish, raw=data
+            )
 
     async def embed(
         self,
@@ -451,24 +469,34 @@ class LLMClient:
             body: dict[str, Any] = {"model": model, "input": batch}
             if self.embedding_dimensions:
                 body["dimensions"] = self.embedding_dimensions
-            reserved = self.cost(
-                model, sum(len(t) for t in batch) // _CHARS_PER_TOKEN + len(batch), 0
-            )
-            keys = await self._reserve(tenant_id, reserved)
-            started = time.monotonic()
-            try:
-                data = await self._post("/embeddings", body)
-            except BaseException:
-                await self._settle(keys, reserved, 0.0)
-                raise
-            tokens = int((data.get("usage") or {}).get("prompt_tokens", 0))
-            actual = self.cost(model, tokens, 0)
-            await self._settle(keys, reserved, actual)
-            await self._log(
-                purpose,
-                tenant_id,
-                Usage(tokens, 0, round(actual, 6), model, int((time.monotonic() - started) * 1000)),
-            )
+            with tracing.span(
+                "llm.embed",
+                **{
+                    "span.kind": "client",
+                    "llm.model": model,
+                    "llm.purpose": purpose,
+                    "jfast.tenant_id": tenant_id,
+                    "llm.inputs": len(batch),
+                },
+            ):
+                reserved = self.cost(
+                    model, sum(len(t) for t in batch) // _CHARS_PER_TOKEN + len(batch), 0
+                )
+                keys = await self._reserve(tenant_id, reserved)
+                started = time.monotonic()
+                try:
+                    data = await self._post("/embeddings", body)
+                except BaseException:
+                    await self._settle(keys, reserved, 0.0)
+                    raise
+                tokens = int((data.get("usage") or {}).get("prompt_tokens", 0))
+                actual = self.cost(model, tokens, 0)
+                await self._settle(keys, reserved, actual)
+                usage = Usage(
+                    tokens, 0, round(actual, 6), model, int((time.monotonic() - started) * 1000)
+                )
+                await self._log(purpose, tenant_id, usage)
+                _annotate_usage(usage)
             vectors.extend(
                 item["embedding"] for item in sorted(data["data"], key=lambda d: d["index"])
             )
@@ -487,6 +515,18 @@ class LLMClient:
         }
         await self.ledger.record(entry)
         logger.info("llm call", extra={k: v for k, v in entry.items() if k != "at"})
+
+
+def _annotate_usage(usage: Usage) -> None:
+    tracing.annotate(
+        **{
+            "llm.response.model": usage.model,
+            "llm.usage.input_tokens": usage.input_tokens,
+            "llm.usage.output_tokens": usage.output_tokens,
+            "llm.usd": usage.usd,
+            "llm.ms": usage.ms,
+        }
+    )
 
 
 class LLMEmbedder:
