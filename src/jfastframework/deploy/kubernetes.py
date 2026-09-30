@@ -212,7 +212,9 @@ def worker_deployment(
     template["spec"]["terminationGracePeriodSeconds"] = WORKER_TERMINATION_SECONDS
     [container] = template["spec"]["containers"]
     container["name"] = name
-    container["command"] = ["jfast", "worker", "--grace", str(WORKER_GRACE_SECONDS)]
+    # One token: a bare number in the list would be a YAML integer, which the
+    # API server refuses in a container command.
+    container["command"] = ["jfast", "worker", f"--grace={WORKER_GRACE_SECONDS}"]
     for key in ("ports", "livenessProbe", "readinessProbe", "startupProbe"):
         container.pop(key, None)
     return manifest

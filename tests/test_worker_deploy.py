@@ -40,9 +40,10 @@ def test_single_service_compose_runs_a_worker_beside_the_api() -> None:
     assert worker["depends_on"]["api"] == {"condition": "service_healthy"}
     # Room for the worker to release what it cannot finish before SIGKILL.
     assert worker["stop_grace_period"] == "30s"
-    assert yaml.safe_load(render_compose(compose))["services"]["worker"]["healthcheck"] == {
-        "disable": True
-    }
+    rendered = yaml.safe_load(render_compose(compose))["services"]["worker"]
+    assert rendered["healthcheck"] == {"disable": True}
+    # Compose refuses a command item that is not a string.
+    assert all(isinstance(item, str) for item in rendered["command"])
 
 
 def test_no_queue_no_worker() -> None:
@@ -95,7 +96,9 @@ def test_kubernetes_adds_a_worker_deployment_without_probes(tmp_path: Path) -> N
     for probe in ("ports", "livenessProbe", "readinessProbe", "startupProbe"):
         assert probe not in container
     # The drain window sits inside the kill deadline.
-    grace = int(container["command"][container["command"].index("--grace") + 1])
+    # Every item a string: a bare number would be refused by the API server.
+    assert all(isinstance(item, str) for item in container["command"])
+    grace = int(container["command"][-1].removeprefix("--grace="))
     assert grace < spec["terminationGracePeriodSeconds"]
     # Its own selector: the API's Service must not route to it.
     assert worker["spec"]["selector"]["matchLabels"] != api["spec"]["selector"]["matchLabels"]

@@ -56,7 +56,7 @@ healthchecks para que la API no arranque contra una base de datos que todavía
 no acepta conexiones.
 
 Con `queue` en la lista el archivo también trae un servicio **`worker`**: el
-mismo build, entorno y volúmenes que `api`, corriendo `jfast worker --grace 25`
+mismo build, entorno y volúmenes que `api`, corriendo `jfast worker --grace=25`
 en vez del servidor. No publica puertos, su healthcheck de imagen está
 desactivado (no responde `/health`), arranca cuando `api` está sano -- el
 entrypoint de la API es el que corre las migraciones que sus tasks necesitan --

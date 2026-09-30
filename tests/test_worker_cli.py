@@ -223,3 +223,44 @@ def test_the_worker_needs_a_service_directory(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "jfast.toml" in result.stderr
+
+
+def _dev_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plugins: str, *extra: str):  # type: ignore[no-untyped-def]
+    from typer.testing import CliRunner
+
+    from jfastframework.cli import main as cli_main
+
+    (tmp_path / "jfast.toml").write_text(
+        f'[app]\nname = "svc"\n\n[plugins]\nenabled = [{plugins}]\n', encoding="utf-8"
+    )
+    spawned: list[tuple[str, list[str]]] = []
+
+    def fake_spawn(command: list[str], *, name: str, **kwargs: Any) -> object:
+        spawned.append((name, command))
+        return object()
+
+    monkeypatch.setattr(cli_main.devtools, "spawn", fake_spawn)
+    monkeypatch.setattr(cli_main.devtools, "supervise", lambda processes: 0)
+    result = CliRunner().invoke(
+        cli_main.app,
+        ["dev", "--path", str(tmp_path), "--no-infra", "--no-migrate", "--no-web", *extra],
+    )
+    assert result.exit_code == 0, result.output
+    return dict(spawned)
+
+
+def test_dev_starts_the_worker_when_the_queue_is_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spawned = _dev_commands(tmp_path, monkeypatch, '"observability", "database", "queue"')
+    assert spawned["worker"][-2:] == ["jfastframework", "worker"]
+    assert "api" in spawned
+
+
+def test_dev_leaves_the_worker_out_without_a_queue_or_when_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert "worker" not in _dev_commands(tmp_path, monkeypatch, '"observability"')
+    assert "worker" not in _dev_commands(
+        tmp_path, monkeypatch, '"observability", "queue"', "--no-worker"
+    )

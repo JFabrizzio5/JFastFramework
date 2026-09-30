@@ -57,7 +57,7 @@ de datos. Los dos endpoints existen precisamente para que eso no pueda pasar.
 
 Un servicio cuyo `jfast.toml` activa el plugin `queue` también recibe un
 Deployment `<servicio>-worker` en el mismo archivo: la imagen, el entorno y el
-contexto de seguridad de la API, corriendo `jfast worker --grace 25`. No tiene
+contexto de seguridad de la API, corriendo `jfast worker --grace=25`. No tiene
 puertos ni **probes HTTP** -- no sirve nada, así que una liveness sobre
 `/health` lo reiniciaría para siempre -- y tiene su propio selector, así que el
 Service de la API nunca le enruta tráfico. `terminationGracePeriodSeconds` es

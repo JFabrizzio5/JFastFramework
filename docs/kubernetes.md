@@ -56,7 +56,7 @@ Two endpoints exist precisely so that cannot happen.
 
 A service whose `jfast.toml` enables the `queue` plugin also gets a
 `<service>-worker` Deployment in the same file: the API's image, environment
-and security context, running `jfast worker --grace 25`. It has no ports and
+and security context, running `jfast worker --grace=25`. It has no ports and
 **no HTTP probes** -- it serves nothing, so a `/health` liveness probe would
 restart it forever -- and its own selector, so the API's Service never routes
 to it. `terminationGracePeriodSeconds` is 30: on SIGTERM the worker stops

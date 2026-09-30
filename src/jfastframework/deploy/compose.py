@@ -183,7 +183,10 @@ def storage_mounts(plugin: Plugin, *, prefix: str) -> list[str]:
 #: What the worker container runs: the same image as the API, a different
 #: command. The grace is the worker's drain window, five seconds inside the
 #: stop period below so a job it cannot finish is handed back before SIGKILL.
-WORKER_COMMAND = ["jfast", "worker", "--grace", "25"]
+# One token for the option and its value: a bare `25` in a YAML list is an
+# integer, and both compose and Kubernetes refuse a command item that is not a
+# string.
+WORKER_COMMAND = ["jfast", "worker", "--grace=25"]
 WORKER_STOP_GRACE = "30s"
 
 
