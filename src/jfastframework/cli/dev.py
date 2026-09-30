@@ -24,6 +24,7 @@ Design decisions worth keeping:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -154,6 +155,63 @@ def host_environment(service_env: Path, root_env: Path, compose_file: Path) -> d
             )
         resolved[key] = value
     return resolved
+
+
+#: Vite's own default, used when neither the dev script nor vite.config names one.
+VITE_DEFAULT_PORT = 5173
+
+_PORT_FLAG = re.compile(r"(?:^|\s)--port(?:=|\s+)(\d+)(?=\s|$)")
+_CONFIG_PORT = re.compile(r"\bserver\s*:\s*\{[^}]*?\bport\s*:\s*(\d+)", re.DOTALL)
+
+
+def frontend_port(front_dir: Path) -> tuple[int, bool]:
+    """The port ``npm run dev`` starts Vite on, and whether the script pins it.
+
+    The generated ``package.json`` runs ``vite --port <workspace port>`` and the
+    generated ``vite.config`` repeats it under ``server.port``; Vite takes the
+    command line over the config and the config over its own 5173. Announcing
+    5173 because ``jfast dev`` did not pass a port printed a URL where nothing
+    was listening. A hand-edited script or config that hides the number (a
+    variable, another tool in front of vite) falls through to the next source.
+    """
+    script = ""
+    package = front_dir / "package.json"
+    try:
+        scripts = json.loads(package.read_text(encoding="utf-8")).get("scripts") or {}
+        script = str(scripts.get("dev") or "")
+    except (OSError, ValueError, AttributeError):
+        script = ""
+    found = _PORT_FLAG.findall(script)
+    if found:
+        # Vite keeps the last --port it is given.
+        return int(found[-1]), True
+    for name in ("vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.mts"):
+        config = front_dir / name
+        if not config.is_file():
+            continue
+        match = _CONFIG_PORT.search(config.read_text(encoding="utf-8"))
+        if match:
+            return int(match.group(1)), False
+    return VITE_DEFAULT_PORT, False
+
+
+def frontend_command(front_dir: Path, web_port: int | None) -> tuple[list[str], int]:
+    """``npm run dev``, with ``--port`` only when it changes something, and the
+    port the frontend will actually be on.
+
+    Appending ``--port`` to a script that already pins the same one produced
+    ``vite --port 8610 --port 8610``. When the requested port differs from the
+    pinned one it is still appended: Vite honours the last ``--port``.
+    """
+    pinned, in_script = frontend_port(front_dir)
+    command = ["npm", "run", "dev"]
+    if web_port is None:
+        return command, pinned
+    if not (in_script and pinned == web_port):
+        # The bare `--` is npm's, not vite's: without it npm eats the flag
+        # instead of forwarding it to the script.
+        command += ["--", "--port", str(web_port)]
+    return command, web_port
 
 
 def run(command: list[str], *, cwd: Path, what: str, env: dict[str, str] | None = None) -> None:
@@ -307,10 +365,13 @@ def python_executable() -> str:
 
 
 __all__ = [
+    "VITE_DEFAULT_PORT",
     "DevError",
     "Process",
     "compose_services",
     "docker_available",
+    "frontend_command",
+    "frontend_port",
     "python_executable",
     "run",
     "spawn",

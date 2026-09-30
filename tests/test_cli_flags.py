@@ -11,6 +11,7 @@ knows the layout. The flag exists for the caller who knew before that.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -156,6 +157,90 @@ def test_the_frontend_port_is_reported(
     )
 
     assert "5199" in result.output, result.output
+
+
+def _dev_web(service: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *extra: str):  # type: ignore[no-untyped-def]
+    commands = _spawned(monkeypatch)
+    result = runner.invoke(
+        app,
+        [
+            "dev",
+            "--path",
+            str(service),
+            "--frontend",
+            str(tmp_path / "shop-web"),
+            "--no-infra",
+            "--no-migrate",
+            *extra,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    web = next(c for c in commands if c[:1] == ["npm"])
+    return web, result.output
+
+
+def _pin_the_generated_port(tmp_path: Path, port: int = 8610) -> None:
+    """What `jfast start` writes: the workspace port in the dev script and in
+    vite.config."""
+    front = tmp_path / "shop-web"
+    scripts = {"dev": f"vite --port {port}", "preview": f"vite preview --port {port}"}
+    (front / "package.json").write_text(json.dumps({"scripts": scripts}), encoding="utf-8")
+    (front / "vite.config.js").write_text(
+        f"export default defineConfig({{\n  server: {{\n    port: {port},\n  }},\n}})\n",
+        encoding="utf-8",
+    )
+
+
+def test_dev_announces_the_port_the_generated_frontend_pins(
+    service: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F19: Vite ran on the workspace's 8610 and `jfast dev` printed 5173."""
+    _pin_the_generated_port(tmp_path)
+    web, output = _dev_web(service, tmp_path, monkeypatch)
+    assert web == ["npm", "run", "dev"]
+    assert "http://localhost:8610" in output
+    assert "5173" not in output
+
+
+def test_dev_does_not_repeat_the_port_the_script_already_pins(
+    service: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--web-port 8610` on a script with `--port 8610` was `vite --port 8610 --port 8610`."""
+    _pin_the_generated_port(tmp_path)
+    web, output = _dev_web(service, tmp_path, monkeypatch, "--web-port", "8610")
+    assert web == ["npm", "run", "dev"]
+    assert "http://localhost:8610" in output
+
+
+def test_dev_moves_a_pinned_frontend_and_announces_where_it_went(
+    service: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Vite keeps the last --port it is given (checked on 6.4), so appending one
+    # moves a script that pins another.
+    _pin_the_generated_port(tmp_path)
+    web, output = _dev_web(service, tmp_path, monkeypatch, "--web-port", "8620")
+    assert web == ["npm", "run", "dev", "--", "--port", "8620"]
+    assert "http://localhost:8620" in output
+    assert "8610" not in output
+
+
+def test_dev_reads_the_port_from_vite_config_or_falls_back_to_vites_default(
+    service: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    front = tmp_path / "shop-web"
+    (front / "package.json").write_text('{"scripts": {"dev": "vite"}}', encoding="utf-8")
+    assert devtools.frontend_port(front) == (5173, False)
+    (front / "vite.config.ts").write_text(
+        "export default { server: { host: true, port: 8630 } }", encoding="utf-8"
+    )
+    assert devtools.frontend_port(front) == (8630, False)
+    web, output = _dev_web(service, tmp_path, monkeypatch)
+    assert web == ["npm", "run", "dev"]
+    assert "http://localhost:8630" in output
+    (front / "package.json").write_text(
+        '{"scripts": {"dev": "vite --host --port=8640"}}', encoding="utf-8"
+    )
+    assert devtools.frontend_port(front) == (8640, True)
 
 
 def _new_service(target: Path, *extra: str) -> Any:

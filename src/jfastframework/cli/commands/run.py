@@ -19,9 +19,9 @@ from jfastframework.cli.exits import Code
 from jfastframework.settings import DEFAULT_CONFIG_FILE, JFastConfig
 from jfastframework.workspace import Workspace
 
-# Vite's own default. Only what `jfast dev` prints depends on it: the port is
-# left to vite unless --web-port asks for another one.
-WEB_PORT = 5173
+# Vite's own default, for the help text. What `jfast dev` announces is read from
+# the frontend itself: its dev script and vite.config usually pin another one.
+WEB_PORT = devtools.VITE_DEFAULT_PORT
 
 
 def serve(
@@ -119,7 +119,10 @@ def dev(
     ),
     port: int | None = typer.Option(None, "--port", help="Overrides the port in jfast.toml."),
     web_port: int | None = typer.Option(
-        None, "--web-port", help=f"Frontend dev server port. Vite's {WEB_PORT} when omitted."
+        None,
+        "--web-port",
+        help="Frontend dev server port. The one its dev script or vite.config names when "
+        f"omitted, else Vite's {WEB_PORT}.",
     ),
     host: str = typer.Option("127.0.0.1", "--host", help="Interface to bind."),
     infra: bool = typer.Option(True, "--infra/--no-infra", help="Bring up database and cache."),
@@ -142,7 +145,8 @@ def dev(
     have nothing to do with it.
 
     Both servers can be moved: `--port` for the API, `--web-port` for the
-    frontend, so a machine already using 5173 still gets both halves.
+    frontend, so a machine already using the frontend's port still gets both
+    halves.
     """
     service_dir = path.resolve()
     config_file = service_dir / DEFAULT_CONFIG_FILE
@@ -276,11 +280,7 @@ def dev(
     elif not (front_dir / "node_modules").is_dir():
         ui.warn(f"{front_dir}/node_modules is missing. Run npm install there first.")
     else:
-        # The bare `--` is npm's, not vite's: without it npm eats the flag
-        # instead of forwarding it to the script.
-        command = ["npm", "run", "dev"]
-        if web_port is not None:
-            command += ["--", "--port", str(web_port)]
+        command, resolved_web_port = devtools.frontend_command(front_dir, web_port)
         processes.append(devtools.spawn(command, cwd=front_dir, name="web"))
         started.add("web")
 

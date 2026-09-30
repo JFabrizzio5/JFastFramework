@@ -71,6 +71,11 @@ imagen de producción, el frontend generado en un navegador, una subida.
   corriendo, igual en `jfast worker` que en la API. Verificado con un proceso
   real de `jfast worker` que corre una task y un suscriptor que le piden
   providers.
+- **`jfast dev` anunciaba el frontend en :5173 mientras Vite corría en 8610.**
+  El script `dev` generado fija el puerto del workspace y `jfast dev` imprimía el
+  default de Vite; `--web-port 8610` además corría `vite --port 8610 --port
+  8610`. La URL anunciada ahora se lee del frontend (su script `dev`, luego
+  `vite.config`, luego 5173), y `--port` solo se pasa cuando cambia algo.
 
 ## [0.1.0a11] - 2026-09-30
 

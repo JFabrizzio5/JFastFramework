@@ -70,6 +70,12 @@ generated frontend in a browser, an upload.
   `AppContext`, and that annotation works too) now receives the running app's
   context, in `jfast worker` and in the API alike. Verified with a real `jfast
   worker` process running a task and a subscriber that ask it for providers.
+- **`jfast dev` announced the frontend on :5173 while Vite ran on 8610.** The
+  generated dev script pins the workspace port and `jfast dev` printed Vite's
+  default; `--web-port 8610` then ran `vite --port 8610 --port 8610`. The
+  announced URL is now read from the frontend (its dev script, then
+  `vite.config`, then 5173), and `--port` is passed only when it changes
+  something.
 
 ## [0.1.0a11] - 2026-09-30
 
