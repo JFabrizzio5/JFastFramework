@@ -62,6 +62,14 @@ generated frontend in a browser, an upload.
 - **The generated API client turned uploads into JSON.** It forced
   `Content-Type: application/json`, and axios then serialised a `FormData` as
   `{"archivo":{}}`. Removed; axios sends objects as JSON by itself.
+- **A `@task` or `@subscribe` handler could not reach `llm`, `storage` or the
+  outbox.** It received the payload and a `TaskSession`, nothing else, and the
+  docs only showed `request.app.state.jfast.require(...)` -- which a worker does
+  not have -- so every project kept its own global copy of the context. A
+  parameter annotated `TaskContext` (from `jfastframework.tasks`; it is
+  `AppContext`, and that annotation works too) now receives the running app's
+  context, in `jfast worker` and in the API alike. Verified with a real `jfast
+  worker` process running a task and a subscriber that ask it for providers.
 
 ## [0.1.0a11] - 2026-09-30
 

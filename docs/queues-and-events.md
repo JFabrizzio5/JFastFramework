@@ -83,6 +83,37 @@ when the handler returns and rolled back when it raises, and the job is then
 retried. A task that declares one in a service without the `database` plugin
 stops the boot with the fix in the message.
 
+### The app's providers: `llm`, `storage`, the outbox
+
+A route reaches a plugin through `get_context(request.app).require(...)`. A
+task has no request, so it asks for the context instead: a parameter annotated
+`TaskContext` (it *is* `AppContext`; either annotation works) receives the
+running app's context, and `require` works exactly as it does in a route.
+
+```python
+# modules/receipt/tasks.py
+from jfastframework.events import Event
+from jfastframework.tasks import TaskContext, TaskSession, task
+
+@task("receipt.extract", idempotent_on=lambda payload: payload["receipt_id"])
+async def extract(payload: dict, session: TaskSession, ctx: TaskContext) -> None:
+    image = await ctx.require("storage").disk("private").get(payload["key"])
+    result = await ctx.require("llm").chat(
+        [...], tenant_id=payload["tenant_id"], purpose="read-receipt"   # see llm.md
+    )
+    await ctx.require("outbox").publish(
+        session, "receipts", Event(type="receipt.extracted", data={"id": payload["receipt_id"]})
+    )
+```
+
+`@subscribe` handlers take it the same way (`async def react(event: Event, ctx:
+TaskContext)`). It is the context of the process running the job -- the
+worker's under `jfast worker`, the API's when the API runs it -- and both build
+the same app from the same `jfast.toml`, so both have the same providers. Each
+parameter is optional and independent: take the session, the context, both, or
+neither. Do not keep your own module-level copy of the context for this: the one
+passed in is the one whose plugins are started.
+
 ### Idempotency without thinking
 
 `idempotent_on` extracts a key from the payload and claims it in the inbox
@@ -381,7 +412,7 @@ from jfastframework.tasks import TaskSession
 
 @subscribe("receipt.registered")
 async def check_budget(event: Event, session: TaskSession) -> None:
-    ...
+    ...   # add `ctx: TaskContext` to reach llm, storage, the outbox
 ```
 
 ```toml

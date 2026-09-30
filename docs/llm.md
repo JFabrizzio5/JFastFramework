@@ -49,7 +49,10 @@ result.text, result.usage.usd, result.usage.input_tokens
 ```
 
 `jfastframework.llm` has no FastAPI dependency: a queue worker, a script and a
-test use the same client.
+test use the same client. A `@task` or `@subscribe` handler has no request to
+call `get_context` on: it annotates a parameter `TaskContext` and calls
+`ctx.require("llm")` on that
+([Queues and events](queues-and-events.md#the-apps-providers-llm-storage-the-outbox)).
 
 ### Structured output
 

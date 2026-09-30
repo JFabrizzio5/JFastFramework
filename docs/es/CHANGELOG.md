@@ -62,6 +62,15 @@ imagen de producción, el frontend generado en un navegador, una subida.
 - **El cliente de API generado convertía las subidas en JSON.** Forzaba
   `Content-Type: application/json` y axios serializaba un `FormData` como
   `{"archivo":{}}`. Se quitó; axios manda los objetos como JSON por sí solo.
+- **Un handler de `@task` o `@subscribe` no podía llegar a `llm`, `storage` ni
+  al outbox.** Recibía el payload y una `TaskSession`, nada más, y los docs solo
+  mostraban `request.app.state.jfast.require(...)` -- que un worker no tiene --,
+  así que cada proyecto guardaba su propia copia global del contexto. Un
+  parámetro anotado `TaskContext` (de `jfastframework.tasks`; es `AppContext`, y
+  esa anotación también sirve) ahora recibe el contexto de la app que está
+  corriendo, igual en `jfast worker` que en la API. Verificado con un proceso
+  real de `jfast worker` que corre una task y un suscriptor que le piden
+  providers.
 
 ## [0.1.0a11] - 2026-09-30
 

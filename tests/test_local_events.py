@@ -30,6 +30,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from jfastframework import tracing
+from jfastframework.context import AppContext
 from jfastframework.db.framework import ensure_tables
 from jfastframework.errors import PluginError
 from jfastframework.events import (
@@ -44,7 +45,14 @@ from jfastframework.plugins.builtin.database import DbSession
 from jfastframework.plugins.builtin.observability import request_id_var, tenant_id_var
 from jfastframework.queues.base import Job, current_job
 from jfastframework.queues.worker import TaskRegistry, Worker
-from jfastframework.tasks import TaskSession, clear_declared, declared_tasks, task
+from jfastframework.tasks import (
+    TaskContext,
+    TaskSession,
+    clear_declared,
+    declared_tasks,
+    task,
+    task_context_param,
+)
 from jfastframework.testing import build_test_app
 
 PG_BASE = os.environ.get("JFAST_TEST_PG_URL", "postgresql+asyncpg://jfast:jfast@localhost:5499")
@@ -157,6 +165,40 @@ def test_subscribe_records_the_handler_and_whether_it_takes_a_session() -> None:
     assert found["plain"].session_param is None
     assert found["with_session"].session_param == "session"
     assert found["plain"].task.startswith("receipt.registered->")
+
+
+def test_a_handler_asks_for_the_app_context_by_annotation() -> None:
+    """``TaskContext`` is ``AppContext``; either spelling, real or as a string."""
+
+    async def aliased(payload: dict[str, Any], ctx: TaskContext) -> None: ...
+
+    async def direct(payload: dict[str, Any], app: AppContext) -> None: ...
+
+    async def unresolvable(payload: dict[str, Any], c: NotImportedHere) -> None: ...  # type: ignore[name-defined]  # noqa: F821
+
+    async def written_out(payload: dict[str, Any], c: jfastframework.tasks.TaskContext) -> None: ...  # type: ignore[name-defined]  # noqa: F821
+
+    async def neither(payload: dict[str, Any], session: TaskSession) -> None: ...
+
+    assert TaskContext is AppContext
+    assert task_context_param(aliased) == "ctx"
+    assert task_context_param(direct) == "app"
+    assert task_context_param(unresolvable) is None
+    assert task_context_param(written_out) == "c"
+    assert task_context_param(neither) is None
+
+    @task("billing.summarise")
+    async def summarise(
+        payload: dict[str, Any], session: TaskSession, ctx: TaskContext
+    ) -> None: ...
+
+    @subscribe("receipt.registered")
+    async def react(event: Event, ctx: TaskContext) -> None: ...
+
+    [spec] = declared_tasks()
+    assert (spec.session_param, spec.context_param) == ("session", "ctx")
+    [subscriber] = subscribers_for("receipt.registered")
+    assert (subscriber.session_param, subscriber.context_param) == (None, "ctx")
 
 
 def test_two_subscribers_with_one_name_are_refused() -> None:
@@ -626,6 +668,49 @@ async def test_a_task_session_commits_on_return_and_rolls_back_on_error(pg_dsn: 
     )
     # The failed claim rolled back with the work: a replay would run.
     assert await _scalar(pg_dsn, "SELECT count(*) FROM jfast_inbox WHERE message_id = '2'") == 0
+
+
+async def test_tasks_and_subscribers_receive_the_running_apps_context(pg_dsn: str) -> None:
+    """What a route reaches through ``get_context(request.app)``, a job reaches
+    through a ``TaskContext`` parameter: the outbox here, ``llm`` or
+    ``storage`` in a service that enables them. Run by the API's own app.
+    """
+    seen: dict[str, Any] = {}
+
+    @task("alert.summarise", idempotent_on=lambda payload: payload["receipt"])
+    async def summarise(payload: dict[str, Any], session: TaskSession, ctx: TaskContext) -> None:
+        seen["task"] = ctx
+        # A provider, used from inside the job's own transaction.
+        await ctx.require("outbox").publish(
+            session, "receipts", Event(type="receipt.summarised", data=payload)
+        )
+
+    @task("alert.plain")
+    async def plain(payload: dict[str, Any], ctx: TaskContext) -> None:
+        seen["plain"] = ctx
+
+    @subscribe("receipt.summarised")
+    async def react(event: Event, ctx: AppContext) -> None:
+        seen["subscriber"] = (ctx, event.data["receipt"])
+
+    @subscribe("receipt.summarised")
+    async def react_in_transaction(
+        event: Event, session: TaskSession, context: TaskContext
+    ) -> None:
+        seen["subscriber_session"] = context
+
+    app = _pg_app(pg_dsn)
+    ctx = app.state.jfast
+    async with app.router.lifespan_context(app):
+        queue = ctx.require("queue")
+        await queue.enqueue(Job(task="alert.summarise", payload={"receipt": 7}))
+        await queue.enqueue(Job(task="alert.plain", payload={}))
+        await _drain(app)
+
+    assert seen["task"] is ctx
+    assert seen["plain"] is ctx
+    assert seen["subscriber"] == (ctx, 7)
+    assert seen["subscriber_session"] is ctx
 
 
 async def test_publish_in_a_request_with_no_receiver_is_a_500_that_names_the_fix(
