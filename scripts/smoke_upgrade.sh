@@ -128,6 +128,12 @@ for facade in Path("modules").glob("*/public.py"):
         print(f"    tenant_id: str in {facade}")
 PYEOF
       ;;
+    unsigned-tenant-needs-a-session)
+      # The generated routes use current_tenant and the generated tests sign
+      # in: the note needs nothing from this project. Its pytest below is the
+      # proof that nothing leaned on an anonymous subdomain tenant.
+      echo "    nothing to change: every generated route asks current_tenant"
+      ;;
     *)
       fail "no scripted remedy for ${1}: add one to smoke_upgrade.sh as docs/upgrading.md gives it"
       ;;

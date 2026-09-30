@@ -337,6 +337,11 @@ class RagPlugin(Plugin):
         writer = Depends(require_scopes(*settings.write_scopes))
 
         def tenant_of(request: Request) -> str | None:
+            from jfastframework.plugins.builtin.tenancy import raise_if_denied
+
+            # A tenant the request named and was refused is refused here too,
+            # rather than falling back to the token's own tenant.
+            raise_if_denied(request)
             tenant = request_tenant(request)
             if settings.tenant_scoped and not tenant:
                 raise TenantRequiredError("this request is not scoped to a tenant")

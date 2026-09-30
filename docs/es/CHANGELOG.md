@@ -36,6 +36,28 @@ llamada a un modelo desde un worker. Llegó con ello una adición: enums en
 
 ### Corregido
 
+- **Seguridad: con `auth` activo, un subdominio, una ruta o un header otorgaban
+  un tenant por sí solos.** `current_tenant` regresaba el tenant del subdominio
+  sin nadie con sesión, así que con el default del plugin, `sources = ["token",
+  "subdomain"]`, un `curl -H "Host: acme.localhost" localhost:8700/tickets`
+  anónimo listaba y creaba filas de acme -- el header `Host` lo elige el
+  cliente --, y un usuario con sesión cuyo token no traía tenant quedaba servido
+  como el tenant de cualquier subdominio al que llegara. Una fuente sin firma
+  ahora solo *nombra* un tenant; el tenant que se le otorga al request (en
+  `request.state.tenant_id`, la sesión con RLS, `TenantSession`, jobs, eventos
+  y `current_tenant`) tiene que respaldarlo el principal: sin sesión es 401, un
+  claim del token que no coincide es 403, y un token sin tenant es 403 salvo que
+  el nuevo `[plugin.tenancy] trust_unscoped_principals = true` diga que el
+  servicio revisa la membresía por su cuenta. Una fuente firmada le gana a una
+  sin firma sin importar su lugar en `sources`. Iniciar sesión en el subdominio
+  sigue funcionando: el tenant nombrado queda en
+  `request.state.tenant_requested`, que leen `/auth/login`, `/auth/register` y
+  la recuperación de contraseña, y una página pública lo lee con la nueva
+  dependencia `requested_tenant`. Sin `auth` (un sitio público con un tenant por
+  subdominio) el tenant resuelto sigue sirviendo. Encontrado al construir una
+  mesa de ayuda multi-empresa; cada fila de la regla está probada por HTTP,
+  incluido ese curl y su POST (401). `jfast upgrade --check`:
+  `unsigned-tenant-needs-a-session`.
 - **La ayuda de la CLI se comía cada `[sección]` que nombraba.** Rich lee
   `[scaffold]` como etiqueta de estilo, así que "Defaults to [scaffold]
   language." salía "Defaults to  language." Escapado en `new module`, `remove` y

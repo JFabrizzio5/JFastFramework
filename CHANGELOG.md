@@ -36,6 +36,27 @@ One addition came with it: enums in `--fields`.
 
 ### Fixed
 
+- **Security: with `auth` on, a subdomain, path or header granted a tenant by
+  itself.** `current_tenant` returned the subdomain's tenant with nobody signed
+  in, so with the plugin's default `sources = ["token", "subdomain"]` an
+  anonymous `curl -H "Host: acme.localhost" localhost:8700/tickets` listed and
+  created acme's rows -- the `Host` header is the client's to choose -- and a
+  signed-in user whose token carried no tenant was served as whichever
+  tenant's subdomain they reached. An unsigned source now only *names* a
+  tenant; the tenant granted to the request (on `request.state.tenant_id`, in
+  the RLS session, `TenantSession`, jobs, events and `current_tenant`) must be
+  backed by the principal: no session is a 401, a token claim that disagrees
+  is a 403, and a token with no tenant is a 403 unless the new `[plugin.tenancy]
+  trust_unscoped_principals = true` says the service checks membership itself.
+  A signed source outranks an unsigned one wherever it sits in `sources`.
+  Sign-in keeps working on the subdomain: the named tenant is on
+  `request.state.tenant_requested`, which `/auth/login`, `/auth/register` and
+  password reset read, and a public page reads it with the new
+  `requested_tenant` dependency. Without `auth` (a public site with a tenant
+  per subdomain) the resolved tenant stays usable. Found building a
+  multi-company help desk; every row of the rule is tested over HTTP,
+  including that curl and its POST (401). `jfast upgrade --check`:
+  `unsigned-tenant-needs-a-session`.
 - **CLI help dropped every `[section]` it named.** Rich reads `[scaffold]` as a
   style tag, so "Defaults to [scaffold] language." printed "Defaults to
   language." Escaped in `new module`, `remove` and `tenancy enable`; a test now

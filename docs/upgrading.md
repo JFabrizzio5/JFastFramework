@@ -166,8 +166,21 @@ the real `packaging`, which is installed for development.
 
 ## What changes in `0.1.0a12`
 
-Fixes only; nothing stops a correct `0.1.0a11` service. Three notes point at
-files `0.1.0a11` generated that need a hand:
+Fixes, and one of them is a security fix that changes answers:
+
+- `unsigned-tenant-needs-a-session` -- `auth` and `tenancy` on, with
+  `subdomain`, `path` or `header` among the sources (the plugin's default, and
+  what `jfast new service --with auth,tenancy` writes). Those sources no longer
+  grant a tenant by themselves: a request on `acme.` without a session is a 401
+  where `current_tenant` used to hand it acme's rows, and a token whose tenant
+  disagrees with the subdomain -- or carries none -- is a 403. Routes that use
+  `current_tenant` need nothing; a page public on purpose takes
+  `Depends(requested_tenant)`; a service whose tokens carry no tenant and that
+  checks membership itself sets `[plugin.tenancy] trust_unscoped_principals =
+  true`. See [multitenancy](multitenancy.md#with-auth-on-an-unsigned-source-never-grants-a-tenant-by-itself).
+
+Nothing else stops a correct `0.1.0a11` service. Three notes point at files
+`0.1.0a11` generated that need a hand:
 
 - `image-cannot-write-local-storage` -- a service with `storage` whose
   Dockerfile runs as `appuser` without owning `/app`. The production image

@@ -2086,6 +2086,36 @@ def _facades_with_an_optional_tenant(project: Project) -> list[str]:
     return found
 
 
+def _unsigned_tenant_sources_with_auth(project: Project) -> list[str]:
+    """`auth` and `tenancy` on, with a subdomain, path or header among the sources.
+
+    Only that combination changed: without `auth` there is no principal to
+    check and the resolved tenant stays usable, and `token`/`user` are signed.
+    The sources read are the ones the plugin will use -- its default is
+    ``["token", "subdomain"]`` -- and ``subdomain`` counts only with a
+    ``base_domain``, since without one the service refuses to start at all.
+    """
+    active = _active_plugins(project)
+    if "auth" not in active or "tenancy" not in active:
+        return []
+    tenancy = _table(_config(project), "plugin", "tenancy")
+    sources = tenancy.get("sources", ["token", "subdomain"])
+    if not isinstance(sources, list):
+        return []
+    unsigned = [
+        str(source)
+        for source in sources
+        if source in ("path", "header")
+        or (source == "subdomain" and str(tenancy.get("base_domain") or ""))
+    ]
+    if not unsigned:
+        return []
+    spelled = ", ".join(f'"{source}"' for source in sources)
+    written = "sources" in tenancy
+    where = f"[plugin.tenancy] sources = [{spelled}]" + ("" if written else " (the default)")
+    return [f"{where}: {', '.join(unsigned)} no longer grants a tenant without a session"]
+
+
 def _tenant_header_without_tenancy(project: Project) -> list[str]:
     """Code that sends or configures the tenant header, in a service without ``tenancy``.
 
@@ -2432,6 +2462,31 @@ CHANGES: tuple[Change, ...] = (
             "Change each listed parameter to `tenant_id: str` and run mypy: it names every "
             "caller that can still pass None. Give those the tenant they run for -- "
             "current_tenant in a route, job.tenant_id in a task."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="breaking",
+        code="unsigned-tenant-needs-a-session",
+        summary=(
+            "With auth on, a subdomain, path or header names a tenant but no longer grants one."
+        ),
+        detail=(
+            "current_tenant returned the subdomain's tenant with nobody signed in, so "
+            "`curl -H 'Host: acme.example.com' /tickets` listed and created acme's rows, and a "
+            "signed-in user of one tenant on another's subdomain was served as that tenant. "
+            "Now, with auth on: no session is a 401; a token whose tenant claim differs from "
+            "the subdomain, path or header is a 403; a token with no tenant is a 403 unless "
+            "[plugin.tenancy] trust_unscoped_principals = true. request.state.tenant_id, the "
+            "RLS session and TenantSession get only the granted tenant; the named one is on "
+            "request.state.tenant_requested, which the sign-in routes read."
+        ),
+        detect=_unsigned_tenant_sources_with_auth,
+        remedy=(
+            "Nothing for routes that use current_tenant: sign in on the subdomain and send the "
+            "token. A page that is public on purpose (a tenant's sign-in form, its branding) "
+            "takes Depends(requested_tenant) instead. If tokens carry no tenant claim and the "
+            "service checks membership itself, set trust_unscoped_principals = true."
         ),
     ),
     Change(

@@ -9,6 +9,9 @@
 #
 # 0.1.0a11 -> 0.1.0a12. The project has tenancy on, and every public.py
 # 0.1.0a11 generated takes `tenant_id: str | None` -- None builds an unscoped
-# repository. No local storage disk and no --unique over an optional field, so
-# the other two a12 notes stay quiet.
+# repository. It has auth and tenancy with sources = ["token", "subdomain"]
+# and base_domain = "localhost", so a subdomain no longer grants a tenant
+# without a session. No local storage disk and no --unique over an optional
+# field, so those two a12 notes stay quiet.
 facade-tenant-optional
+unsigned-tenant-needs-a-session
