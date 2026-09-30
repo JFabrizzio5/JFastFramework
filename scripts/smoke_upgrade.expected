@@ -7,7 +7,8 @@
 # The project: jfast new service shop --with database,auth,tenancy,metrics,rag,queue
 # and one module per layout (modular, screaming, hexagonal, layered).
 #
-# 0.1.0a11 -> 0.1.0a12: nothing. That project has no local storage disk and
-# no --unique key over an optional field, the two shapes 0.1.0a12's notes are
-# about -- so a code here would be a detector firing on a case that is not
-# there. (0.1.0a10 -> 0.1.0a11 expected hexagonal-eager-create-payload.)
+# 0.1.0a11 -> 0.1.0a12. The project has tenancy on, and every public.py
+# 0.1.0a11 generated takes `tenant_id: str | None` -- None builds an unscoped
+# repository. No local storage disk and no --unique over an optional field, so
+# the other two a12 notes stay quiet.
+facade-tenant-optional

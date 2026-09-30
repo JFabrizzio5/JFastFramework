@@ -113,6 +113,21 @@ for init in Path("modules").glob("*/__init__.py"):
     print(f"    deferred CreatePayload in {init}")
 PYEOF
       ;;
+    facade-tenant-optional)
+      # tenant_id: str on every facade of a multitenant service, as the note
+      # says; the project's own mypy and tests then run on the result.
+      "${vpy}" - <<'PYEOF'
+import re
+from pathlib import Path
+
+for facade in Path("modules").glob("*/public.py"):
+    source = facade.read_text(encoding="utf-8")
+    fixed = re.sub(r"tenant_id: str \| None(?: = None)?", "tenant_id: str", source)
+    if fixed != source:
+        facade.write_text(fixed, encoding="utf-8")
+        print(f"    tenant_id: str in {facade}")
+PYEOF
+      ;;
     *)
       fail "no scripted remedy for ${1}: add one to smoke_upgrade.sh as docs/upgrading.md gives it"
       ;;

@@ -27,10 +27,12 @@ archivo para leer antes de depender de cualquier parte de esto.
 
 ## [0.1.0a12] - 2026-09-30
 
-Solo correcciones. Cinco defectos que se encontraron en la primera hora de
-construir un SaaS nuevo desde cero sobre 0.1.0a11, y que la suite no vio porque
-cada uno necesitaba el camino de un usuario nuevo: un campo único opcional, una
-imagen de producción, el frontend generado en un navegador, una subida.
+Lo que se encontró al construir un SaaS nuevo desde cero sobre 0.1.0a11,
+corregido. La suite no lo veía porque cada caso necesitaba el camino de un
+usuario nuevo: un campo único opcional, una imagen de producción, el frontend
+generado en un navegador, una subida, una migración corrida en el host, una
+llamada a un modelo desde un worker. Llegó con ello una adición: enums en
+`--fields`.
 
 ### Corregido
 

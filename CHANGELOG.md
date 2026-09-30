@@ -28,10 +28,11 @@ before depending on any single part of this.
 
 ## [0.1.0a12] - 2026-09-30
 
-Fixes only. Five defects that building a new SaaS from scratch on 0.1.0a11 hit
-in its first hour, none of which the test suite saw, because each needed the
-path a new user takes: an optional unique field, a production image, the
-generated frontend in a browser, an upload.
+What building a new SaaS from scratch on 0.1.0a11 ran into, fixed. None of it
+was visible to the test suite, because each needed the path a new user takes:
+an optional unique field, a production image, the generated frontend in a
+browser, an upload, a migration run on the host, a model call from a worker.
+One addition came with it: enums in `--fields`.
 
 ### Fixed
 

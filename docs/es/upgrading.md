@@ -172,12 +172,15 @@ desarrollo.
 
 ## Lo que cambia en `0.1.0a12`
 
-Solo correcciones; nada detiene a un servicio correcto de `0.1.0a11`. Dos notas
+Solo correcciones; nada detiene a un servicio correcto de `0.1.0a11`. Tres notas
 señalan archivos que `0.1.0a11` generó y que hay que tocar:
 
 - `image-cannot-write-local-storage` -- un servicio con `storage` cuyo
   Dockerfile corre como `appuser` sin ser dueño de `/app`. La imagen de
   producción se detiene al arrancar. `jfast deploy dockerfile` la regenera.
+- `facade-tenant-optional` -- un servicio multitenant cuyas fachadas `public.py`
+  aceptan `tenant_id: str | None`: None lee todos los tenants. Cámbialo a
+  `tenant_id: str` y deja que mypy nombre a quien lo llama.
 - `unique-key-on-optional-field` -- una llave `--unique` sobre un campo `?`,
   todavía como restricción `NULLS NOT DISTINCT`: la segunda fila sin valor es un
   409. Reemplázala por el índice parcial que cita la nota, en una migración.

@@ -166,12 +166,15 @@ the real `packaging`, which is installed for development.
 
 ## What changes in `0.1.0a12`
 
-Fixes only; nothing stops a correct `0.1.0a11` service. Two notes point at
+Fixes only; nothing stops a correct `0.1.0a11` service. Three notes point at
 files `0.1.0a11` generated that need a hand:
 
 - `image-cannot-write-local-storage` -- a service with `storage` whose
   Dockerfile runs as `appuser` without owning `/app`. The production image
   stops at boot. `jfast deploy dockerfile` regenerates it.
+- `facade-tenant-optional` -- a multitenant service whose `public.py` facades
+  take `tenant_id: str | None`: None reads every tenant. Make it `tenant_id:
+  str` and let mypy name the callers.
 - `unique-key-on-optional-field` -- a `--unique` key over a `?` field, still a
   `NULLS NOT DISTINCT` constraint: the second row without a value is a 409.
   Replace it with the partial index the note quotes, in a migration.
