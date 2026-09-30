@@ -573,3 +573,145 @@ jobs:
           JAEGER_URL: http://localhost:16686
           OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4318
         run: bash scripts/smoke_telemetry.sh
+
+  # What the framework costs per request, as a ratio to bare FastAPI measured
+  # on the same runner in the same run -- never absolute microseconds, which
+  # differ between runners. 0.1.0a10 took the auth + tenancy stack from 2,411
+  # to 8,581 req/s; this keeps it from sliding back one innocent middleware at
+  # a time. The checked-in baseline has no Linux entry, so the base of the
+  # change is measured here first, with this checkout's script and the base's
+  # framework, and the change is compared against that (20 % tolerance).
+  # A pull request compares with its base branch; a push to main with the
+  # commit before it.
+  performance-budget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e ".[all,dev]"
+      - name: Measure the base, same runner, same script
+        env:
+          BASE: ${{ github.base_ref && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          git worktree add --detach "${RUNNER_TEMP}/base" "${BASE}"
+          PYTHONPATH="${RUNNER_TEMP}/base/src" python scripts/bench_overhead.py --json \
+            > "${RUNNER_TEMP}/base.json"
+      - name: This change stays within 20 % of the base
+        env:
+          JFAST_PERF_BUDGET: "1"
+          JFAST_PERF_BASELINE: ${{ runner.temp }}/base.json
+        shell: bash
+        run: |
+          python -m pytest -q -rs --no-header tests/test_performance_budget.py | tee /tmp/budget.log
+          if grep -qE '^SKIPPED|no tests ran' /tmp/budget.log; then
+            echo '::error::the performance budget skipped; it compared against nothing'
+            exit 1
+          fi
+
+  # The S3 disk against a real object store: put, get, stat, listing past one
+  # page, signed URLs fetched and then expired, a presigned upload, multipart
+  # streams and their abort, health. It was `unverified` until this existed.
+  #
+  # The image: MinIO stopped publishing its own. Checked 2026-09-30, Docker
+  # Hub refuses anonymous pulls of minio/minio and dl.min.io answers 410 Gone.
+  # tests/test_storage_minio.py was verified locally against
+  # minio/minio:RELEASE.2025-09-07T16-13-09Z; the community fork pinned below
+  # has NOT been run against it yet -- the first CI run is that check. It
+  # starts in a step because a service container cannot be given
+  # `server /data`.
+  storage-minio:
+    runs-on: ubuntu-latest
+    env:
+      MINIO_IMAGE: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e ".[all,dev]"
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9010:9000 \
+            -e MINIO_ROOT_USER=jfastminio -e MINIO_ROOT_PASSWORD=jfastminio-secret \
+            "${MINIO_IMAGE}" server /data
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://localhost:9010/minio/health/live && exit 0
+            sleep 1
+          done
+          docker logs minio
+          echo '::error::MinIO did not become live on 9010'
+          exit 1
+      - name: The S3 disk against MinIO
+        env:
+          JFAST_TEST_S3_URL: http://localhost:9010
+          JFAST_TEST_S3_ACCESS_KEY: jfastminio
+          JFAST_TEST_S3_SECRET_KEY: jfastminio-secret
+        shell: bash
+        run: |
+          python -m pytest -q -rs --no-header tests/test_storage_minio.py | tee /tmp/minio.log
+          if grep -qE '^SKIPPED|no tests ran' /tmp/minio.log; then
+            echo '::error::a MinIO test skipped; the object store is not reachable'
+            exit 1
+          fi
+
+  # Two API replicas and two workers against one PostgreSQL and one Redis:
+  # the outbox relay, the scheduler, the LLM budget and token revocation each
+  # happen exactly once. Also the rollups, the tenant-index finding in the
+  # pgvector store (a strict xfail), `jfast bench` and the route order.
+  multi-replica:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: jfast
+          POSTGRES_PASSWORD: jfast
+          POSTGRES_DB: jfast
+        ports:
+          - 5499:5432
+        options: >-
+          --health-cmd "pg_isready -U jfast"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -e ".[all,dev]"
+      - name: Replicas, rollups, RAG scale, bench and route order
+        env:
+          JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
+          JFAST_TEST_REDIS_URL: redis://localhost:6379/0
+        shell: bash
+        run: |
+          python -m pytest -q -rs --no-header tests/test_multi_replica.py tests/test_rollups.py \
+            tests/test_rag_scale.py tests/test_cli_bench.py tests/test_route_order.py \
+            | tee /tmp/replicas.log
+          if grep -qE '^SKIPPED|no tests ran' /tmp/replicas.log; then
+            echo '::error::a test needing a real server skipped; a service container is not reachable'
+            exit 1
+          fi
