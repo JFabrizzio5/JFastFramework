@@ -289,7 +289,9 @@ that apply to your project, with file and line, and the remedy.
 - Jobs for the generated-project gates, the upgrade smoke, the concurrency
   suites on a Windows-grained clock, RLS behind a pinned PgBouncer
   (`edoburu/pgbouncer:v1.25.2-p0`), and spans exported over OTLP and read
-  back from Jaeger (`scripts/smoke_telemetry.sh`). The failure drills run
+  back from Jaeger (`scripts/smoke_telemetry.sh`); the performance budget
+  against the change's base on the same runner; the S3 disk against MinIO;
+  the multi-replica suite. The failure drills run
   last in the main job, pausing its own PostgreSQL and Redis. The suites for
   local events, the worker, dead letters, account flows, SQL spans and the
   tenancy switch are on the list that fails the build if they skip.
@@ -337,14 +339,59 @@ that apply to your project, with file and line, and the remedy.
   `WHERE`/`AND`** -- a repository helper that does filter by tenant. That is
   undecidable from the source, so the rule stays quiet. Cuadra had eight
   findings, all false.
+- **`jfast add` reinstalled the previous release over the running one.** A
+  `requirements.txt` still pinned to 0.1.0a10 made `jfast add telemetry` run
+  `pip install -r` and put a10 -- which does not ship that extra -- over a11.
+  pip is now skipped, with the command to run, when the pin differs from the
+  running version or the install is editable. Found migrating Cuadra.
+- **The S3 disk's `listing(limit=1500)` returned 1,000.** It now follows the
+  continuation token.
 - Spanish docs linked three accented anchors the site strips; fixed, with the
   one in the new telemetry page.
 
-### Performance
+### Performance and scale, measured
 
-<!-- LEAD: scaling (Phase 5) goes here, from the escala report. -->
-- **TODO (lead): scaling -- performance budget, framework routes order,
-  measured numbers. Not written by docs-ci.**
+Every number here is in `docs/scaling.md`, new, with the machine it was
+measured on (an Apple M5 laptop with other suites running) and the script that
+produces it.
+
+- **A performance budget.** `scripts/bench_overhead.py` drives each app
+  in-process and measures process CPU time per request as a ratio to bare
+  FastAPI in the same run -- JFast's defaults 2.48x, auth + tenancy + metrics
+  5.43x -- and `tests/test_performance_budget.py` (`JFAST_PERF_BUDGET=1`)
+  fails when a ratio grows more than 20 % over the baseline. A second test
+  proves it has teeth: one `BaseHTTPMiddleware` put back, the 0.1.0a10
+  regression, fails it.
+- **`jfast bench <url>`**: a step load test built from the service's
+  OpenAPI. It reports req/s, p50/p95/p99 and errors per step, where the
+  service breaks (`--max-p99-ms`, `--max-error-rate`) and where throughput
+  stops growing, and any `/ready` check that degraded; `--k6` exports the
+  scenario, `--json` and `--fail-on-break` are for CI. Its own generator tops
+  out at 3,000-3,600 req/s; use `ab` or k6 above that.
+- **Framework routes are matched after the application's.** `/health`,
+  `/ready`, `/info`, `/metrics` and the docs move behind the app's routes at
+  startup, which saves 2-4 us of CPU per app request (measured; the plan's
+  "~8 us" was not). An app route that would claim one of their paths, fully
+  or with a 405, still does not: each is probed and put back in front of it.
+  `app.routes` and `/openapi.json` list the application's paths first.
+- **The S3 disk is verified against MinIO** (`tests/test_storage_minio.py`):
+  put, get, stat, listing, signed URLs fetched and then expired, presigned
+  uploads, a three-part multipart stream and its abort, health.
+- **Multi-replica guarantees, proven.** Two apps and two workers against one
+  PostgreSQL and one Redis (`tests/test_multi_replica.py`): 400 outbox
+  messages relayed and consumed once each; scheduler ticks enqueued once on
+  both tick stores; a $1.00 LLM cap across both replicas lets exactly 10 of
+  60 concurrent $0.10 calls through; a logout on one replica is refused on the
+  other, and a refresh race across them rotates once.
+- **`jfastframework.db.rollups.MonthlyRollup`**: pre-computed monthly totals
+  per tenant, refreshed one bucket at a time from its rows, so an event
+  handled twice is harmless; serialised on an advisory lock. On 3M rows, a
+  990k-row tenant's six-aggregate panel went from 455 ms to 3.25 ms at p50.
+- **RAG at 300k chunks across 1,000 tenants** (`scripts/bench_rag.py`):
+  vector search p50 2.54 ms, p99 6.92 ms; hybrid p50 2.96 ms. At that size the
+  planner serves tenant-scoped queries from the tenant btree and an exact
+  sort, so the 586 MB HNSW index serves none of them; with four large tenants
+  it does, and recall@10 is 0.918 at the default `ef_search` (0.950 at 200).
 
 ### Not done, and named
 
@@ -373,6 +420,20 @@ that apply to your project, with file and line, and the remedy.
   `hexagonal-eager-create-payload`**, by design.
 - Drill timings were measured on one loaded laptop; a slower CI runner is
   untested. Only Python 3.12 was run locally for the generator gates.
+- **Scale, not yet measured:** RAG at 1M chunks (all embeddings were
+  synthetic); the `ab` table in `docs/deploy.md` (not re-measured on a loaded
+  machine); a Linux baseline for the budget, which CI measures against the
+  base branch instead -- a step not yet run in CI; the telemetry plugin as a
+  budgeted scenario; `jfast bench` naming the saturated dependency beyond
+  `/ready`, and a mocked-model scenario.
+- **Found, not fixed:** the pgvector store's writes filter with `tenant_id IS
+  NOT DISTINCT FROM`, which no btree serves -- one document's delete took
+  19.2 ms instead of 0.03 ms at 300k chunks (a strict xfail in
+  `tests/test_rag_scale.py`); a 405's problem+json response drops the `Allow`
+  header.
+- **The MinIO CI job runs a community fork** (`pgsty/minio`): MinIO stopped
+  publishing images, and the suite was verified locally only against the last
+  official one, `RELEASE.2025-09-07T16-13-09Z`.
 - Long AI work through the queue by default, tested recipes, and the RLS
   tables in `jfast ai context` are not started.
 

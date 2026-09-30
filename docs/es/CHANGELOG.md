@@ -363,7 +363,9 @@ los que aplican a tu proyecto, con archivo y línea, y el arreglo.
 - Jobs para los controles de proyectos generados, el smoke de actualización,
   las suites de concurrencia con un reloj de grano Windows, RLS detrás de un
   PgBouncer fijado (`edoburu/pgbouncer:v1.25.2-p0`), y spans exportados por
-  OTLP y leídos de vuelta desde Jaeger (`scripts/smoke_telemetry.sh`). Los
+  OTLP y leídos de vuelta desde Jaeger (`scripts/smoke_telemetry.sh`); el
+  presupuesto de rendimiento contra la base del cambio en el mismo runner; el
+  disco S3 contra MinIO; la suite de varias réplicas. Los
   simulacros de falla corren al final del job principal, pausando su propio
   PostgreSQL y Redis. Las suites de eventos locales, el worker, dead letters,
   flujos de cuentas, spans de SQL y el paso a multitenant están en la lista
@@ -412,14 +414,65 @@ los que aplican a tu proyecto, con archivo y línea, y el arreglo.
   de `WHERE`/`AND`** -- un helper del repositorio que sí filtra por tenant.
   Eso no se puede decidir desde el código, así que la regla se calla. Cuadra
   tenía ocho hallazgos, todos falsos.
+- **`jfast add` reinstalaba el release anterior encima del que corría.** Un
+  `requirements.txt` que seguía fijando 0.1.0a10 hacía que `jfast add
+  telemetry` corriera `pip install -r` y pusiera a10 -- que no trae ese extra
+  -- encima de a11. Ahora pip se omite, con el comando a correr, cuando el pin
+  difiere de la versión en ejecución o la instalación es editable. Encontrado
+  al migrar Cuadra.
+- **`listing(limit=1500)` del disco S3 regresaba 1.000.** Ahora sigue el
+  continuation token.
 - La documentación en español enlazaba tres anclas con acento que el sitio
   quita; arreglado, junto con la de la nueva página de telemetría.
 
-### Rendimiento
+### Rendimiento y escala, medidos
 
-<!-- LEAD: escala (Fase 5) va aquí, desde el reporte de escala. -->
-- **PENDIENTE (lead): escala -- presupuesto de rendimiento, orden de las rutas
-  del framework, números medidos. No lo escribió docs-ci.**
+Cada número de aquí está en `docs/scaling.md`, nueva, con la máquina donde se
+midió (una laptop Apple M5 con otras suites corriendo) y el script que lo
+produce.
+
+- **Un presupuesto de rendimiento.** `scripts/bench_overhead.py` maneja cada
+  app en proceso y mide el tiempo de CPU del proceso por petición como
+  proporción contra FastAPI solo en la misma corrida -- los defaults de JFast
+  2.48x, auth + tenancy + metrics 5.43x -- y `tests/test_performance_budget.py`
+  (`JFAST_PERF_BUDGET=1`) falla si una proporción crece más de 20 % sobre la
+  línea base. Una segunda prueba demuestra que muerde: un `BaseHTTPMiddleware`
+  de vuelta, la regresión de 0.1.0a10, lo tumba.
+- **`jfast bench <url>`**: una prueba de carga por escalones armada desde el
+  OpenAPI del servicio. Reporta req/s, p50/p95/p99 y errores por escalón,
+  dónde se rompe el servicio (`--max-p99-ms`, `--max-error-rate`) y dónde deja
+  de crecer el throughput, y cualquier check de `/ready` que se degradó;
+  `--k6` exporta el escenario, `--json` y `--fail-on-break` son para CI. Su
+  propio generador llega a 3.000-3.600 req/s; arriba de eso usa `ab` o k6.
+- **Las rutas del framework se prueban después de las de la aplicación.**
+  `/health`, `/ready`, `/info`, `/metrics` y la documentación pasan detrás de
+  las rutas de la app al arrancar, lo que ahorra 2-4 us de CPU por petición de
+  la app (medido; los "~8 us" del plan no). Una ruta de la app que reclamaría
+  uno de sus paths, completo o con un 405, sigue sin hacerlo: cada uno se
+  prueba y vuelve delante de ella. `app.routes` y `/openapi.json` listan
+  primero los paths de la aplicación.
+- **El disco S3 está verificado contra MinIO**
+  (`tests/test_storage_minio.py`): put, get, stat, listado, URLs firmadas
+  descargadas y luego vencidas, subidas prefirmadas, un stream multipart de
+  tres partes y su aborto, salud.
+- **Garantías con varias réplicas, demostradas.** Dos apps y dos workers
+  contra un PostgreSQL y un Redis (`tests/test_multi_replica.py`): 400
+  mensajes del outbox reenviados y consumidos una vez cada uno; los ticks del
+  scheduler encolados una vez en ambos stores; un tope LLM de $1.00 entre las
+  dos réplicas deja pasar exactamente 10 de 60 llamadas concurrentes de $0.10;
+  un logout en una réplica se rechaza en la otra, y una carrera de refresh
+  entre ellas rota una sola vez.
+- **`jfastframework.db.rollups.MonthlyRollup`**: totales mensuales por tenant
+  precalculados, refrescados un bucket a la vez desde sus filas, así que un
+  evento procesado dos veces no hace daño; serializado con un advisory lock.
+  Sobre 3M de filas, el panel de seis agregados de un tenant de 990k filas
+  pasó de 455 ms a 3.25 ms en p50.
+- **RAG con 300k fragmentos entre 1.000 tenants** (`scripts/bench_rag.py`):
+  búsqueda vectorial p50 2.54 ms, p99 6.92 ms; híbrida p50 2.96 ms. A ese
+  tamaño el planner sirve las consultas por tenant con el btree del tenant y
+  un orden exacto, así que el índice HNSW de 586 MB no sirve ninguna; con
+  cuatro tenants grandes sí, y el recall@10 es 0.918 con el `ef_search` por
+  defecto (0.950 con 200).
 
 ### Sin hacer, y con nombre
 
@@ -451,6 +504,21 @@ los que aplican a tu proyecto, con archivo y línea, y el arreglo.
 - Los tiempos de los simulacros se midieron en una sola laptop cargada; un
   runner de CI más lento no está probado. Los controles del generador solo se
   corrieron con Python 3.12 en local.
+- **Escala, todavía sin medir:** RAG con 1M de fragmentos (todos los
+  embeddings fueron sintéticos); la tabla de `ab` en `docs/deploy.md` (no se
+  volvió a medir en una máquina cargada); una línea base de Linux para el
+  presupuesto, que CI mide contra la rama base en su lugar -- un paso que aún
+  no corre en CI; el plugin de telemetría como escenario del presupuesto;
+  `jfast bench` nombrando la dependencia saturada más allá de `/ready`, y un
+  escenario con modelo simulado.
+- **Encontrado, sin arreglar:** las escrituras del store de pgvector filtran
+  con `tenant_id IS NOT DISTINCT FROM`, que ningún btree sirve -- borrar un
+  documento tomó 19.2 ms en vez de 0.03 ms con 300k fragmentos (un xfail
+  estricto en `tests/test_rag_scale.py`); la respuesta problem+json de un 405
+  pierde el header `Allow`.
+- **El job de MinIO en CI corre un fork de la comunidad** (`pgsty/minio`):
+  MinIO dejó de publicar imágenes, y la suite solo se verificó en local contra
+  la última oficial, `RELEASE.2025-09-07T16-13-09Z`.
 - Trabajo largo de IA por la cola por defecto, recetas probadas y las tablas
   con RLS en `jfast ai context` no se empezaron.
 
