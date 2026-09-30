@@ -322,3 +322,23 @@ def test_new_modules_are_mounted_in_sorted_order(service: Path) -> None:
     main = (service / "main.py").read_text(encoding="utf-8")
     assert main.index("modules.alfa") < main.index("modules.zeta")
     assert "import router as zeta_router\n\n# [jfast:imports]" in main
+
+
+def test_an_enum_added_to_an_old_str_enum_file_imports_what_it_uses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Generators now write `StrEnum`; a file from before only imports `Enum`."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "shared").mkdir()
+    old = (
+        '"""Enums."""\n\nfrom __future__ import annotations\n\nfrom enum import Enum\n\n\n'
+        'class Legacy(str, Enum):\n    A = "a"\n'
+    )
+    (tmp_path / "shared" / "enums.py").write_text(old, encoding="utf-8")
+    result = runner.invoke(app, ["new", "enum", "Status", "--shared", "--values", "open,done"])
+    assert result.exit_code == 0, result.output
+    source = (tmp_path / "shared" / "enums.py").read_text(encoding="utf-8")
+    assert "from enum import Enum, StrEnum" in source
+    assert "class Status(StrEnum):" in source
+    namespace: dict[str, object] = {}
+    exec(compile(source, "enums.py", "exec"), namespace)  # the file must import
