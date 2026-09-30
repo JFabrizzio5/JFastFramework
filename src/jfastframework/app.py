@@ -104,14 +104,12 @@ def create_app(
 
     add_system_routes(app, ctx, resolved)
     # Everything so far is the framework's: FastAPI's docs, what the plugins
-    # registered, the system endpoints. Remembered by identity, so the
-    # lifespan can put them back behind routes added after this function.
+    # registered, the system endpoints. Remembered by identity; the lifespan
+    # moves them behind the application's routes once startup is over.
     app.state.jfast_framework_routes = tuple(app.router.routes)
 
     for router in routers or []:
         app.include_router(router)
-
-    order_framework_routes_last(app)
 
     logger.info(
         "%s built with plugins: %s",
@@ -201,8 +199,14 @@ def order_framework_routes_last(app: FastAPI) -> None:
 
     Only fixed paths move. A route with parameters matches paths nobody can
     enumerate, so there is no probe that proves moving it is harmless; those
-    stay where they were. Idempotent: the lifespan runs it again, so routes
-    included after ``create_app`` returned are covered too.
+    stay where they were.
+
+    It runs at the end of startup, never earlier. Probing an included router
+    makes FastAPI (0.121+) build and cache that router's resolved routes, and
+    a plugin that edits routes at startup -- ``ratelimit`` puts its default
+    limit on every route there -- would then edit copies nobody serves.
+    After startup nothing edits routes, and routers included after
+    ``create_app`` returned are in the table too. Idempotent.
     """
     framework: tuple[BaseRoute, ...] = getattr(app.state, "jfast_framework_routes", ())
     routes = app.router.routes
@@ -258,15 +262,13 @@ def _build_lifespan(plugins: list[Plugin]):  # type: ignore[no-untyped-def]
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ctx: AppContext = app.state.jfast
-        # Routers included after create_app returned -- main.py adding one by
-        # hand, a test mounting a sub-app -- landed behind the framework's.
-        order_framework_routes_last(app)
         started: list[Plugin] = []
         try:
             for plugin in plugins:
                 await plugin.startup(ctx)
                 started.append(plugin)
                 logger.debug("started plugin %s", plugin.meta.name)
+            order_framework_routes_last(app)
             yield
         finally:
             # Reverse order, and one plugin failing to shut down must not

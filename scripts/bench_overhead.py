@@ -59,6 +59,8 @@ AUDIENCE = "bench"
 
 #: Scenarios the budget holds. The by-hand one is context, not a product.
 BUDGETED = ("jfast_defaults", "jfast_auth_tenancy_metrics")
+#: Requests per scenario before the next one takes its turn.
+SLICE = 200
 #: How much a ratio may grow over the baseline before the budget fails.
 DEFAULT_TOLERANCE = 0.20
 
@@ -235,6 +237,7 @@ async def measure(requests: int = 5000, rounds: int = 7, warmup: int = 1000) -> 
         scenarios = build_scenarios()
         samples: dict[str, list[float]] = {s.name: [] for s in scenarios}
         wall: dict[str, list[float]] = {s.name: [] for s in scenarios}
+        slice_ratios: dict[str, list[float]] = {s.name: [] for s in scenarios}
         async with AsyncExitStack() as stack:
             states = {s.name: await _lifespan_state(stack, s.app) for s in scenarios}
             for scenario in scenarios:
@@ -243,28 +246,47 @@ async def measure(requests: int = 5000, rounds: int = 7, warmup: int = 1000) -> 
                     raise RuntimeError(
                         f"{scenario.name} answered {status}; the benchmark would time an error"
                     )
+            slices = max(requests // SLICE, 1)
             for round_number in range(rounds):
-                # Rotate the order, so no scenario is always the one that
-                # runs right after the garbage collector.
-                shift = round_number % len(scenarios)
-                for scenario in scenarios[shift:] + scenarios[:shift]:
-                    gc.collect()
-                    gc.disable()
-                    try:
-                        cpu_started = time.process_time_ns()
-                        wall_started = time.perf_counter_ns()
-                        await drive(scenario.app, scenario.headers, requests, states[scenario.name])
-                        wall_elapsed = time.perf_counter_ns() - wall_started
-                        cpu_elapsed = time.process_time_ns() - cpu_started
-                    finally:
-                        gc.enable()
-                    samples[scenario.name].append(cpu_elapsed / requests / 1000)
-                    wall[scenario.name].append(wall_elapsed / requests / 1000)
+                cpu = dict.fromkeys(samples, 0)
+                clock = dict.fromkeys(samples, 0)
+                gc.collect()
+                gc.disable()
+                try:
+                    for slice_number in range(slices):
+                        # Scenarios take turns in slices of SLICE requests,
+                        # rotating who goes first, so whatever the machine
+                        # does in a given 10 ms lands on all of them.
+                        shift = (round_number + slice_number) % len(scenarios)
+                        timings: dict[str, int] = {}
+                        for scenario in scenarios[shift:] + scenarios[:shift]:
+                            cpu_started = time.process_time_ns()
+                            wall_started = time.perf_counter_ns()
+                            await drive(
+                                scenario.app, scenario.headers, SLICE, states[scenario.name]
+                            )
+                            clock[scenario.name] += time.perf_counter_ns() - wall_started
+                            timings[scenario.name] = time.process_time_ns() - cpu_started
+                            cpu[scenario.name] += timings[scenario.name]
+                        for name, elapsed in timings.items():
+                            slice_ratios[name].append(elapsed / timings["fastapi"])
+                finally:
+                    gc.enable()
+                done = slices * SLICE
+                for name in samples:
+                    samples[name].append(cpu[name] / done / 1000)
+                    wall[name].append(clock[name] / done / 1000)
     finally:
         logging.disable(logging.NOTSET)
 
     medians = {name: statistics.median(values) for name, values in samples.items()}
     base = medians["fastapi"]
+    # The ratio is taken inside each slice, then the median of those. Apple
+    # silicon (and any big.LITTLE runner) moves a process between fast and
+    # slow cores; a slice is short enough to stay on one kind, so a ratio
+    # within it compares like with like, while a ratio of two medians can
+    # divide a fast-core number by a slow-core one.
+    ratios = {name: statistics.median(values) for name, values in slice_ratios.items()}
     return {
         "machine": _machine(),
         "method": {
@@ -277,13 +299,14 @@ async def measure(requests: int = 5000, rounds: int = 7, warmup: int = 1000) -> 
             # time of the whole process still counts a threadpool hop, which
             # is one of the regressions this exists to catch.
             "clock": "process CPU time",
-            "statistic": "median of per-round mean",
+            "slice": SLICE,
+            "statistic": "us: median of per-round mean; ratio: median of per-slice ratios",
         },
         "scenarios": {
             name: {
                 "us_per_request": round(value, 2),
                 "req_per_s_one_core": round(1_000_000 / value),
-                "ratio_to_fastapi": round(value / base, 3),
+                "ratio_to_fastapi": round(ratios[name], 3),
                 "overhead_us": round(value - base, 2),
                 "spread_us": round(max(samples[name]) - min(samples[name]), 2),
                 "wall_us_per_request": round(statistics.median(wall[name]), 2),
@@ -305,6 +328,35 @@ def _machine() -> dict[str, str]:
         "starlette": starlette.__version__,
         "cpus": str(os.cpu_count()),
     }
+
+
+def platform_key() -> str:
+    """Which baseline applies: ratios differ between CPU families and OSes."""
+    return f"{sys.platform}-{platform.machine().lower()}"
+
+
+def load_baseline(path: Path, key: str | None = None) -> dict[str, Any] | None:
+    """This platform's entry in a baseline file, or None when it has none.
+
+    A file is ``{platform_key: result}``. A bare result (what ``--json``
+    prints, e.g. a run on the base branch in CI) is accepted as is.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if "scenarios" in data:
+        return data  # type: ignore[no-any-return]
+    entry = data.get(key or platform_key())
+    return entry if isinstance(entry, dict) else None
+
+
+def save_baseline(path: Path, result: dict[str, Any], key: str | None = None) -> None:
+    """Record ``result`` for this platform, keeping the other platforms' entries."""
+    data: dict[str, Any] = {}
+    if path.exists():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if "scenarios" in data:
+            data = {}
+    data[key or platform_key()] = result
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def check(result: dict[str, Any], baseline: dict[str, Any], tolerance: float) -> list[str]:
@@ -340,6 +392,53 @@ def render(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+async def measure_route_order(
+    requests: int = 5000, rounds: int = 15, warmup: int = 1000
+) -> dict[str, float]:
+    """CPU us per app request with the framework routes behind vs in front.
+
+    Two copies of the ``jfast_defaults`` app, identical except that one has
+    its route table put back in the 0.1.0a10 order (framework routes first)
+    after startup. Interleaved like ``measure``; the difference is what the
+    ordering saves every request to an application route.
+    """
+    logging.disable(logging.WARNING)
+    try:
+        after, before = _jfast(full=False), _jfast(full=False)
+        samples: dict[str, list[float]] = {"framework_last": [], "framework_first": []}
+        async with AsyncExitStack() as stack:
+            state_after = await _lifespan_state(stack, after)
+            state_before = await _lifespan_state(stack, before)
+            framework = [
+                r for r in before.router.routes if r in before.state.jfast_framework_routes
+            ]
+            rest = [r for r in before.router.routes if r not in framework]
+            before.router.routes[:] = framework + rest
+            pairs = [
+                ("framework_last", after, state_after),
+                ("framework_first", before, state_before),
+            ]
+            for _, app, state in pairs:
+                assert await drive(app, [], warmup, state) == 200
+            for round_number in range(rounds):
+                ordered = pairs if round_number % 2 else pairs[::-1]
+                for name, app, state in ordered:
+                    gc.collect()
+                    gc.disable()
+                    try:
+                        started = time.process_time_ns()
+                        await drive(app, [], requests, state)
+                        elapsed = time.process_time_ns() - started
+                    finally:
+                        gc.enable()
+                    samples[name].append(elapsed / requests / 1000)
+    finally:
+        logging.disable(logging.NOTSET)
+    result = {name: round(statistics.median(values), 2) for name, values in samples.items()}
+    result["saved_us"] = round(result["framework_first"] - result["framework_last"], 2)
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--requests", type=int, default=5000, help="requests per round")
@@ -348,16 +447,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write-baseline", type=Path, help="save the result as the baseline")
     parser.add_argument("--check", type=Path, help="compare against a baseline; exit 1 over it")
     parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
+    parser.add_argument(
+        "--route-order",
+        action="store_true",
+        help="measure only what putting framework routes last saves per app request",
+    )
     args = parser.parse_args(argv)
+
+    if args.route_order:
+        order = asyncio.run(measure_route_order(requests=args.requests, rounds=args.rounds))
+        print(json.dumps(order, indent=2))
+        return 0
 
     result = asyncio.run(measure(requests=args.requests, rounds=args.rounds))
     print(json.dumps(result, indent=2) if args.json else render(result))
 
     if args.write_baseline:
-        args.write_baseline.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-        print(f"baseline written to {args.write_baseline}", file=sys.stderr)
+        save_baseline(args.write_baseline, result)
+        print(f"baseline for {platform_key()} written to {args.write_baseline}", file=sys.stderr)
     if args.check:
-        failures = check(result, json.loads(args.check.read_text(encoding="utf-8")), args.tolerance)
+        baseline = load_baseline(args.check)
+        if baseline is None:
+            print(f"no baseline for {platform_key()} in {args.check}", file=sys.stderr)
+            return 2
+        failures = check(result, baseline, args.tolerance)
         for failure in failures:
             print(f"OVER BUDGET  {failure}", file=sys.stderr)
         return 1 if failures else 0
