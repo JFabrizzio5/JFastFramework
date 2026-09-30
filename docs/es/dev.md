@@ -152,11 +152,13 @@ cuando la base ya está corriendo y quieres un servidor y nada más.
 ## Todo en contenedores
 
 ```bash
+(cd shop-web && npm install && npm run build)
 docker compose up --build
 ```
 
-Que es lo que corre en producción, y no necesita nada instalado localmente. El
-archivo de compose que escribe `jfast start` está completo — el `.env` del
+Que es lo que corre en producción. El frontend es lo único que se construye en
+el host: Caddy sirve `<frontend>/dist`, donde escribe `npm run build`, y no
+corre ningún contenedor de Node. El archivo de compose que escribe `jfast start` está completo — el `.env` del
 workspace con las contraseñas generadas y el `.env` de cada servicio se
 escriben junto a él, así que esto funciona en un clon limpio sin pasos extra.
 

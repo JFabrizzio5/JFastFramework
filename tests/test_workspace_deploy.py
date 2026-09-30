@@ -64,9 +64,28 @@ def test_every_backend_becomes_a_service() -> None:
 
 def test_a_frontend_is_not_a_container() -> None:
     compose = build_workspace_compose(ws(api("billing", 8010), spa("admin", 8020)))
-    # A built SPA is static files; Caddy serves them from ./dist. Running a
+    # A built SPA is static files; Caddy serves them from <frontend>/dist. Running a
     # Node container in production to serve them is a process nobody needs.
     assert "admin" not in compose["services"]
+
+
+def test_caddy_mounts_the_frontends_own_dist() -> None:
+    caddy = build_workspace_compose(ws(api("billing", 8010), spa("admin", 8020)))["services"][
+        "caddy"
+    ]
+    assert "./admin/dist:/srv:ro" in caddy["volumes"]
+    assert "./dist:/srv:ro" not in caddy["volumes"]
+
+
+def test_without_a_frontend_caddy_mounts_no_site() -> None:
+    caddy = build_workspace_compose(ws(api("billing", 8010)))["services"]["caddy"]
+    assert not any(volume.endswith(":/srv:ro") for volume in caddy["volumes"])
+    assert "./Caddyfile:/etc/caddy/Caddyfile:ro" in caddy["volumes"]
+
+
+def test_the_compose_header_names_the_directory_caddy_serves() -> None:
+    rendered = render_workspace_compose(ws(api("billing", 8010), spa("admin", 8020)))
+    assert "by Caddy from ./admin/dist" in rendered
 
 
 def test_declared_datastores_become_containers() -> None:

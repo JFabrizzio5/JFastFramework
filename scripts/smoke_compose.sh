@@ -33,11 +33,13 @@ fi
 WORK="$(mktemp -d)"
 # The compose project name, so teardown reaches every container even when the
 # run dies between `up` and the first assertion.
-WORKSPACE_PROJECT="jfastworkspace$$"
-SERVICE_PROJECT="jfastservice$$"
+# SMOKE_PROJECT_PREFIX and SMOKE_BASE_PORT let two checkouts run this at once
+# on one machine without sharing a compose project or a host port.
+WORKSPACE_PROJECT="${SMOKE_PROJECT_PREFIX:-jfast}workspace$$"
+SERVICE_PROJECT="${SMOKE_PROJECT_PREFIX:-jfast}service$$"
 # Above the default block and above anything smoke_docker.sh publishes, so two
 # jobs on one runner do not collide on a host port.
-BASE_PORT=9600
+BASE_PORT="${SMOKE_BASE_PORT:-9600}"
 
 cleanup() {
   code=$?
@@ -45,7 +47,8 @@ cleanup() {
   for project in "${WORKSPACE_PROJECT}" "${SERVICE_PROJECT}"; do
     docker compose -p "${project}" down -v --remove-orphans > /dev/null 2>&1 || true
   done
-  docker rmi -f "${WORKSPACE_PROJECT}-demo" "${SERVICE_PROJECT}-api" > /dev/null 2>&1 || true
+  docker rmi -f "${WORKSPACE_PROJECT}-demo" "${WORKSPACE_PROJECT}-demo-worker" \
+    "${SERVICE_PROJECT}-api" "${SERVICE_PROJECT}-worker" > /dev/null 2>&1 || true
   rm -rf "${WORK}"
   exit ${code}
 }
@@ -69,8 +72,14 @@ up_built() {
   local project="$1" service="$2" base
   shift 2
   base="$(default_compose_file)" || fail "no compose file in $(pwd)"
-  docker compose -p "${project}" -f "${base}" -f "$(wheel_hosts_override "${service}")" \
-    up -d --build "$@"
+  local files=(-f "${base}" -f "$(wheel_hosts_override "${service}")")
+  # The workspace's Caddy publishes 80 and 443 on the host, which this run
+  # does not own. It is asked from inside instead, so it publishes nothing.
+  if grep -q '^  caddy:' "${base}"; then
+    printf 'services:\n  caddy:\n    ports: !reset []\n' > "${WORK}/caddy-unpublished.yml"
+    files+=(-f "${WORK}/caddy-unpublished.yml")
+  fi
+  docker compose -p "${project}" "${files[@]}" up -d --build "$@"
 }
 
 # Ask the running container rather than the host: the host port is a mapping
@@ -137,6 +146,13 @@ PY
 # Not in a subshell: the wheel server it may start has to be stopped by cleanup.
 cd demo && pin_to_checkout_wheel && cd ..
 
+# What `npm run build` leaves behind, where it leaves it: Vite's default outDir
+# in the generated frontend. Written rather than built so this run needs no
+# Node; the compose file has to mount this directory, not ./dist at the root,
+# where 0.1.0a12 looked and nothing ever wrote.
+mkdir -p demo-web/dist
+printf '<!doctype html><title>jfast-smoke-spa</title>\n' > demo-web/dist/index.html
+
 up_built "${WORKSPACE_PROJECT}" demo demo \
   || fail "docker compose up --build failed on a project nobody had touched"
 wait_for_ready "${WORKSPACE_PROJECT}" demo "${BASE_PORT}"
@@ -173,6 +189,17 @@ with urllib.request.urlopen(request, timeout=10) as response:
     answer = json.load(response)
 assert answer == {"bytes": 14}, answer
 PY
+
+step "Caddy serves the built SPA and proxies /api"
+caddy_get() {
+  docker compose -p "${WORKSPACE_PROJECT}" exec -T caddy wget -qO- "http://127.0.0.1$1"
+}
+for _ in $(seq 1 15); do caddy_get / > /dev/null 2>&1 && break; sleep 1; done
+caddy_get / | grep -q jfast-smoke-spa \
+  || fail "Caddy does not serve demo-web/dist: the compose file mounts another directory"
+# try_files: a client-side route on a hard refresh is the SPA, not a 404.
+caddy_get /items/42 | grep -q jfast-smoke-spa || fail "a client-side route is not index.html"
+caddy_get /api/health | grep -q '"status"' || fail "Caddy does not proxy /api to the service"
 
 step "Caddy accepts every Caddyfile jfast workspace caddy writes"
 # The plain one is already running above. The tenant variants are not, and
