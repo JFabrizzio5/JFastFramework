@@ -90,7 +90,7 @@ Una sola traza cubre cada salto porque el `traceparent` de W3C viaja con el trab
 - **El cliente `http`** manda el `traceparent` y el `tracestate` del span actual en
   cada llamada, dentro de un span de cliente propio, así que el span de servidor
   del siguiente servicio es hijo de esa llamada. Ver
-  [http-client.md](http-client.md#qué-viaja-con-la-llamada).
+  [http-client.md](http-client.md#que-viaja-con-la-llamada).
 - **El gateway** reemplaza el `traceparent` del cliente por el de su propio span,
   un salto más adentro de la misma traza. Con telemetry apagado reenvía intacto el
   del cliente, así que el upstream todavía puede continuar esa traza.
