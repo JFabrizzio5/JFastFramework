@@ -100,8 +100,8 @@ Anything it cannot resolve is left exactly as it was. A wrong guess would be
 harder to debug than the original value. A variable already set in your shell
 is left alone too, as pydantic-settings leaves it over `.env`.
 
-The translation is not only `jfast dev`'s. `jfast serve` and `jfast worker`
-apply it when they find the compose file the same way (the service directory or
+The translation is not only `jfast dev`'s. `jfast serve`, `jfast worker` and
+`jfast migration check`/`plan` apply it when they find the compose file the same way (the service directory or
 one level up), and `jfast exec -- <command>` runs anything else with it --
 `jfast exec -- alembic revision --autogenerate -m "add invoices"`, `jfast exec
 -- pytest`. Inside a container nothing is translated: there the compose names

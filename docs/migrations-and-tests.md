@@ -232,7 +232,11 @@ is correct.
 #### Row counts need a database
 
 The `Reason` line in `plan` states a real row count when a DSN resolves —
-`--dsn`, then `JFAST_DB_DSN`, then `.env` in the project root:
+`--dsn`, then `JFAST_DB_DSN`, then `.env` in the project root. In a workspace
+that `.env` is read translated for the host, as `jfast serve` and `jfast exec`
+read it (container names become `localhost:<published port>`, `${...}` is
+filled from the workspace `.env`), so `jfast migration check` run on the host
+reaches the database the compose file publishes:
 
 ```
 Migration:  0004_add_status

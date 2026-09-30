@@ -233,6 +233,99 @@ def test_dev_hands_the_same_translation_to_every_child(
     assert "JFAST_CACHE_URL" not in spawned["api"]
 
 
+# -- jfast migration check --------------------------------------------------
+
+
+def test_migration_check_reads_the_translated_dsn(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Before this it read the .env as is: `shop-database:5432`, which nothing
+    on the host resolves, so every run said `database: unavailable` and treated
+    every table as populated while `jfast exec -- jfast migration check`
+    connected (bitácora F8)."""
+    from jfastframework.cli.migrations import resolve_dsn
+
+    assert resolve_dsn(workspace, None) == HOST_DSN
+    # --dsn and the shell still win, as they always did.
+    assert resolve_dsn(workspace, "postgresql+asyncpg://x@y/z") == "postgresql+asyncpg://x@y/z"
+    monkeypatch.setenv("JFAST_DB_DSN", "postgresql+asyncpg://shell@h/d")
+    assert resolve_dsn(workspace, None) == "postgresql+asyncpg://shell@h/d"
+    monkeypatch.delenv("JFAST_DB_DSN")
+    # Inside a container the compose name is the right one.
+    monkeypatch.setattr(devtools, "in_container", lambda: True)
+    assert "@shop-database:5432/" in (resolve_dsn(workspace, None) or "")
+
+
+PG_SERVER = os.environ.get("JFAST_TEST_PG_URL", "postgresql+asyncpg://jfast:jfast@localhost:5499")
+
+
+def test_migration_check_connects_from_the_host_with_the_compose_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole path on a real PostgreSQL: a workspace whose compose file
+    publishes the server, a service .env in compose's terms, no JFAST_DB_DSN
+    in the shell -- and `jfast migration check` run on the host connects."""
+    import asyncio
+
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    server = make_url(PG_SERVER)
+
+    async def reachable() -> None:
+        engine = create_async_engine(PG_SERVER + "/" + (server.username or "postgres"))
+        try:
+            async with engine.connect():
+                pass
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(reachable())
+    except Exception:  # noqa: BLE001 - any failure means "no server here"
+        pytest.skip(f"no PostgreSQL at {PG_SERVER}")
+
+    root = tmp_path / "ws"
+    service = root / "shop"
+    versions = service / "migrations" / "versions"
+    versions.mkdir(parents=True)
+    (versions / "0001_widgets.py").write_text(
+        "from alembic import op\n"
+        "import sqlalchemy as sa\n"
+        'revision = "0001"\n'
+        "down_revision = None\n\n"
+        "def upgrade() -> None:\n"
+        "    op.create_table('widgets', sa.Column('id', sa.Integer, primary_key=True))\n\n"
+        "def downgrade() -> None:\n"
+        "    op.drop_table('widgets')\n",
+        encoding="utf-8",
+    )
+    (root / "docker-compose.yml").write_text(
+        f"services:\n  shop-database:\n    image: postgres:16\n    ports:\n"
+        f'      - "{server.port}:5432"\n',
+        encoding="utf-8",
+    )
+    (root / ".env").write_text(f"SHOP_DATABASE_PASSWORD={server.password}\n", encoding="utf-8")
+    (service / ".env").write_text(
+        f"JFAST_DB_DSN=postgresql+asyncpg://{server.username}:${{SHOP_DATABASE_PASSWORD}}"
+        f"@shop-database:5432/{server.username}\n",
+        encoding="utf-8",
+    )
+    (service / "jfast.toml").write_text('[app]\nname = "shop"\n', encoding="utf-8")
+    monkeypatch.delenv("JFAST_DB_DSN", raising=False)
+    monkeypatch.setattr(devtools, "in_container", lambda: False)
+
+    import json
+
+    result = runner.invoke(
+        app, ["migration", "check", "--path", str(service), "--json", "--fail-on", "never"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["database_error"] is None, payload["database_error"]
+    assert payload["database"] == "connected", payload
+
+
 # -- the printed next steps --------------------------------------------------
 
 

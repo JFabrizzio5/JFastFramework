@@ -1281,6 +1281,17 @@ def resolve_dsn(root: Path, explicit: str | None) -> str | None:
     from_env = os.environ.get("JFAST_DB_DSN")
     if from_env:
         return from_env
+    # A workspace's .env is written for compose -- `<ws>-database:5432` and a
+    # `${..._PASSWORD}` only compose fills in -- so read as is it names a host
+    # nothing on this machine resolves, the connection fails, and the check
+    # falls back to "every table populated" without saying the DSN was the
+    # problem. Translated the way `jfast serve`, `worker` and `exec` do it;
+    # inside a container, or with no compose file, nothing changes.
+    from jfastframework.cli.dev import service_host_environment
+
+    translated = service_host_environment(root).values.get("JFAST_DB_DSN")
+    if translated:
+        return translated
     dotenv = root / ".env"
     if dotenv.is_file():
         try:
@@ -1307,10 +1318,20 @@ async def _read_database(dsn: str, tables: Sequence[str]) -> tuple[str | None, d
     try:
         async with engine.connect() as connection:
             head: str | None = None
-            with contextlib.suppress(Exception):
-                result = await connection.execute(text("SELECT version_num FROM alembic_version"))
-                row = result.first()
-                head = str(row[0]) if row else None
+            # Asked before it is read: on a database nothing has migrated yet
+            # the SELECT fails, and a failed statement aborts the transaction
+            # every query below runs in -- so a fresh database was reported as
+            # "unavailable" rather than as empty and unmigrated.
+            versioned = await connection.execute(
+                text("SELECT to_regclass('alembic_version') IS NOT NULL")
+            )
+            if versioned.scalar():
+                with contextlib.suppress(Exception):
+                    result = await connection.execute(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                    row = result.first()
+                    head = str(row[0]) if row else None
 
             present = {
                 str(name)
