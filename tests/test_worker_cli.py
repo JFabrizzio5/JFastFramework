@@ -260,6 +260,76 @@ async def test_a_task_and_a_subscriber_in_jfast_worker_reach_the_apps_providers(
     assert json.loads(subscriber_out.read_text()) == {**expected, "event": "ctxdemo.happened"}
 
 
+def _as_workspace_service(project: Path, tmp_path: Path, dsn: str) -> Path:
+    """The project fixture's service, moved one level down into a workspace
+    whose compose file publishes the test PostgreSQL's port, with the .env a
+    workspace writes: the compose name and a ${...} password."""
+    from sqlalchemy.engine import make_url
+
+    url = make_url(dsn)
+    workspace = tmp_path / "ws"
+    service = workspace / "svc"
+    workspace.mkdir()
+    project.rename(service)
+    (workspace / "docker-compose.yml").write_text(
+        textwrap.dedent(
+            f"""\
+            services:
+              ws-database:
+                image: postgres:16
+                ports:
+                  - "{url.port}:5432"
+            """
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".env").write_text(f"WS_DATABASE_PASSWORD={url.password}\n", encoding="utf-8")
+    (service / ".env").write_text(
+        f"JFAST_DB_DSN=postgresql+asyncpg://{url.username}:${{WS_DATABASE_PASSWORD}}"
+        f"@ws-database:5432/{url.database}\n",
+        encoding="utf-8",
+    )
+    return service
+
+
+async def test_the_worker_translates_a_compose_env_for_the_host(
+    dsn: str, project: Path, tmp_path: Path
+) -> None:
+    """F4 on the worker: a workspace's service .env names the database by its
+    compose name and leaves the password to compose. `jfast worker` on the
+    host used to fail on DNS; it now translates the .env as `jfast dev` does.
+    """
+    service = _as_workspace_service(project, tmp_path, dsn)
+
+    engine, queue = await _queue(dsn)
+    marks = [tmp_path / "started", tmp_path / "finished"]
+    await queue.enqueue(
+        Job(
+            task="demo.sleep",
+            payload={"seconds": 0, "started": str(marks[0]), "finished": str(marks[1])},
+        )
+    )
+    # No JFAST_DB_DSN in the environment: only the .env says where the database is.
+    env = {k: v for k, v in _env(dsn).items() if k != "JFAST_DB_DSN"}
+    process = subprocess.Popen(  # noqa: ASYNC220
+        [sys.executable, "-m", "jfastframework", "worker", "--grace", "3"],
+        cwd=service,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        await _wait_for(marks, process, 30)
+        process.send_signal(signal.SIGTERM)
+        output, _ = process.communicate(timeout=20)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    await engine.dispose()
+    assert process.returncode == 0, output
+
+
 async def test_jobs_dead_lists_the_reason_and_retry_puts_them_back(dsn: str, project: Path) -> None:
     engine, queue = await _queue(dsn)
     first = Job(task="demo.sleep", max_attempts=1)

@@ -266,7 +266,12 @@ def new_module(
 
     steps = [
         (f"pytest {target}/{module}/tests", "the generated test"),
-        (f"alembic revision --autogenerate -m 'add {context['table']}'", "the table"),
+        # Through `jfast exec`: on the host, the workspace's .env names the
+        # database by its compose name, and Alembic alone gets a DNS error.
+        (
+            f"jfast exec -- alembic revision --autogenerate -m 'add {context['table']}'",
+            "the table",
+        ),
     ]
     if ui == "htmx":
         steps.insert(0, ('[plugins] enabled = [..., "web"]', "HTMX pages need it"))

@@ -76,6 +76,16 @@ imagen de producción, el frontend generado en un navegador, una subida.
   default de Vite; `--web-port 8610` además corría `vite --port 8610 --port
   8610`. La URL anunciada ahora se lee del frontend (su script `dev`, luego
   `vite.config`, luego 5173), y `--port` solo se pasa cuando cambia algo.
+- **Solo `jfast dev` podía usar el `.env` de un workspace en el host.** Nombra
+  la base por su nombre de compose y deja la contraseña para que compose la
+  rellene, así que `alembic revision --autogenerate` -- el paso que imprime
+  `jfast new module` --, `jfast serve`, `jfast worker` y `pytest` fallaban con
+  un error de DNS. `jfast serve` y `jfast worker` ahora lo traducen como `jfast
+  dev` cuando encuentran el archivo de compose, `jfast exec -- <comando>` corre
+  cualquier otra cosa con él, y cada paso de `alembic` impreso pasa por `jfast
+  exec --`. Una variable puesta en el shell gana; dentro de un contenedor, y en
+  la imagen de producción (que no tiene un compose que encontrar), no cambia
+  nada.
 
 ## [0.1.0a11] - 2026-09-30
 

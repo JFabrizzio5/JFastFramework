@@ -365,7 +365,7 @@ def _print_next_steps(destination: Path, context: dict[str, Any], kind: str) -> 
         # not exist fails.
         steps.append(("jfast deploy compose -o docker-compose.yml", "writes it from the plugins"))
         steps.append(("docker compose up -d", "the datastores it needs"))
-        steps.append(("alembic upgrade head", "creates the schema"))
+        steps.append(("jfast exec -- alembic upgrade head", "creates the schema"))
     steps.append(
         ("jfast serve", f"http://127.0.0.1:{port}  {ui.G.bullet}  /docs  {ui.G.bullet}  /ready")
     )

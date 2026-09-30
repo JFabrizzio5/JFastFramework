@@ -32,6 +32,7 @@ import signal
 import subprocess  # nosec B404
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -155,6 +156,83 @@ def host_environment(service_env: Path, root_env: Path, compose_file: Path) -> d
             )
         resolved[key] = value
     return resolved
+
+
+def in_container() -> bool:
+    """Whether this process runs inside a container.
+
+    The host translation below is for a process on the developer's machine. In
+    a container the compose names resolve and ``localhost`` is the container
+    itself, so translating would break a configuration that works. The
+    generated image cannot find a compose file anyway -- ``.dockerignore``
+    drops ``docker-compose*.yml`` and the workspace's lives outside the build
+    context -- but a hand-written Dockerfile might copy one in, and a dev
+    container might mount the whole workspace.
+    """
+    return (
+        Path("/.dockerenv").exists()
+        or Path("/run/.containerenv").exists()
+        or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+    )
+
+
+def find_compose(service_dir: Path) -> Path | None:
+    """The compose file for this service, which usually lives one level up.
+
+    A workspace writes one compose file at its root covering every service, so
+    looking only in the service directory finds nothing in the normal case.
+    """
+    for candidate in (service_dir, service_dir.parent):
+        found = candidate / "docker-compose.yml"
+        if found.is_file():
+            return found
+    return None
+
+
+@dataclass
+class HostEnvironment:
+    """What a host process needs on top of its own environment, and why.
+
+    ``values`` never contains a variable already set in the process
+    environment: pydantic-settings reads the shell over ``.env``, and the
+    translated ``.env`` takes the file's place, not the shell's.
+    """
+
+    values: dict[str, str]
+    compose_file: Path | None
+    skipped: str | None = None
+
+
+def service_host_environment(
+    service_dir: Path, environ: Mapping[str, str] | None = None
+) -> HostEnvironment:
+    """The service's ``.env`` translated for the host, when there is a compose file.
+
+    Found the way ``jfast dev`` finds it (:func:`find_compose`); inside a
+    container, or with no compose file, nothing is translated and ``skipped``
+    says why.
+    """
+    current = os.environ if environ is None else environ
+    if in_container():
+        return HostEnvironment({}, None, "inside a container")
+    compose_file = find_compose(service_dir)
+    if compose_file is None:
+        return HostEnvironment({}, None, "no docker-compose.yml here or one level up")
+    translated = host_environment(service_dir / ".env", compose_file.parent / ".env", compose_file)
+    values = {key: value for key, value in translated.items() if key not in current}
+    return HostEnvironment(values, compose_file)
+
+
+def apply_host_environment(service_dir: Path) -> HostEnvironment:
+    """:func:`service_host_environment`, written into ``os.environ``.
+
+    For the commands that run the app in this very process -- ``jfast serve``
+    and ``jfast worker`` -- so the settings they load, and any child uvicorn
+    starts for ``--reload``, see the host's addresses.
+    """
+    found = service_host_environment(service_dir)
+    os.environ.update(found.values)
+    return found
 
 
 #: Vite's own default, used when neither the dev script nor vite.config names one.
@@ -367,13 +445,19 @@ def python_executable() -> str:
 __all__ = [
     "VITE_DEFAULT_PORT",
     "DevError",
+    "HostEnvironment",
     "Process",
+    "apply_host_environment",
     "compose_services",
     "docker_available",
+    "find_compose",
     "frontend_command",
     "frontend_port",
+    "host_environment",
+    "in_container",
     "python_executable",
     "run",
+    "service_host_environment",
     "spawn",
     "supervise",
     "terminate",

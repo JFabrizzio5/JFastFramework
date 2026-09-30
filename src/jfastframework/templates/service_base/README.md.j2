@@ -44,11 +44,17 @@ service. It also imports every module's models automatically, so autogenerate
 never silently produces an empty migration because of a forgotten import.
 
 ```bash
-alembic revision --autogenerate -m "add invoices"
-alembic upgrade head
-alembic downgrade -1
-alembic history
+jfast exec -- alembic revision --autogenerate -m "add invoices"
+jfast exec -- alembic upgrade head
+jfast exec -- alembic downgrade -1
+jfast exec -- alembic history
 ```
+
+`jfast exec --` runs the command with `.env` translated for your machine: in a
+workspace, `.env` names the database by its compose name and leaves the
+password for compose to fill in, and neither works outside compose. Without a
+`docker-compose.yml` here or one level up it changes nothing. `jfast exec --
+pytest` works the same way.
 
 **Read the generated migration before applying it.** Autogenerate is a draft:
 it renders a rename as a drop plus an add, which is silent data loss on a table

@@ -76,6 +76,15 @@ generated frontend in a browser, an upload.
   announced URL is now read from the frontend (its dev script, then
   `vite.config`, then 5173), and `--port` is passed only when it changes
   something.
+- **Only `jfast dev` could use a workspace's `.env` on the host.** It names the
+  database by its compose name and leaves the password for compose to fill in,
+  so `alembic revision --autogenerate` -- the step `jfast new module` prints --
+  `jfast serve`, `jfast worker` and `pytest` failed with a DNS error. `jfast
+  serve` and `jfast worker` now translate it as `jfast dev` does when they find
+  the compose file, `jfast exec -- <command>` runs anything else with it, and
+  every printed `alembic` step goes through `jfast exec --`. A variable set in
+  the shell wins; inside a container, and in the production image (which has
+  no compose file to find), nothing changes.
 
 ## [0.1.0a11] - 2026-09-30
 
