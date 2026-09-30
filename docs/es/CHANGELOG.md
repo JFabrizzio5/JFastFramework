@@ -34,6 +34,12 @@ imagen de producción, el frontend generado en un navegador, una subida.
 
 ### Corregido
 
+- **La ayuda de la CLI se comía cada `[sección]` que nombraba.** Rich lee
+  `[scaffold]` como etiqueta de estilo, así que "Defaults to [scaffold]
+  language." salía "Defaults to  language." Escapado en `new module`, `remove` y
+  `tenancy enable`; una prueba ahora recorre la ayuda de los 61 comandos. Ese
+  recorrido mostró que la prueba de instalación sin extras de 0.1.0a11 solo
+  revisaba el comando raíz: ahora llega a todos.
 - **`GET /queue/stats` respondía a cualquiera, en cualquier entorno.** Lista
   los nombres de tareas y las profundidades de la cola sin autenticación. Sin
   configurar, `expose_stats` ahora sigue a `/docs`: encendido en desarrollo,

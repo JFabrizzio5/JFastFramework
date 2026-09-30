@@ -72,7 +72,6 @@ SCRIPT = textwrap.dedent(
 
     sys.meta_path.insert(0, Block())
 
-    import click
     import typer
     from typer.testing import CliRunner
 
@@ -81,16 +80,21 @@ SCRIPT = textwrap.dedent(
     runner = CliRunner()
     root = typer.main.get_command(app)
     failures = []
+    visited = []
 
     def walk(command, path):
+        visited.append(path)
         result = runner.invoke(app, [*path, "--help"])
         if result.exit_code != 0 or result.exception is not None:
             failures.append((" ".join(path) or "jfast", repr(result.exception)))
-        if isinstance(command, click.Group):
-            for name, sub in command.commands.items():
-                walk(sub, [*path, name])
+        # Not isinstance(click.Group): typer ships its own click, and that
+        # check walked the root only.
+        for name, sub in (getattr(command, "commands", None) or {}).items():
+            walk(sub, [*path, name])
 
     walk(root, [])
+    if len(visited) < 50:
+        failures.append(("walk", f"reached {len(visited)} commands, not every subcommand"))
     version = runner.invoke(app, ["version"])
     if version.exit_code != 0:
         failures.append(("version", repr(version.exception)))

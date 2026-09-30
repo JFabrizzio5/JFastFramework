@@ -219,7 +219,7 @@ def _enable(
     ] = None,
     rag_table: Annotated[
         str | None,
-        typer.Option("--rag-table", help="The RAG chunks table, if not [plugin.rag] collection."),
+        typer.Option("--rag-table", help="The RAG chunks table, if not \\[plugin.rag] collection."),
     ] = None,
     no_rag: Annotated[
         bool, typer.Option("--no-rag", help="Leave the RAG chunks table alone.")
@@ -229,13 +229,13 @@ def _enable(
     ] = False,
     json_out: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
 ) -> None:
-    """Switch this service to multitenant: a migration, the config, and what is left.
+    r"""Switch this service to multitenant: a migration, the config, and what is left.
 
     Writes one Alembic revision that backfills every NULL tenant_id with
     --tenant, turns row-level security on for every table whose model carries
     TenantMixin, and re-keys the RAG chunks if the table exists. Updates
     jfast.toml: the tenancy plugin on (sources token,user unless --sources),
-    [plugin.database] rls = true, [plugin.rag] tenant_scoped = true. Applies
+    \[plugin.database] rls = true, \[plugin.rag] tenant_scoped = true. Applies
     nothing: `alembic upgrade head` is still the step that changes data.
 
     Then prints what it cannot do -- the database role the policies need, and
