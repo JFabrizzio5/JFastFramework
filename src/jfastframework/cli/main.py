@@ -26,6 +26,7 @@ from jfastframework.cli.commands import install as install_cli
 from jfastframework.cli.commands import new as new_cli
 from jfastframework.cli.commands import project as project_cli
 from jfastframework.cli.commands import run as run_cli
+from jfastframework.cli.commands import worker as worker_cli
 from jfastframework.cli.commands import workspace as workspace_cli
 from jfastframework.cli.generate import (
     _write_dockerignore,
@@ -65,6 +66,7 @@ describe_cli.register(app)
 deploy_cli.register(app)
 add_cli.register(app)
 run_cli.register(app)
+worker_cli.register(app)
 workspace_cli.register(app)
 contracts_cli.register(app)
 install_cli.register(app)

@@ -1,0 +1,50 @@
+<template>
+  <AuthShell :title="title" eyebrow="Email" :hero="title" :lead="message">
+    <BaseButton class="w-full" :loading="state === 'working'"
+      @click="router.replace(auth.isAuthenticated ? '/' : LOGIN_ROUTE)">
+      {{ auth.isAuthenticated ? 'Continue' : 'Sign in' }}
+    </BaseButton>
+  </AuthShell>
+</template>
+
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+
+import AuthShell from '@/components/AuthShell.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import { LOGIN_ROUTE, useAuthStore } from '@/stores/auth.store.js'
+
+// Where the link in the verification email lands: /verify-email?token=...
+// ([plugin.accounts] verify_email_path). The token is posted once and then
+// taken out of the address bar, so it is not left in the history.
+const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
+
+const state = ref('working')
+const failure = ref('')
+
+const title = computed(
+  () => ({ working: 'Confirming…', done: 'Email confirmed', failed: 'Link not valid' })[state.value],
+)
+const message = computed(() =>
+  state.value === 'done'
+    ? 'Thank you. Your address is confirmed.'
+    : state.value === 'failed'
+      ? `${failure.value} Sign in and ask for a new one.`
+      : 'One moment.',
+)
+
+onMounted(async () => {
+  const token = typeof route.query.token === 'string' ? route.query.token : ''
+  await router.replace({ query: {} })
+  try {
+    await auth.verifyEmail(token)
+    state.value = 'done'
+  } catch (error) {
+    failure.value = error.message
+    state.value = 'failed'
+  }
+})
+</script>

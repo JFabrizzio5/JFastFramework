@@ -323,14 +323,19 @@ Access tokens are short-lived. Both frontends ship the two halves that need:
 A guard on its own is not enough. It runs on navigation, and nothing navigates
 while four panels on the current screen quietly fail.
 
-**Routes are public until they say otherwise.** `PUBLIC_BY_DEFAULT` at the top
-of the router is the one line to change. It ships open because the backend's
-auth plugin does not mount `/auth/login` — it has no user store — so a scaffold
-that gated its home page would show everyone a sign-in form nothing can
-satisfy. Until yours has one, opt routes in with `meta: { requiresAuth: true }`
-(Vue) or `handle: { requiresAuth: true }` (React). The React guard wraps the
-whole route list rather than each route, so a module added at `/*nuevaRuta*/`
-is covered without the generator knowing anything about authentication.
+**Routes are private unless they say otherwise.** `PUBLIC_BY_DEFAULT` at the
+top of the router is the one line to change, and it ships `false`: the backend
+signs people in with the `accounts` plugin ([accounts.md](accounts.md)), so
+every page sits behind the sign-in page, including the ones `jfast new view`
+adds later. A page meant for everyone opts out with `meta: { public: true }`
+(Vue) or `handle: { public: true }` (React). The React guard wraps the whole
+route list rather than each route, so a module added at `/*nuevaRuta*/` is
+covered without the generator knowing anything about authentication.
+
+A frontend generated for a workspace with no `accounts` backend
+(`frontend_accounts = false`, see below) keeps the old default instead: public,
+with routes opting in through `requiresAuth`, and none of the account pages --
+a sign-in form in front of everything that nothing could satisfy would be worse.
 
 `LOGIN_ROUTE` is exported from `auth.store.js`, because `api.js` needs it too
 and a second copy of `'/login'` is a second place to forget.
@@ -376,9 +381,59 @@ and the replay runs through it again. That holds only while the assignment
 stays unconditional — wrap it in `if (!config.headers.Authorization)` and React
 has the identical bug.
 
-Sign-in itself is `LoginView`, deliberately minimal: it posts to `/auth/login`,
-stores the session, and returns to `?next` if that is a path (never an absolute
-URL — `next` comes from the address bar).
+### The account pages
+
+What the `accounts` plugin offers, the frontend has a page for. Each one is in
+`src/views/`, loaded on demand, and drawn in one frame, `AuthShell` -- the
+card in `classic`, the hero and glass panel in `nexora` -- so the pages are
+shared between the two looks and only the frame differs.
+
+| Route | Page | Calls |
+| --- | --- | --- |
+| `/login` | `LoginView` | `POST /auth/login`, then `/auth/login/mfa` when a code is owed |
+| `/register` | `RegisterView` | `POST /auth/register` |
+| `/verify-email?token=` | `VerifyEmailView` | `POST /auth/verify` |
+| `/forgot-password` | `ForgotPasswordView` | `POST /auth/password/forgot` |
+| `/reset-password?token=` | `ResetPasswordView` | `POST /auth/password/reset` |
+| `/mfa/enrol` | `MfaEnrolView` | `/auth/mfa/setup` and `/confirm` with the sign-in's MFA token |
+| `/account/security` | `SecurityView` | MFA on and off, new recovery codes, sign out everywhere |
+
+**Signing in fetches the user.** `accounts` answers `/auth/login` with tokens
+only, so the auth store (Vue) or `services/auth.service.js` (React) stores
+them and then calls `GET /auth/account`; `user` holds what that returns
+(`email`, `display_name`, `roles`, `permissions`, `email_verified`,
+`mfa_enabled`). A sign-in can also stop short of a session: `login()` resolves
+to `{ status: 'signed-in' }`, `{ status: 'mfa', mfaToken }` -- the page asks
+for the code -- or `{ status: 'enrol', mfaToken }`, when a role of the account
+requires MFA and it has none, and the page sends the user to set it up.
+
+**Links a page offers follow the backend.** "Forgot your password?", "Create
+one" and the MFA card appear only when `GET /auth/features` says the feature is
+on, so a link never leads to a 404.
+
+**Tokens from emails leave the address bar.** The verification and reset pages
+read `?token=`, replace the URL without it, and post it once -- it is not left
+in the history or sent on as a `Referer`. The MFA token of a sign-in travels in
+router state, never in the URL. The two email paths must match
+`[plugin.accounts] verify_email_path` and `reset_password_path`.
+
+**A wrong password is not an expired session.** The account calls carry
+`skipAuthRefresh`, and the 401 interceptor leaves them alone: without it, a
+mistyped password would trigger a refresh and sign the person out of the form
+they are filling in. Errors carry the backend's `code` (`email_not_verified`,
+`mfa_code_invalid`, `mfa_token_invalid`, `token_invalid`) next to the message,
+and the pages branch on the code, never on the wording.
+
+No QR code is drawn for MFA: that would be a dependency for one image. The
+`otpauth://` link opens the authenticator on a phone, and the key is shown to
+type anywhere else. Add a QR library to `MfaSetupPanel` if your users expect one.
+
+`?next` is followed only when it is a path, never an absolute URL -- it comes
+from the address bar.
+
+**For the installer: `frontend_accounts`.** The template variable that decides
+all of the above. Missing, it is `true`. Pass `false` when no backend in the
+workspace enables `accounts`.
 
 ---
 
@@ -468,7 +523,10 @@ caret — drawn by the browser, never touched by a class — match the rest.
 
 ## Conventions the templates enforce
 
-**One axios instance.** `src/services/api.js` holds the base URL, the timeout,
+**One axios instance.** `src/services/api.js` holds the base URL, the timeout
+(`VITE_API_TIMEOUT`, 60 000 ms by default -- an endpoint that calls a language
+model routinely takes twenty seconds, and a shorter timeout turns a slow answer
+into an error the user retries, paying for the call twice),
 the 401 handling above, and an interceptor that turns the backend's RFC 7807
 `detail` into `error.message`. Without it every component shows "Request failed
 with status code 409" instead of "Invoice INV-1 already exists". The one
@@ -538,9 +596,15 @@ the build honours `VITE_ACCENT`. The nexora screens, the ribbon, the accent
 picker and both themes were looked at in a browser by hand when they were
 written — once, not in CI.
 
-**Not tested:** `npm run dev` as an interactive session, the sign-in form
-against a real `/auth/login` (the generated backend does not mount one), and
-anything else about how it looks. The build passing means it compiles, not that
+**The account pages:** CI renders both frameworks in both looks and checks
+the routes, the default, and every endpoint the store calls. `npm install` and
+`npm run build` were run by hand on all four when the pages were written. The
+backend flows they call are tested over HTTP (`tests/test_accounts_flows.py`);
+the pages themselves have **not** been clicked through in a browser against a
+running backend.
+
+**Not tested:** `npm run dev` as an interactive session, the account pages in a
+browser, and anything else about how it looks. The build passing means it compiles, not that
 a modal traps focus correctly with a real screen reader.
 
 ---

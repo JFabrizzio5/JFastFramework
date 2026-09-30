@@ -56,14 +56,23 @@ class User:
     permissions: tuple[str, ...] = ()
     last_login_at: datetime | None = None
     created_at: datetime | None = None
+    email_verified_at: datetime | None = None
+    mfa_enabled: bool = False
+
+    @property
+    def email_verified(self) -> bool:
+        return self.email_verified_at is not None
 
     def public(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "tenant_id": self.tenant_id,
             "email": self.email,
+            "email_verified": self.email_verified,
             "display_name": self.display_name,
             "is_active": self.is_active,
+            "has_password": self.has_password,
+            "mfa_enabled": self.mfa_enabled,
             "roles": list(self.roles),
             "permissions": list(self.permissions),
             "last_login_at": self.last_login_at,
@@ -117,6 +126,7 @@ class AccountsService:
         display_name: str | None = None,
         role_names: list[str] | None = None,
         federated_id: str | None = None,
+        email_verified: bool = False,
     ) -> User:
         address = normalize_email(email)
         if password is not None:
@@ -136,6 +146,7 @@ class AccountsService:
                     federated_id=federated_id,
                     is_active=True,
                     failed_logins=0,
+                    email_verified_at=datetime.now(UTC) if email_verified else None,
                 )
             )
         except IntegrityError as exc:
@@ -171,6 +182,8 @@ class AccountsService:
             permissions=permission_list,
             last_login_at=row["last_login_at"],
             created_at=row["created_at"],
+            email_verified_at=row["email_verified_at"],
+            mfa_enabled=row["mfa_enabled_at"] is not None,
         )
 
     async def get(self, user_id: str, *, tenant_id: str | None) -> User:
@@ -234,11 +247,68 @@ class AccountsService:
             ok, _ = await check_password(current or "", row["password_hash"])
             if not ok:
                 raise ValidationError("the current password is not correct")
+        await self.set_password(user_id, new)
+
+    async def set_password(self, user_id: str, new: str, **also: Any) -> None:
+        """Replace the password, checked against the policy. No old one asked for."""
         self._check_password_policy(new)
         await self.session.execute(
             update(users)
             .where(users.c.id == user_id)
-            .values(password_hash=await hash_password(new), updated_at=datetime.now(UTC))
+            .values(password_hash=await hash_password(new), updated_at=datetime.now(UTC), **also)
+        )
+
+    async def mark_email_verified(self, user_id: str) -> None:
+        """Record that the owner proved the address. The first proof is kept."""
+        await self.session.execute(
+            update(users)
+            .where(and_(users.c.id == user_id, users.c.email_verified_at.is_(None)))
+            .values(email_verified_at=datetime.now(UTC))
+        )
+
+    async def row_for_email(self, email: str, *, tenant_id: str | None) -> Any:
+        """The raw row for an address, or None -- also for an address that is malformed."""
+        try:
+            address = normalize_email(email)
+        except ValidationError:
+            return None
+        return await self._row_by_email(address, tenant_id)
+
+    async def row_by_id(self, user_id: str) -> Any:
+        """The raw row, whatever its tenant: for flows that start from a token."""
+        query = select(users).where(users.c.id == user_id)
+        return (await self.session.execute(query)).mappings().first()
+
+    async def user_of_row(self, row: Any) -> User:
+        return await self._user(row)
+
+    async def touch_login(self, user_id: str) -> None:
+        """A session was issued: the sign-in is complete, so its failures are forgiven."""
+        await self.session.execute(
+            update(users)
+            .where(users.c.id == user_id)
+            .values(last_login_at=datetime.now(UTC), failed_logins=0, locked_until=None)
+        )
+
+    async def record_failure(self, row: Any) -> datetime | None:
+        """Count one failed sign-in against the account; lock it at the limit.
+
+        Wrong passwords and wrong second-factor codes both come through here,
+        so a guesser who has the password gets the same five tries at the code
+        as anybody gets at the password.
+        """
+        failures = int(row["failed_logins"] or 0) + 1
+        values: dict[str, Any] = {"failed_logins": failures}
+        until = None
+        if failures >= self.max_failed_logins:
+            until = datetime.now(UTC) + self.lockout
+            values = {"failed_logins": 0, "locked_until": until}
+        await self.session.execute(update(users).where(users.c.id == row["id"]).values(**values))
+        return until
+
+    async def clear_failures(self, user_id: str) -> None:
+        await self.session.execute(
+            update(users).where(users.c.id == user_id).values(failed_logins=0, locked_until=None)
         )
 
     # -- login -------------------------------------------------------------
@@ -272,24 +342,22 @@ class AccountsService:
 
         ok, rehash = await check_password(password, row["password_hash"])
         if not ok:
-            failures = int(row["failed_logins"]) + 1
-            values: dict[str, Any] = {"failed_logins": failures}
-            until = None
-            if failures >= self.max_failed_logins:
-                until = now + self.lockout
-                values = {"failed_logins": 0, "locked_until": until}
-            await self.session.execute(
-                update(users).where(users.c.id == row["id"]).values(**values)
-            )
+            until = await self.record_failure(row)
             return LoginResult(reason="wrong password", locked_until=until)
 
         if not row["is_active"]:
             return LoginResult(reason="inactive")
 
-        values = {"failed_logins": 0, "locked_until": None, "last_login_at": now}
+        # The failure count is cleared -- and last_login_at written -- when a
+        # session is actually issued (touch_login), not here. With a second
+        # factor still owed, clearing it now would hand whoever has the
+        # password a fresh set of guesses at the code on every sign-in.
         if rehash:
-            values["password_hash"] = await hash_password(password)
-        await self.session.execute(update(users).where(users.c.id == row["id"]).values(**values))
+            await self.session.execute(
+                update(users)
+                .where(users.c.id == row["id"])
+                .values(password_hash=await hash_password(password))
+            )
         return LoginResult(user=await self.get(row["id"], tenant_id=tenant_id))
 
     async def sign_in_federated(
@@ -328,10 +396,15 @@ class AccountsService:
             if row is not None:
                 if not row["is_active"]:
                     return None
+                values: dict[str, Any] = {
+                    "federated_id": federated_id,
+                    "last_login_at": datetime.now(UTC),
+                }
+                if row["email_verified_at"] is None:
+                    # The provider just vouched for this address.
+                    values["email_verified_at"] = datetime.now(UTC)
                 await self.session.execute(
-                    update(users)
-                    .where(users.c.id == row["id"])
-                    .values(federated_id=federated_id, last_login_at=datetime.now(UTC))
+                    update(users).where(users.c.id == row["id"]).values(**values)
                 )
                 return await self.get(row["id"], tenant_id=tenant_id)
             if allow_signup:
@@ -342,6 +415,7 @@ class AccountsService:
                     display_name=display_name,
                     role_names=default_roles,
                     federated_id=federated_id,
+                    email_verified=True,
                 )
         return None
 

@@ -402,3 +402,102 @@ def test_a_file_that_is_not_a_template_is_copied_byte_for_byte(tmp_path: Path) -
     Scaffolder(root).render_tree("t", tmp_path / "out", {"name": "rendered"})
     assert (tmp_path / "out" / "image.bin").read_bytes() == blob
     assert (tmp_path / "out" / "note.txt").read_text(encoding="utf-8") == "rendered"
+
+
+# ---------------------------------------------------------------------------
+# The frontend speaks `accounts`
+# ---------------------------------------------------------------------------
+
+LOOKS = ("nexora", "classic")
+EXT = {"vue": "vue", "react": "jsx"}
+ACCOUNT_PAGES = (
+    "RegisterView",
+    "VerifyEmailView",
+    "ForgotPasswordView",
+    "ResetPasswordView",
+    "MfaEnrolView",
+    "SecurityView",
+)
+
+
+def _render(tmp_path: Path, framework: str, look: str, **extra: object) -> Path:
+    from jfastframework.cli.scaffold import service_context
+
+    target = tmp_path / f"{framework}-{look}"
+    context = service_context("web", kind="spa", frontend=framework, frontend_template=look)
+    context.update(extra)
+    Scaffolder().render_trees(
+        service_trees("spa", framework, target, frontend_template=look), context
+    )
+    return target
+
+
+def _auth_source(root: Path, framework: str) -> str:
+    name = "stores/auth.store.js" if framework == "vue" else "services/auth.service.js"
+    return (root / "src" / name).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("look", LOOKS)
+@pytest.mark.parametrize("framework", FRAMEWORKS)
+def test_a_frontend_is_private_by_default_and_has_every_account_page(
+    tmp_path: Path, framework: str, look: str
+) -> None:
+    root = _render(tmp_path, framework, look)
+    router = (root / ROUTER[framework]).read_text(encoding="utf-8")
+    assert "const PUBLIC_BY_DEFAULT = false" in router
+    for page in ACCOUNT_PAGES:
+        assert (root / f"src/views/{page}.{EXT[framework]}").is_file(), page
+        assert f"@/views/{page}.{EXT[framework]}" in router, page
+    # One frame per look, and the sign-in page is shared.
+    shell = (root / f"src/components/AuthShell.{EXT[framework]}").read_text(encoding="utf-8")
+    assert ("nx-auth" in shell) is (look == "nexora")
+    assert "AuthShell" in (root / f"src/views/LoginView.{EXT[framework]}").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize("framework", FRAMEWORKS)
+def test_signing_in_fetches_the_account_and_handles_the_second_step(
+    tmp_path: Path, framework: str
+) -> None:
+    source = _auth_source(_render(tmp_path, framework, "classic"), framework)
+    # accounts answers /auth/login with tokens only: the user comes from here.
+    assert "api.get('/auth/account')" in source
+    for path in (
+        "/auth/login/mfa",
+        "/auth/register",
+        "/auth/verify",
+        "/auth/password/forgot",
+        "/auth/password/reset",
+        "/auth/mfa/setup",
+        "/auth/mfa/confirm",
+        "/auth/logout/all",
+        "/auth/features",
+    ):
+        assert f"'{path}'" in source, path
+    # A wrong password is an answer, not an expired session.
+    assert "skipAuthRefresh: true" in source
+    api = (tmp_path / f"{framework}-classic/src/services/api.js").read_text(encoding="utf-8")
+    assert "!original.skipAuthRefresh" in api
+
+
+@pytest.mark.parametrize("framework", FRAMEWORKS)
+def test_the_request_timeout_fits_a_model_call_and_is_configurable(
+    tmp_path: Path, framework: str
+) -> None:
+    root = _render(tmp_path, framework, "classic")
+    api = (root / "src/services/api.js").read_text(encoding="utf-8")
+    assert "Number(import.meta.env.VITE_API_TIMEOUT) || 60000" in api
+    for env in (".env", ".env.example", ".env.production"):
+        assert "VITE_API_TIMEOUT=60000" in (root / env).read_text(encoding="utf-8"), env
+
+
+@pytest.mark.parametrize("framework", FRAMEWORKS)
+def test_without_accounts_the_frontend_stays_public_and_offers_no_account_pages(
+    tmp_path: Path, framework: str
+) -> None:
+    root = _render(tmp_path, framework, "nexora", frontend_accounts=False)
+    router = (root / ROUTER[framework]).read_text(encoding="utf-8")
+    assert "const PUBLIC_BY_DEFAULT = true" in router
+    assert "RegisterView" not in router and "SecurityView" not in router
+    assert "/account/security" not in (root / "src/menuAside.js").read_text(encoding="utf-8")

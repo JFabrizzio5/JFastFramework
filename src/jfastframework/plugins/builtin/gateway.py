@@ -25,11 +25,13 @@ Requires: ``pip install jfastframework[gateway]``
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from fastapi import Request, Response
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import SettingsConfigDict
 
+from jfastframework import tracing
 from jfastframework.errors import JFastError
 from jfastframework.middleware import client_ip
 from jfastframework.plugins.base import HealthReport, Plugin, PluginMeta, PluginSettings
@@ -69,6 +71,9 @@ CLIENT_SUPPLIED = frozenset({"x-forwarded-host", "x-forwarded-proto", "x-forward
 #: the header that describes the compression hands the client a gzip label on
 #: plain bytes -- which every HTTP client in existence then fails to decode.
 RESPONSE_DROP = HOP_BY_HOP | {"content-encoding"}
+
+#: W3C trace context. Replaced by the gateway's own when telemetry is on.
+TRACE_CONTEXT = frozenset({"traceparent", "tracestate"})
 
 
 class BadGatewayError(JFastError):
@@ -191,8 +196,6 @@ class GatewayPlugin(Plugin):
         request: Request,
         path: str,
     ) -> Response:
-        import httpx
-
         if self._client is None:
             raise BadGatewayError("gateway client not initialised")
 
@@ -200,6 +203,44 @@ class GatewayPlugin(Plugin):
         if not route.strip_prefix:
             suffix = f"{route.prefix}{suffix}"
         url = f"{route.target}{suffix}"
+
+        body = await request.body()
+        # A client span per proxied call, so the trace shows the hop and how
+        # long the upstream took apart from the gateway's own work.
+        with tracing.span(
+            f"{request.method} {route.prefix}",
+            **{
+                "span.kind": "client",
+                "http.request.method": request.method,
+                "jfast.gateway.prefix": route.prefix,
+                "server.address": urlsplit(route.target).hostname,
+            },
+        ):
+            upstream = await self._send(ctx, route, request, url, body)
+            tracing.annotate(**{"http.response.status_code": upstream.status_code})
+
+        response = Response(content=upstream.content, status_code=upstream.status_code)
+        # `raw_headers` rather than the `headers=` argument, which takes a
+        # Mapping and so cannot express two `Set-Cookie` lines. A session that
+        # arrives as two cookies has to leave as two: joining them produces one
+        # malformed header, and the browser keeps the first cookie with the
+        # rest of the line folded into its attributes.
+        relayed: list[tuple[bytes, bytes]] = [
+            (key.encode("latin-1"), value.encode("latin-1"))
+            for key, value in upstream.headers.multi_items()
+            if key.lower() not in RESPONSE_DROP
+        ]
+        # Recomputed, because the body this hands on is the decompressed one
+        # and the upstream's length described the compressed bytes.
+        relayed.append((b"content-length", str(len(upstream.content)).encode("latin-1")))
+        response.raw_headers = relayed
+        return response
+
+    async def _send(
+        self, ctx: AppContext, route: GatewayRoute, request: Request, url: str, body: bytes
+    ) -> Any:
+        """One proxied call, inside the gateway's client span."""
+        import httpx
 
         # Built as a list of pairs rather than a dict: `Accept`, `Cookie` and
         # `Via` are all legally repeatable, and a dict keeps the last one.
@@ -209,9 +250,18 @@ class GatewayPlugin(Plugin):
             # Ours replaces the client's. Without a correlation id of our own
             # there is nothing better than what arrived, so it is relayed.
             dropped = dropped | {"x-request-id"}
+        # The trace context of the span this call runs in. With telemetry on,
+        # it replaces the client's traceparent -- which is this span's
+        # ancestor, so the upstream still joins the same trace, one hop
+        # deeper. With telemetry off it is {} and the client's is relayed
+        # untouched, so the upstream continues the caller's trace itself.
+        trace_headers = tracing.inject()
+        if trace_headers:
+            dropped = dropped | TRACE_CONTEXT
         headers: list[tuple[str, str]] = [
             (key, value) for key, value in request.headers.items() if key.lower() not in dropped
         ]
+        headers.extend(trace_headers.items())
         # Preserve the correlation id across the hop; the observability plugin
         # put it on request.state, and the upstream reads the same header.
         if request_id:
@@ -225,10 +275,8 @@ class GatewayPlugin(Plugin):
         if peer and peer != "unknown":
             headers.append(("X-Forwarded-For", peer))
 
-        body = await request.body()
-
         try:
-            upstream = await self._client.request(
+            return await self._client.request(
                 request.method,
                 url,
                 # multi_items(), not dict(): `?tag=a&tag=b` is two values and a
@@ -253,23 +301,6 @@ class GatewayPlugin(Plugin):
         except httpx.HTTPError as exc:
             ctx.logger.warning("gateway cannot reach %s: %s", url, exc)
             raise BadGatewayError(f"{route.prefix} is unreachable") from exc
-
-        response = Response(content=upstream.content, status_code=upstream.status_code)
-        # `raw_headers` rather than the `headers=` argument, which takes a
-        # Mapping and so cannot express two `Set-Cookie` lines. A session that
-        # arrives as two cookies has to leave as two: joining them produces one
-        # malformed header, and the browser keeps the first cookie with the
-        # rest of the line folded into its attributes.
-        relayed: list[tuple[bytes, bytes]] = [
-            (key.encode("latin-1"), value.encode("latin-1"))
-            for key, value in upstream.headers.multi_items()
-            if key.lower() not in RESPONSE_DROP
-        ]
-        # Recomputed, because the body this hands on is the decompressed one
-        # and the upstream's length described the compressed bytes.
-        relayed.append((b"content-length", str(len(upstream.content)).encode("latin-1")))
-        response.raw_headers = relayed
-        return response
 
     async def shutdown(self, ctx: AppContext) -> None:
         if self._client is not None:

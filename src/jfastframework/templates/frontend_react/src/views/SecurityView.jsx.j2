@@ -1,0 +1,176 @@
+import { mdiShieldLockOutline } from '@mdi/js'
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+
+import BaseBadge from '@/components/BaseBadge.jsx'
+import BaseButton from '@/components/BaseButton.jsx'
+import BaseInput from '@/components/BaseInput.jsx'
+import CardBox from '@/components/CardBox.jsx'
+import MfaSetupPanel from '@/components/MfaSetupPanel.jsx'
+import SectionMain from '@/components/SectionMain.jsx'
+import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.jsx'
+import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.jsx'
+import {
+  fetchAccount,
+  loadFeatures,
+  logoutEverywhere,
+  mfaDisable,
+  newRecoveryCodes,
+  resendVerification,
+} from '@/services/auth.service.js'
+import { LOGIN_ROUTE, useAuthStore } from '@/stores/auth.store.js'
+
+export default function SecurityView() {
+  const navigate = useNavigate()
+  const user = useAuthStore((state) => state.user)
+  const [features, setFeatures] = useState(null)
+  const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [codes, setCodes] = useState([])
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(null)
+  const [resent, setResent] = useState(false)
+
+  useEffect(() => {
+    loadFeatures().then(setFeatures)
+    // Fresh from the server: the copy in storage may predate a change made on
+    // another device.
+    fetchAccount().catch(() => {})
+  }, [])
+
+  async function run(name, action) {
+    setError('')
+    setBusy(name)
+    try {
+      await action()
+    } catch (failure) {
+      setError(failure.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const turnOff = () =>
+    run('off', async () => {
+      await mfaDisable(password || null, code)
+      setPassword('')
+      setCode('')
+      setCodes([])
+    })
+
+  const replaceCodes = () =>
+    run('codes', async () => {
+      setCodes(await newRecoveryCodes(password || null, code))
+      setPassword('')
+      setCode('')
+    })
+
+  const resend = () =>
+    run('resend', async () => {
+      await resendVerification(user.email)
+      setResent(true)
+    })
+
+  const everywhere = () =>
+    run('everywhere', async () => {
+      await logoutEverywhere()
+      navigate(LOGIN_ROUTE, { replace: true })
+    })
+
+  return (
+    <LayoutAuthenticated>
+      <SectionMain>
+        <SectionTitleLineWithButton icon={mdiShieldLockOutline} title="Security" main />
+
+        <CardBox className="mb-6">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="font-semibold">Email</h2>
+            {user && (
+              <BaseBadge status={user.email_verified ? 'success' : 'warning'}>
+                {user.email_verified ? 'Confirmed' : 'Not confirmed'}
+              </BaseBadge>
+            )}
+          </div>
+          <p className="text-sm text-ink-soft">{user?.email}</p>
+          {user && !user.email_verified && features?.email_verification !== 'off' && (
+            <BaseButton
+              variant="outline"
+              className="mt-4"
+              loading={busy === 'resend'}
+              disabled={resent}
+              onClick={resend}
+            >
+              {resent ? 'Sent -- check your inbox' : 'Send the confirmation link again'}
+            </BaseButton>
+          )}
+        </CardBox>
+
+        {features?.mfa && (
+          <CardBox className="mb-6">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="font-semibold">Two-step verification</h2>
+              <BaseBadge status={user?.mfa_enabled ? 'success' : 'neutral'}>
+                {user?.mfa_enabled ? 'On' : 'Off'}
+              </BaseBadge>
+            </div>
+
+            {!user?.mfa_enabled ? (
+              <MfaSetupPanel onDone={() => fetchAccount()} />
+            ) : (
+              <>
+                {codes.length > 0 && (
+                  <ul className="mb-4 grid grid-cols-2 gap-2 rounded-lg bg-elevated p-3 font-mono text-sm">
+                    {codes.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                )}
+                <form noValidate className="flex flex-col gap-4" onSubmit={(event) => event.preventDefault()}>
+                  <p className="text-sm text-ink-soft">
+                    To turn it off or replace your recovery codes, confirm with your password and a
+                    code.
+                  </p>
+                  {user?.has_password !== false && (
+                    <BaseInput
+                      label="Current password"
+                      type="password"
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                    />
+                  )}
+                  <BaseInput
+                    label="Code from your app, or a recovery code"
+                    autoComplete="one-time-code"
+                    error={error}
+                    value={code}
+                    onChange={(event) => setCode(event.target.value)}
+                  />
+                  <div className="flex flex-wrap gap-3">
+                    <BaseButton variant="outline" loading={busy === 'codes'} onClick={replaceCodes}>
+                      New recovery codes
+                    </BaseButton>
+                    <BaseButton variant="danger" loading={busy === 'off'} onClick={turnOff}>
+                      Turn off
+                    </BaseButton>
+                  </div>
+                </form>
+              </>
+            )}
+          </CardBox>
+        )}
+
+        <CardBox>
+          <h2 className="mb-2 font-semibold">Sessions</h2>
+          <p className="mb-4 text-sm text-ink-soft">
+            Signed in somewhere you should not be? This ends every session, on every device, this
+            one included.
+          </p>
+          <BaseButton variant="danger" loading={busy === 'everywhere'} onClick={everywhere}>
+            Sign out everywhere
+          </BaseButton>
+        </CardBox>
+      </SectionMain>
+    </LayoutAuthenticated>
+  )
+}

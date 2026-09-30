@@ -1,80 +1,185 @@
-import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
+import AuthShell from '@/components/AuthShell.jsx'
 import BaseButton from '@/components/BaseButton.jsx'
 import BaseInput from '@/components/BaseInput.jsx'
-import CardBox from '@/components/CardBox.jsx'
-import { login } from '@/services/auth.service.js'
-import { useAuthStore } from '@/stores/auth.store.js'
-
-// The router guard and the 401 handler both arrive here with ?next, so signing
-// in returns to the page that was asked for rather than dumping everyone on
-// the home page.
-//
-// Only a path, never an absolute URL: `next` comes from the address bar, and
-// following one that starts with a host is an open redirect.
-function destination(next) {
-  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/'
-}
+import {
+  completeMfa,
+  loadFeatures,
+  login,
+  resendVerification,
+  safeNext,
+} from '@/services/auth.service.js'
 
 export default function LoginView() {
-  const appName = import.meta.env.VITE_APP_NAME
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const signIn = useAuthStore((state) => state.login)
 
+  const [step, setStep] = useState('password')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [mfaToken, setMfaToken] = useState(null)
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
+  const [features, setFeatures] = useState(null)
+  const [unverified, setUnverified] = useState(false)
+  const [resent, setResent] = useState(false)
 
-  async function submit(event) {
+  // Which links to offer -- forgotten password, sign-up -- is the backend's
+  // call (GET /auth/features), so a link never leads to a 404.
+  useEffect(() => {
+    loadFeatures().then(setFeatures)
+  }, [])
+
+  // replace, not push: the back button must not return to a sign-in form
+  // that is already satisfied.
+  const done = () => navigate(safeNext(params.get('next')), { replace: true })
+
+  async function submitPassword(event) {
+    event.preventDefault()
+    setError('')
+    setUnverified(false)
+    setPending(true)
+    try {
+      const result = await login({ email, password })
+      if (result.status === 'mfa') {
+        setMfaToken(result.mfaToken)
+        setPassword('')
+        setStep('mfa')
+      } else if (result.status === 'enrol') {
+        // Router state, not the address: the token must not land in the
+        // browser's history or a Referer header.
+        navigate(`/mfa/enrol?${params}`, { state: { mfaToken: result.mfaToken } })
+      } else {
+        done()
+      }
+    } catch (failure) {
+      setError(failure.message)
+      setUnverified(failure.code === 'email_not_verified')
+    } finally {
+      setPending(false)
+    }
+  }
+
+  function restart() {
+    setStep('password')
+    setMfaToken(null)
+    setCode('')
+    setError('')
+  }
+
+  async function submitCode(event) {
     event.preventDefault()
     setError('')
     setPending(true)
     try {
-      signIn(await login({ email, password }))
-      // replace, not push: the back button must not return to a sign-in form
-      // that is already satisfied.
-      navigate(destination(params.get('next')), { replace: true })
+      await completeMfa(mfaToken, code)
+      done()
     } catch (failure) {
+      if (failure.code === 'mfa_token_invalid') {
+        // Too many wrong codes, or too slow: the password has to be typed again.
+        restart()
+      }
       setError(failure.message)
     } finally {
       setPending(false)
     }
   }
 
-  return (
-    <div className="flex min-h-full items-center justify-center bg-surface p-4 text-ink">
-      <CardBox className="w-full max-w-sm">
-        <h1 className="text-lg font-semibold">Sign in</h1>
-        <p className="mt-1 mb-6 text-sm text-ink-faint">{appName}</p>
+  async function resend() {
+    try {
+      await resendVerification(email)
+      setResent(true)
+    } catch (failure) {
+      setError(failure.message)
+    }
+  }
 
-        <form noValidate onSubmit={submit}>
+  if (step === 'mfa') {
+    return (
+      <AuthShell
+        title="Two-step verification"
+        eyebrow="Second step"
+        hero="One more step."
+        heroFaded="Open your authenticator app."
+        lead="Type the six-digit code from your authenticator app, or one of your recovery codes."
+        footer={
+          <button type="button" className="text-left hover:text-ink" onClick={restart}>
+            Use another account
+          </button>
+        }
+      >
+        <form noValidate className="flex flex-col gap-4" onSubmit={submitCode}>
           <BaseInput
-            label="Email"
-            type="email"
-            autoComplete="username"
+            label="Code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
             required
-            className="mb-4"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-          <BaseInput
-            label="Password"
-            type="password"
-            autoComplete="current-password"
-            required
-            className="mb-4"
             error={error}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
           />
-          <BaseButton type="submit" className="w-full" loading={pending}>
-            Sign in
+          <BaseButton type="submit" className="mt-2 w-full" loading={pending}>
+            Verify
           </BaseButton>
         </form>
-      </CardBox>
-    </div>
+      </AuthShell>
+    )
+  }
+
+  const links = features && (features.password_reset || features.registration) && (
+    <>
+      {features.password_reset && (
+        <Link to="/forgot-password" className="hover:text-ink">
+          Forgot your password?
+        </Link>
+      )}
+      {features.registration && (
+        <Link to={`/register?${params}`} className="hover:text-ink">
+          No account yet? Create one
+        </Link>
+      )}
+    </>
+  )
+
+  return (
+    <AuthShell
+      title="Sign in"
+      eyebrow="Secure sign-in"
+      hero="Welcome back."
+      heroFaded="Sign in to continue."
+      heroText="Your session stays on this device until you sign out or it expires."
+      footer={links}
+    >
+      <form noValidate className="flex flex-col gap-4" onSubmit={submitPassword}>
+        <BaseInput
+          label="Email"
+          type="email"
+          autoComplete="username"
+          required
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+        <BaseInput
+          label="Password"
+          type="password"
+          autoComplete="current-password"
+          required
+          error={error}
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        <BaseButton type="submit" className="mt-2 w-full" loading={pending}>
+          Sign in
+        </BaseButton>
+      </form>
+      {unverified && (
+        <BaseButton variant="outline" className="mt-4 w-full" disabled={resent} onClick={resend}>
+          {resent ? 'Sent -- check your inbox' : 'Send the link again'}
+        </BaseButton>
+      )}
+    </AuthShell>
   )
 }

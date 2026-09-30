@@ -85,9 +85,11 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
-// Whatever the backend put on the session. Nothing is assumed about its shape
-// beyond these two common fields.
-const userName = computed(() => auth.user?.name ?? auth.user?.email ?? 'Guest')
+// What GET /auth/account returns (`display_name`, `email`), with `name` for a
+// backend of your own that calls it that.
+const userName = computed(
+  () => auth.user?.display_name || auth.user?.name || auth.user?.email || 'Guest',
+)
 const initials = computed(() =>
   userName.value
     .split(/[\s@.]+/)
