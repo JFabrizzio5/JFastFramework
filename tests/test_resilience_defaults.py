@@ -522,3 +522,15 @@ def test_plugin_error_is_what_boot_raises() -> None:
     # the process exits before it binds a port.
     with pytest.raises(PluginError):
         build_test_app(plugins=["cache"], raw={"plugin": {"cache": {"url": "http://x"}}})
+
+
+async def test_repeated_connect_failures_open_the_database_breaker() -> None:
+    app = _db_app(f"postgresql+asyncpg://u:p@127.0.0.1:{closed_port()}/db")
+    async with client_for(app) as http:
+        for _ in range(2):
+            assert (await http.get("/count")).status_code == 503
+        started = time.monotonic()
+        response = await http.get("/count")
+    assert response.status_code == 503
+    assert "last connection attempts" in response.json()["detail"]
+    assert time.monotonic() - started < 0.5

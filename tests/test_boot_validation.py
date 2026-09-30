@@ -329,3 +329,7 @@ def test_queue_rabbitmq_url_scheme() -> None:
 
 def test_queue_rabbitmq_guest_default_is_refused_in_production() -> None:
     refused(QueuePlugin, {"backend": "rabbitmq"}, "development default", production=True)
+
+
+def test_database_breaker_values() -> None:
+    refused(DatabasePlugin, {"dsn": DSN, "breaker_cool_down": 0}, "breaker_cool_down")

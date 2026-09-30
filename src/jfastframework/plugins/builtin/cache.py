@@ -80,17 +80,21 @@ class CacheSettings(PluginSettings):
     # SYN in well under a millisecond; two seconds covers a cold container and
     # DNS, and anything slower is a Redis that is not there.
     connect_timeout: float = 2.0
-    # Seconds one command may take, connecting included. A cache read slower
-    # than this costs more than the recompute it saves, and the rate limiter
-    # and the token store sit in front of every request. Blocking commands and
-    # pub/sub are exempt. 0 turns the deadline off.
-    command_timeout: float = 2.0
+    # Seconds one command may take, connecting included. Redis answers in
+    # well under a millisecond; one second is a thousand times that, and a
+    # cache read slower than it costs more than the recompute it saves. The
+    # rate limiter and the token store sit in front of every request, so this
+    # is also what the first requests of an outage wait, per command.
+    # Blocking commands and pub/sub are exempt. 0 turns the deadline off.
+    command_timeout: float = 1.0
     # Consecutive failures (timeouts, refused or dropped connections) that
     # open the breaker. While it is open no command is sent: callers get a
     # `CircuitOpenError` -- a 503 if it escapes a route, "Redis is down" to
     # the code that already fails open -- instead of each waiting out
-    # `command_timeout` on a Redis that is not answering. 0 turns it off.
-    breaker_failures: int = 5
+    # `command_timeout` on a Redis that is not answering. Three: one request
+    # makes two or three commands, so an outage costs about one request's
+    # worth of timeouts before everything fails fast. 0 turns it off.
+    breaker_failures: int = 3
     # Seconds the breaker stays open before letting one probe through. Short,
     # because a cache is cheap to probe and expensive to go without.
     breaker_cool_down: float = 5.0
@@ -289,7 +293,10 @@ class Cache:
         try:
             found = await self.get(key, _MISS)
         except Exception:  # noqa: BLE001
-            found = _MISS
+            # The backend did not answer the read, so it will not answer the
+            # lock or the write either: load and return, rather than spend
+            # two more command timeouts finding that out.
+            return await loader()
         if found is not _MISS:
             return found
 

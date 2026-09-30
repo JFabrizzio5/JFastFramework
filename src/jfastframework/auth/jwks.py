@@ -148,7 +148,11 @@ class JWKSClient:
         try:
             for attempt in range(1, retry.attempts + 1):
                 try:
-                    await self._fetch()
+                    # A deadline on the whole attempt, not only httpx's per
+                    # operation timeouts: an issuer that trickles its answer a
+                    # byte at a time never trips a read timeout.
+                    async with asyncio.timeout(self.timeout):
+                        await self._fetch()
                     break
                 except Exception as exc:
                     if attempt >= retry.attempts or not self._transient(exc):

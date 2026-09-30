@@ -1044,7 +1044,11 @@ class AuthPlugin(Plugin):
         if self._jwks is not None:
             healthy, detail = await self._jwks.health()
             if not healthy:
-                return HealthReport.fail(detail, **meta)
+                # With keys cached the service still verifies every token it
+                # verified a minute ago: degraded. Taking every replica out of
+                # rotation over an issuer outage would turn one outage into
+                # two. With no keys at all nothing can be verified: critical.
+                return HealthReport.fail(detail, critical=not self._jwks.key_ids, **meta)
             meta["key_ids"] = list(self._jwks.key_ids)
 
         if self._store is not None:

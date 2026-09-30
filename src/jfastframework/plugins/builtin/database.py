@@ -42,6 +42,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from jfastframework.errors import PluginError, ServiceUnavailableError
+from jfastframework.http.resilience import BreakerPolicy, CircuitBreaker
 from jfastframework.plugins.base import (
     HealthReport,
     InfraService,
@@ -189,6 +190,15 @@ class DatabaseSettings(PluginSettings):
     # database that stops answering is caught by the ping and the connect
     # timeout above. Set it on a service whose every query should be fast.
     command_timeout: float = 0.0
+    # Failed connection attempts in a row that open a breaker on connecting,
+    # and how long it stays open. Without it every request during an outage
+    # waits out `connect_timeout` -- ten seconds of a worker per request, the
+    # queue behind them growing -- to learn what the previous request already
+    # learned. Open, a request that needs a new connection answers 503 at once
+    # and one probe per cool-down finds out whether the server is back.
+    # Connections already in the pool are unaffected. 0 turns it off.
+    breaker_failures: int = 2
+    breaker_cool_down: float = 5.0
 
     # The zone every session computes in, whatever the server is configured
     # with. `date_trunc('day', ...)`, `CURRENT_DATE`, `now()::date` and any
@@ -379,6 +389,11 @@ class DatabaseSettings(PluginSettings):
                 )
             if command < 0:
                 raise PluginError(f"{where} command_timeout cannot be negative; 0 turns it off.")
+        if self.breaker_failures < 0 or self.breaker_cool_down <= 0:
+            raise PluginError(
+                "[plugin.database] breaker_failures cannot be negative (0 turns it off) "
+                "and breaker_cool_down must be positive."
+            )
         if self.read_write_split and self.pin_window <= 0:
             raise PluginError(
                 "[plugin.database] pin_window must be positive while read_write_split "
@@ -448,7 +463,9 @@ def connect_args_for(dsn: str, *, session_timezone: str, read_only: bool = False
 _FRESH = "jfast_fresh"
 
 
-def guarded_connect(name: str, timeout: float) -> Callable[..., Any]:
+def guarded_connect(
+    name: str, timeout: float, breaker: CircuitBreaker | None = None
+) -> Callable[..., Any]:
     """``asyncpg.connect`` that fails as a 503 when the server is not there.
 
     The driver raises a bare ``TimeoutError`` or ``OSError`` for a server that
@@ -461,8 +478,24 @@ def guarded_connect(name: str, timeout: float) -> Callable[..., Any]:
     async def connect(*args: Any, **kwargs: Any) -> Any:
         import asyncpg  # type: ignore[import-untyped]
 
+        from jfastframework.http.errors import CircuitOpenError
+
+        permit = None
+        if breaker is not None:
+            try:
+                permit = breaker.acquire()
+            except CircuitOpenError as exc:
+                raise DatabaseUnavailableError(
+                    f"database {name!r} failed its last connection attempts; the next "
+                    f"is in {exc.retry_after:.1f}s",
+                    retry_after=round(exc.retry_after, 3),
+                ) from None
         try:
-            return await asyncpg.connect(*args, **kwargs)
+            connection = await asyncpg.connect(*args, **kwargs)
+        except asyncio.CancelledError:
+            if breaker is not None and permit is not None:
+                breaker.release(permit)
+            raise
         except (
             TimeoutError,
             OSError,
@@ -470,10 +503,21 @@ def guarded_connect(name: str, timeout: float) -> Callable[..., Any]:
             asyncpg.exceptions.TooManyConnectionsError,
             asyncpg.exceptions.ConnectionDoesNotExistError,
         ) as exc:
+            if breaker is not None and permit is not None:
+                breaker.record(permit, failed=True)
             detail = str(exc) or f"no answer within {timeout}s"
             raise DatabaseUnavailableError(
                 f"database {name!r} is not accepting connections ({type(exc).__name__}: {detail})"
             ) from exc
+        except Exception:
+            # A wrong password or a missing database is an answer: the server
+            # is there. The breaker is for servers that are not.
+            if breaker is not None and permit is not None:
+                breaker.record(permit, failed=False)
+            raise
+        if breaker is not None and permit is not None:
+            breaker.record(permit, failed=False)
+        return connection
 
     return connect
 
@@ -528,6 +572,8 @@ def build_engine(
     connect_timeout: float,
     ping_timeout: float,
     command_timeout: float = 0.0,
+    breaker_failures: int = 0,
+    breaker_cool_down: float = 5.0,
 ) -> Any:
     """One engine with the framework's deadlines, for asyncpg; plain for any other driver."""
     from sqlalchemy.ext.asyncio import create_async_engine
@@ -540,7 +586,15 @@ def build_engine(
         if command_timeout:
             args["command_timeout"] = command_timeout
         # Read by SQLAlchemy's asyncpg adapter in place of `asyncpg.connect`.
-        args["async_creator_fn"] = guarded_connect(name, connect_timeout)
+        breaker = (
+            CircuitBreaker(
+                f"database {name}",
+                BreakerPolicy(failure_threshold=breaker_failures, cool_down=breaker_cool_down),
+            )
+            if breaker_failures > 0
+            else None
+        )
+        args["async_creator_fn"] = guarded_connect(name, connect_timeout, breaker)
         bounded_ping = bool(options.get("pool_pre_ping"))
         if bounded_ping:
             options["pool_pre_ping"] = False
@@ -740,6 +794,8 @@ class TenantEngines:
         connect_timeout: float = 10.0,
         ping_timeout: float = 2.0,
         command_timeout: float = 0.0,
+        breaker_failures: int = 2,
+        breaker_cool_down: float = 5.0,
     ) -> None:
         self._resolve = resolve
         self._create = create or self._build_engine
@@ -753,6 +809,8 @@ class TenantEngines:
         self._connect_timeout = connect_timeout
         self._ping_timeout = ping_timeout
         self._command_timeout = command_timeout
+        self._breaker_failures = breaker_failures
+        self._breaker_cool_down = breaker_cool_down
         self._entries: OrderedDict[str, TenantDatabase] = OrderedDict()
         self.evictions = 0
 
@@ -905,6 +963,8 @@ class TenantEngines:
             connect_timeout=self._connect_timeout,
             ping_timeout=self._ping_timeout,
             command_timeout=self._command_timeout,
+            breaker_failures=self._breaker_failures,
+            breaker_cool_down=self._breaker_cool_down,
         )
 
 
@@ -1097,6 +1157,8 @@ class DatabasePlugin(Plugin):
             connect_timeout=settings.connect_timeout,
             ping_timeout=settings.ping_timeout,
             command_timeout=settings.command_timeout,
+            breaker_failures=settings.breaker_failures,
+            breaker_cool_down=settings.breaker_cool_down,
         )
         self._registry = registry
 
@@ -1298,6 +1360,8 @@ class DatabasePlugin(Plugin):
             connect_timeout=connect,
             ping_timeout=ping,
             command_timeout=command,
+            breaker_failures=settings.breaker_failures,
+            breaker_cool_down=settings.breaker_cool_down,
         )
 
     def _port_offsets(
