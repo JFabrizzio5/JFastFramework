@@ -177,7 +177,9 @@ def _rag_statements(table: str, tenant: str) -> list[str]:
     """
     pieces = [
         f"DO $$ BEGIN IF to_regclass('{table}') IS NOT NULL THEN ",
-        f"UPDATE {table} SET tenant_id = '{tenant}' WHERE tenant_id IS NULL; ",
+        # nosec B608 below: callers pass safe_identifier(table) and validate_tenant(tenant),
+        # whose alphabet has no quote -- and this is text written into a revision file.
+        f"UPDATE {table} SET tenant_id = '{tenant}' WHERE tenant_id IS NULL; ",  # nosec B608
     ]
     for statement in tenant_policy_sql(table):
         # One clause a line, so the literal stays readable in a diff.
@@ -223,7 +225,8 @@ def render_migration(
     for table in tables:
         upgrade.append(
             f"    op.execute(\n"
-            f'        sa.text("UPDATE {table} SET tenant_id = :tenant WHERE tenant_id IS NULL")'
+            # Source text for the revision file; the table went through safe_identifier.
+            f'        sa.text("UPDATE {table} SET tenant_id = :tenant WHERE tenant_id IS NULL")'  # nosec B608
             f".bindparams(\n"
             f"            tenant=INITIAL_TENANT\n"
             f"        )\n"
