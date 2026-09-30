@@ -62,6 +62,13 @@ generated frontend in a browser, an upload.
 - **The generated API client turned uploads into JSON.** It forced
   `Content-Type: application/json`, and axios then serialised a `FormData` as
   `{"archivo":{}}`. Removed; axios sends objects as JSON by itself.
+- **The generated contract forbade `print()` in `scripts/` too.** The async
+  rules already exempted `scripts/`, and `forbid_call print` had no
+  `except_in`, so a project's own e2e script failed `jfast contracts check`
+  once per line it printed. The rule now carries `except_in = ["scripts/**"]`:
+  a command someone runs in a terminal talks through stdout. Contracts already
+  written keep their rule; add the line to `[[rules.forbid_call]] pattern =
+  "print"` by hand.
 
 ## [0.1.0a11] - 2026-09-30
 

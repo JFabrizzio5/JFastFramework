@@ -62,6 +62,13 @@ imagen de producción, el frontend generado en un navegador, una subida.
 - **El cliente de API generado convertía las subidas en JSON.** Forzaba
   `Content-Type: application/json` y axios serializaba un `FormData` como
   `{"archivo":{}}`. Se quitó; axios manda los objetos como JSON por sí solo.
+- **El contrato generado prohibía `print()` también en `scripts/`.** Las reglas
+  async ya exceptuaban `scripts/`, y `forbid_call print` no tenía `except_in`,
+  así que el script e2e del propio proyecto fallaba `jfast contracts check` una
+  vez por cada línea que imprimía. La regla ahora lleva `except_in =
+  ["scripts/**"]`: un comando que alguien corre en una terminal habla por
+  stdout. Los contratos ya escritos conservan su regla; agrega la línea a
+  `[[rules.forbid_call]] pattern = "print"` a mano.
 
 ## [0.1.0a11] - 2026-09-30
 
