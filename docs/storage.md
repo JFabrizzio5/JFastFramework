@@ -25,7 +25,7 @@ A new service gets two, and the difference between them is the whole point:
 ```toml
 [plugin.storage]
 default = "public"
-serve_local = true                    # development only
+serve_local = true                    # development default; JFAST_STORAGE_SERVE_LOCAL wins
 
 [plugin.storage.disks.public]
 driver = "local"
@@ -446,6 +446,13 @@ In production, put Caddy or a CDN in front of the public disk and set
 `serve_local = false`. A Python worker holding a connection open to stream a
 40 MB PDF is a worker not serving requests. The plugin logs a warning if it
 finds itself serving files in production.
+
+`JFAST_STORAGE_SERVE_LOCAL=false` does that from the deployment even when
+`jfast.toml` says `serve_local = true`: the environment wins over the file for
+this key and for `signing_key`
+([deploy](deploy.md#which-wins-jfasttoml-or-the-environment)). A disk's own
+settings -- `bucket`, `endpoint_url`, `region` -- are not in that table: they
+live in the disk's table, and the file decides them.
 
 Downloads are sent as `Content-Disposition: attachment` with
 `X-Content-Type-Options: nosniff`. An uploaded `.html` or `.svg` rendered

@@ -138,10 +138,12 @@ def create_app(
     for router in routers or []:
         app.include_router(router)
 
-    # After the plugins registered, so observability's handlers carry it. A
-    # file that says local and an environment that says prod is the one
-    # disagreement nobody may miss: it decides /docs, /info, HSTS, the mail
-    # backend and every other production default.
+    # After the plugins registered, so observability's handlers carry it. One
+    # line per setting the environment owns and set to something other than
+    # the file says (deployment_keys.DEPLOYMENT_KEYS), secrets masked: a file
+    # that says local and an environment that says prod decides /docs, /info
+    # and HSTS, and a console mail backend under JFAST_MAIL_BACKEND=smtp
+    # decides whether customers get their mail. Neither may be silent.
     for sentence in cfg.overridden:
         logger.warning(sentence)
     logger.info(

@@ -24,6 +24,13 @@ La key nunca va en `jfast.toml`. Sin ella el servicio arranca igual: el plugin
 aparece degradado en `/ready` -- no caído, el resto del servicio no necesita un
 modelo -- y cada llamada responde un 503 que nombra la variable.
 
+La key, `base_url`, los dos modelos y los dos topes dependen de dónde corre el
+servicio, así que el entorno le gana al archivo en ellos:
+`JFAST_LLM_BUDGET_USD=0.5` limita un despliegue de staging cuyo `jfast.toml`
+dice `20.0`, y el log de arranque lo dice en una línea WARNING. Los valores de
+arriba son el default para donde esas variables no están puestas
+([deploy](deploy.md#quien-gana-jfasttoml-o-el-entorno)).
+
 Todo servicio que llama a un modelo termina escribiendo las mismas cuatro
 cosas, casi siempre después de la primera factura sorpresa: un tope duro, un
 registro de cuánto costó cada llamada, los precios en un solo lugar y

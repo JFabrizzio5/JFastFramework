@@ -17,8 +17,10 @@ enabled = ["observability", "metrics", "gateway"]
 disabled = []
 
 [plugin.observability]
+# Development defaults: JFAST_LOG_LEVEL and JFAST_LOG_JSON_LOGS win over both
+# (docs/deploy.md, "Which wins"). A deployment sets JFAST_LOG_JSON_LOGS=true.
 level = "INFO"
-json_logs = false
+json_logs = false   # readable in a dev terminal
 
 [plugin.gateway]
 timeout = 30.0

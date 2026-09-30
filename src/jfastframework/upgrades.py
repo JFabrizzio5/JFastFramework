@@ -2124,46 +2124,80 @@ def _facades_with_an_optional_tenant(project: Project) -> list[str]:
     return found
 
 
-def _deployment_keys_in_the_file(project: Project) -> list[str]:
-    """``[app] env`` or ``debug`` written in ``jfast.toml``.
+#: Development defaults the generator writes for a setting the environment
+#: owns, and writes knowing it: the line says, in a comment, which variable
+#: wins over it. A project that carries the same value means the same thing,
+#: and for it 0.1.0a12 changes only what F12 asked for -- a deployment that
+#: sets the variable gets its value. `test_a_project_jfast_start_generates_is_
+#: told_nothing` fails the day the generator writes an owned key this does not
+#: name, so the two cannot drift apart.
+_LOCAL_ORIGIN = re.compile(r"http://(localhost|127\.0\.0\.1)(:\d+)?")
 
-    Exactly the projects whose running environment can change: from 0.1.0a12
-    ``JFAST_ENV`` and ``JFAST_DEBUG``, when the process environment sets them,
-    win over these two keys, and a project without them already took both
-    from the environment. Every project ``jfast start`` generated before
-    0.1.0a12 has ``env = "local"``.
-    """
-    from jfastframework.settings import DEPLOYMENT_KEYS
 
-    app = _table(_config(project), "app")
-    present = [key for key in DEPLOYMENT_KEYS if key in app]
-    if not present:
-        return []
-    lines: dict[str, int] = {}
-    table = ""
-    try:
-        text = (project.root / "jfast.toml").read_text(encoding="utf-8")
-    except OSError:
-        text = ""
-    for number, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if stripped.startswith("["):
-            table = stripped.strip("[] ")
-            continue
-        if table != "app":
-            continue
-        match = re.match(r"(\w+)\s*=", stripped)
-        if match and match.group(1) in present:
-            lines.setdefault(match.group(1), number)
-    found = []
-    for key in present:
-        value = app[key]
-        spelled = f'"{value}"' if isinstance(value, str) else str(value).lower()
-        found.append(
-            f"jfast.toml:{lines.get(key, 0)} [app] {key} = {spelled}: "
-            f"{DEPLOYMENT_KEYS[key]} in the environment now wins over it"
+def _generated_default(table: str, key: str, value: Any, config: dict[str, Any]) -> bool:
+    if (table, key) == ("app", "cors_origins"):
+        # What `jfast start` writes for the frontends' dev servers.
+        return isinstance(value, list) and all(
+            isinstance(origin, str) and _LOCAL_ORIGIN.fullmatch(origin) is not None
+            for origin in value
         )
-    return found
+    if (table, key) == ("auth", "audience"):
+        return bool(value == _table(config, "app").get("name"))
+    written: dict[tuple[str, str], Any] = {
+        ("observability", "level"): "INFO",
+        ("observability", "json_logs"): False,
+        ("llm", "budget_usd"): 10.0,
+        ("llm", "tenant_budget_usd"): 2.0,
+        ("storage", "serve_local"): True,
+        ("tenancy", "base_domain"): "localhost",
+        ("notifications", "backend"): "console",
+    }
+    return (table, key) in written and value == written[(table, key)]
+
+
+def _deployment_keys_in_the_file(project: Project) -> list[str]:
+    """Settings the environment now owns that ``jfast.toml`` sets to a chosen value.
+
+    From 0.1.0a12 a variable in ``deployment_keys.DEPLOYMENT_KEYS`` set in the
+    process environment wins over the file, so each listed line is now only a
+    default a deployment may replace -- and a deployment that already set the
+    variable, and was silently ignored, now gets it.
+
+    Listed: a value somebody chose, and a line the generator no longer writes
+    (``[app] env = "local"`` and ``[plugin.auth] issuer = ""``, which every
+    project ``jfast start`` generated before 0.1.0a12 has). Not listed: a key
+    the file does not write, which took the environment's value already, and
+    the development defaults the generator still writes (:func:`_generated_default`),
+    for which the change is exactly the fix. Only ``[app]`` and the tables of
+    plugins that run. The machine running the check is not the deployment, so
+    its own environment is not read: the list is the same on a laptop and in
+    CI. Secrets are masked.
+    """
+    from jfastframework.deployment_keys import (
+        config_lines,
+        line_of,
+        owned_in_file,
+        toml_spelling,
+    )
+
+    config = _config(project)
+    owned = [
+        item
+        for item in owned_in_file(config, {}, tables={"app", *_active_plugins(project)})
+        if not _generated_default(item.spec.table, item.key, item.value, config)
+    ]
+    if not owned:
+        return []
+    try:
+        lines = config_lines((project.root / "jfast.toml").read_text(encoding="utf-8"))
+    except OSError:
+        lines = {}
+    return [
+        f"jfast.toml:{line_of(lines, item) or 0} {item.where} = "
+        f"{toml_spelling(item.value, secret=item.spec.secret)}: "
+        f"{item.variable} in the environment now wins over it"
+        for item in owned
+    ]
 
 
 def _unsigned_tenant_sources_with_auth(project: Project) -> list[str]:
@@ -2551,22 +2585,30 @@ CHANGES: tuple[Change, ...] = (
         version="0.1.0a12",
         kind="behaviour",
         code="jfast-env-wins-over-the-file",
-        summary="JFAST_ENV and JFAST_DEBUG now win over [app] env and debug in jfast.toml.",
+        summary=(
+            "The environment now wins over jfast.toml for the settings that depend on where "
+            "the service runs: [app] env and debug, mail, llm budgets, DSNs, auth issuer..."
+        ),
         detail=(
             'jfast start wrote [app] env = "local", and jfast.toml won over the environment, '
             "so JFAST_ENV=prod -- the switch docs/deploy.md's checklist names -- did nothing: "
             "the production image ran with /docs, /info and /queue/stats open, console mail "
-            "and no HSTS. env and debug describe the deployment, so the process environment "
-            "now beats the file for those two (every other key still loses to the file), and "
-            "a disagreement is a WARNING at boot. A deployment that sets JFAST_ENV now gets "
-            "that value instead of the file's."
+            "and no HSTS. The same rule ignored JFAST_MAIL_BACKEND=smtp, JFAST_LLM_BUDGET_USD "
+            "and JFAST_STORAGE_SERVE_LOCAL=false under a file that set them. For the keys in "
+            "deployment_keys.DEPLOYMENT_KEYS (the table in docs/deploy.md, 'Which wins') the "
+            "process environment now beats the file, which keeps winning for everything "
+            "else; a disagreement is a masked WARNING at boot and a line in jfast check. A "
+            "deployment that already set one of these variables now gets its value instead "
+            "of the file's."
         ),
         detect=_deployment_keys_in_the_file,
         remedy=(
-            "Delete the listed line (env defaults to local) and set JFAST_ENV=prod where the "
-            "service is deployed, under compose's environment: rather than in a copied .env. "
-            "Keep it only if every environment that runs this file should share the value "
-            "and none sets JFAST_ENV."
+            'For each listed line: if the value is a development default (env = "local", a '
+            "console backend, a localhost address, json_logs = false), delete it or keep it "
+            "knowing it is only a default, and set the real value where the service is "
+            "deployed -- under compose's environment:, not in a copied .env. If a deployment "
+            "sets the variable, make sure its value is the one you want: it is the one that "
+            "runs now. `jfast check` lists every disagreement between the two."
         ),
     ),
     Change(

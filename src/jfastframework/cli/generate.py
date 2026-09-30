@@ -561,6 +561,7 @@ def write_dev_cors(workspace: Workspace) -> list[Path]:
             section.rstrip("\n")
             + "\n# The frontends' dev servers (VITE_API_URL points here): two origins, so\n"
             + "# the browser needs this. Written by jfast; production serves one origin.\n"
+            + "# Default for development; JFAST_CORS_ORIGINS wins over it.\n"
             + line
             + "\n"
         )

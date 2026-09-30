@@ -80,8 +80,8 @@ llamada a un modelo desde un worker. Llegó con ello una adición: enums en
   `/queue/stats` abiertos, el correo por consola "enviado" a stdout y sin HSTS,
   sin nada en el log. `env` y `debug` describen el despliegue, así que
   `JFAST_ENV` y `JFAST_DEBUG` puestas en el entorno del proceso ahora le ganan a
-  `[app] env` y `debug`; todas las demás llaves siguen perdiendo contra el
-  archivo, como está documentado. Un archivo `.env` que lean los settings no
+  `[app] env` y `debug` -- y también todo otro ajuste que depende de dónde
+  corre el servicio (siguiente entrada). Un archivo `.env` que lean los settings no
   cuenta (el `.env.example` generado dice `JFAST_ENV=local`, y una copia no debe
   apagar un `prod` commiteado). Un desacuerdo es un WARNING al arrancar. `jfast
   start`, `jfast new service` y el gateway ya no escriben `env` (el default es
@@ -91,6 +91,42 @@ llamada a un modelo desde un worker. Llegó con ello una adición: enums en
   `/docs`, `/openapi.json`, `/info` y `/queue/stats` dan 404, `/health` dice
   `prod` y el correo por consola detiene el arranque. `jfast upgrade --check`:
   `jfast-env-wins-over-the-file`.
+- **`JFAST_MAIL_BACKEND=smtp`, `JFAST_LLM_BUDGET_USD` y
+  `JFAST_STORAGE_SERVE_LOCAL=false` se ignoraban bajo un `jfast.toml` que las
+  ponía.** La misma mesa de ayuda lo encontró después de `JFAST_ENV`: toda
+  tabla `[plugin.x]` le ganaba al entorno, así que un despliegue de producción
+  se quedaba con el correo por consola del archivo, su tope de $10 y su
+  servidor de archivos en Python, en silencio. La regla ahora es **el entorno
+  gana en lo que depende de dónde corre el servicio; el archivo sigue ganando
+  en la forma del servicio**, declarada una sola vez en
+  `jfastframework.deployment_keys.DEPLOYMENT_KEYS` y leída por el kernel y por
+  cada herramienta: `[app]` `env`, `debug`, `cors_origins`,
+  `cors_origin_regex`, `trusted_hosts`, `trusted_proxies`, `root_path`; el
+  nivel y formato de logs; backend, host, puerto, credenciales, remitente y
+  flags de TLS del correo; el backend de notificaciones; la key, `base_url`,
+  modelos y los dos topes del LLM; `serve_local` y `signing_key` de storage;
+  `issuer`, `audience`, `jwks_url` y llaves de auth; `frontend_url` de
+  accounts; `base_domain` de tenancy; todo DSN y dirección a la que se conecta
+  un plugin (base, cache, mongo, qdrant, rabbitmq, kafka, ollama, sentry, el
+  endpoint OTLP) y el `base_url` de cada upstream HTTP. La tabla completa, y
+  por qué el bucket de un disco o `[app] port` no están, está en
+  `docs/deploy.md`, "Quién gana". Como con `env`, solo cuenta el entorno del
+  proceso, nunca un archivo `.env` que lean los settings. Un test revisa cada
+  fila contra la clase de settings que la lee.
+  Todo desacuerdo se ve, con las credenciales enmascaradas (`'***'`, y una URL
+  conserva su host pero no su usuario y contraseña): un WARNING por llave al
+  arrancar; un aviso de `jfast check` con `jfast.toml:<línea>` y la variable --
+  reportado, nunca una falla, `--ci` incluido, porque describe la máquina y no
+  el repositorio --; una sección `environment` en `jfast ai context`; y un
+  párrafo en el `AGENTS.md` generado que le dice a un agente qué llaves son del
+  entorno y que reporte un desacuerdo en vez de editar cualquiera de los dos
+  lados. El generador ya no escribe `[plugin.auth] issuer = ""` ni
+  `[plugin.notifications] project_id = ""`, y cada llave del entorno que sigue
+  escribiendo (formato de logs, `serve_local`, `base_domain`, los topes del
+  LLM, los orígenes CORS de desarrollo) nombra la variable que le gana. `jfast
+  upgrade --check`: `jfast-env-wins-over-the-file` ahora lista cada llave del
+  entorno que un proyecto puso en un valor elegido, más las dos líneas que
+  0.1.0a12 dejó de escribir.
 - **El primer `jfast dev` de un proyecto nuevo se caía: la API y el worker
   creaban el administrador de arranque a la vez.** Los dos veían que no había
   administrador e insertaban el rol `admin`; el que perdía moría en

@@ -2058,6 +2058,116 @@ def _env_only_in_another_table(root: Path) -> None:
     write(root / "jfast.toml", (root / "jfast.toml").read_text() + '\n[plugin.x]\nenv = "a"\n')
 
 
+# The rest of the table: every setting that depends on where the service runs.
+# A value somebody chose is listed; a development default the generator still
+# writes -- and marks as one -- is not.
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _the_f12_mail_backend(root: Path) -> list[str]:
+    # What the help desk wrote by hand, and JFAST_MAIL_BACKEND=smtp never beat.
+    _the_line_removed(root)
+    edit(root / "jfast.toml", '"observability"]', '"observability", "mail"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text() + '\n[plugin.mail]\nbackend = "console"\nport = 25\n',
+    )
+    return [
+        'jfast.toml:10 [plugin.mail] backend = "console": JFAST_MAIL_BACKEND in the environment',
+        "jfast.toml:11 [plugin.mail] port = 25: JFAST_MAIL_PORT in the environment",
+    ]
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _the_empty_issuer_jfast_start_wrote(root: Path) -> list[str]:
+    # 0.1.0a11 wrote issuer = "" in jwks mode; 0.1.0a12 leaves it to the environment.
+    _the_line_removed(root)
+    edit(root / "jfast.toml", '"observability"]', '"observability", "auth"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + '\n[plugin.auth]\nmode = "jwks"\nissuer = ""\naudience = "billing"\n',
+    )
+    return ['jfast.toml:11 [plugin.auth] issuer = "": JFAST_AUTH_ISSUER in the environment']
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _a_dsn_in_the_file_is_listed_masked(root: Path) -> list[str]:
+    _the_line_removed(root)
+    edit(root / "jfast.toml", '"observability"]', '"observability", "database"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + '\n[plugin.database]\ndsn = "postgresql+asyncpg://app:hunter2@localhost/app"\n',
+    )
+    return [
+        'jfast.toml:10 [plugin.database] dsn = "postgresql+asyncpg://***@localhost/app": '
+        "JFAST_DB_DSN"
+    ]
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _an_upstream_address(root: Path) -> list[str]:
+    _the_line_removed(root)
+    edit(root / "jfast.toml", '"observability"]', '"observability", "http"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + '\n[plugin.http.upstreams.billing]\nbase_url = "http://localhost:8010"\n',
+    )
+    return [
+        "jfast.toml:10 [plugin.http] upstreams.billing.base_url = "
+        '"http://localhost:8010": JFAST_HTTP_UPSTREAMS__BILLING__BASE_URL'
+    ]
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _a_chosen_log_format(root: Path) -> list[str]:
+    # json_logs = false is the generator's development default; true was chosen.
+    _the_line_removed(root)
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + '\n[plugin.observability]\nlevel = "DEBUG"\njson_logs = true\n',
+    )
+    return [
+        'jfast.toml:10 [plugin.observability] level = "DEBUG": JFAST_LOG_LEVEL',
+        "jfast.toml:11 [plugin.observability] json_logs = true: JFAST_LOG_JSON_LOGS",
+    ]
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _the_development_defaults_the_generator_writes(root: Path) -> None:
+    _a_chosen_log_format(root)
+    edit(
+        root / "jfast.toml",
+        'level = "DEBUG"\njson_logs = true',
+        'level = "INFO"\njson_logs = false',
+    )
+    edit(root / "jfast.toml", '"observability"]', '"observability", "storage", "tenancy", "llm"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + "\n[plugin.storage]\nserve_local = true\n"
+        + '\n[plugin.tenancy]\nbase_domain = "localhost"\n'
+        + "\n[plugin.llm]\nbudget_usd = 10.0\ntenant_budget_usd = 2.0\n",
+    )
+    edit(
+        root / "jfast.toml",
+        "[plugins]",
+        'cors_origins = ["http://localhost:8010", "http://127.0.0.1:8010"]\n\n[plugins]',
+    )
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _a_table_for_a_plugin_that_does_not_run(root: Path) -> None:
+    _the_line_removed(root)
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text() + '\n[plugin.mail]\nbackend = "console"\n',
+    )
+
+
 TENANT_BY_SUBDOMAIN = (
     '\n[plugin.tenancy]\nsources = ["token", "subdomain"]\nbase_domain = "localhost"\n'
 )

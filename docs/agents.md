@@ -146,6 +146,12 @@ shaped, what `main.py` actually imports, the module import graph, the contract,
 what `analyze` and `contracts check` say right now, what is still unfinished,
 and the commands that return whatever was left out.
 
+Under `environment` it lists the settings in `jfast.toml` that the environment
+owns, which of them the current environment overrides (masked), and the rule
+an agent must follow: those file values are only defaults, and a disagreement
+is reported to a human, never "fixed" on either side
+([Which wins](deploy.md#which-wins-jfasttoml-or-the-environment)).
+
 It is a composition, not a reimplementation — `inspect`, `analyze`, `graph`,
 `contracts` and `next` in one payload, so it cannot disagree with the command it
 tells you to run. It never imports the project, so it still answers on a service
@@ -156,13 +162,13 @@ whose dependencies are missing or whose code does not parse.
 **There is no one number, and a single figure here was wrong for every project
 that was not the one it was measured on.** The payload is facts about *your*
 service, so it scales with your service. Measured on generated services —
-`jfast new service shop --with database`, then `jfast new module` N times:
+`jfast new service shop --with database`, then `jfast new module` N times (0.1.0a12):
 
 | modules | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 9,525 | 3,016 |
-| 3 | 11,555 | 4,578 |
-| 5 | 13,603 | 6,154 |
+| 1 | 10,295 | 3,750 |
+| 3 | 12,353 | 5,340 |
+| 5 | 14,429 | 6,944 |
 
 A generated service is the floor, because nothing is wrong with it yet. The
 same five-module service after some work in it — two modules `main.py` never
@@ -178,6 +184,9 @@ Where the full payload goes on that five-module service, in bytes:
 next      3,052   contract  2,300   commands 1,576   checks  1,562
 modules   1,499   omitted     921   project    135   plugins   130
 ```
+
+0.1.0a12 added the `environment` section: about 600 bytes on a generated
+service, more for each setting the environment owns that `jfast.toml` writes.
 
 Token figures are bytes ÷ 4 — the standard rough estimate, not a tokenizer.
 

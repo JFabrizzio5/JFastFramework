@@ -226,32 +226,99 @@ that hold secrets are typed `SecretStr`, which also keeps them out of
 
 ## Which wins: `jfast.toml` or the environment
 
-`jfast.toml` is the committed description of the service, and for every
-setting but two it wins over the environment: a value written in the file is
-the value that runs, whatever `JFAST_*` says. Leave a key out of the file for
-anything that differs per environment -- an upstream's `base_url`, the mail
-backend -- and set it in the environment instead.
+Two rules, one for each kind of setting:
 
-The two exceptions describe the deployment rather than the code:
+- **The service's shape** -- which plugins run, pool sizes, timeouts, the
+  queue backend, the storage disks, each module's layout: `jfast.toml` wins.
+  It is the committed description of the service, and a variable left over in
+  some shell must not quietly change it.
+- **Where the service runs** -- whether this is production, the mail server,
+  the database address, what this deployment may spend on a model, the domain
+  its tenants live under: the **process environment** wins. A value written in
+  `jfast.toml` for one of these keys is only the default for wherever its
+  variable is unset.
 
-| `[app]` key | Variable | When the variable is set in the process environment |
+The second kind is one table in the code,
+`jfastframework.deployment_keys.DEPLOYMENT_KEYS`, and this is that table.
+Everything not in it keeps the first rule.
+
+| Table | Key | Variable |
 | --- | --- | --- |
-| `env` | `JFAST_ENV` | it wins over the file |
-| `debug` | `JFAST_DEBUG` | it wins over the file |
+| `[app]` | `env`, `debug` | `JFAST_ENV`, `JFAST_DEBUG` |
+| `[app]` | `cors_origins`, `cors_origin_regex` | `JFAST_CORS_ORIGINS`, `JFAST_CORS_ORIGIN_REGEX` |
+| `[app]` | `trusted_hosts`, `trusted_proxies`, `root_path` | `JFAST_TRUSTED_HOSTS`, `JFAST_TRUSTED_PROXIES`, `JFAST_ROOT_PATH` |
+| `[plugin.observability]` | `level`, `json_logs` | `JFAST_LOG_LEVEL`, `JFAST_LOG_JSON_LOGS` |
+| `[plugin.mail]` | `backend`, `host`, `port`, `username`\*, `password`\*, `from_email`, `use_starttls`, `use_ssl` | `JFAST_MAIL_<KEY>` |
+| `[plugin.notifications]` | `backend`, `project_id`, `credentials_json`\* | `JFAST_NOTIFICATIONS_<KEY>` |
+| `[plugin.llm]` | `api_key`\*, `base_url`, `chat_model`, `embedding_model`, `budget_usd`, `tenant_budget_usd` | `JFAST_LLM_<KEY>` |
+| `[plugin.storage]` | `serve_local`, `signing_key`\* | `JFAST_STORAGE_<KEY>` |
+| `[plugin.auth]` | `issuer`, `audience`, `jwks_url`, `secret`\*, `public_key`\* | `JFAST_AUTH_<KEY>` |
+| `[plugin.accounts]` | `frontend_url`, `bootstrap_admin_password`\* | `JFAST_ACCOUNTS_<KEY>` |
+| `[plugin.tenancy]` | `base_domain` | `JFAST_TENANCY_BASE_DOMAIN` |
+| `[plugin.database]` | `dsn`\* | `JFAST_DB_DSN` |
+| `[plugin.cache]` | `url`\* | `JFAST_CACHE_URL` |
+| `[plugin.mongo]` | `dsn`\* | `JFAST_MONGO_DSN` |
+| `[plugin.qdrant]` | `url`, `api_key`\* | `JFAST_QDRANT_URL`, `JFAST_QDRANT_API_KEY` |
+| `[plugin.queue]` | `rabbitmq_url`\* | `JFAST_QUEUE_RABBITMQ_URL` |
+| `[plugin.events]` | `bootstrap_servers` | `JFAST_EVENTS_BOOTSTRAP_SERVERS` |
+| `[plugin.rag]` | `ollama_url` | `JFAST_RAG_OLLAMA_URL` |
+| `[plugin.sentry]` | `dsn`\* | `JFAST_SENTRY_DSN` |
+| `[plugin.telemetry]` | `endpoint`, `traces_endpoint`, `headers`\* | `JFAST_TELEMETRY_<KEY>`, or `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` |
+| `[plugin.http]` | `upstreams.<name>.base_url` | `JFAST_HTTP_UPSTREAMS__<NAME>__BASE_URL` |
+
+\* A credential. It never belongs in `jfast.toml` at all; it is in the table
+so that one committed by mistake still loses to the deployment's, and it is
+masked wherever a disagreement is printed.
+
+Some candidates are deliberately not in the table. A storage disk's `bucket`,
+`endpoint_url` and `region` live in a per-disk table that no single variable
+addresses today (`JFAST_STORAGE_DISKS` replaces the whole map, which is the
+service's shape), a gateway route's `target` is an entry in a list, and
+`[app] port` is the port block every generated compose file, Caddyfile and
+frontend `.env` is derived from. The mail `timeout`, the database pool and
+every other tuning number are the service's shape: tune them in the file.
+
+**Only the process environment counts, not a `.env` file read by the
+settings.** The generated `.env.example` carries development values
+(`JFAST_ENV=local` among them), and a copied `.env` must not be able to turn a
+committed `env = "prod"` -- or `backend = "smtp"` -- back into a laptop's
+configuration without anyone deciding it. Compose's `env_file:` does put `.env`
+into the process environment, and so do `jfast serve` and `jfast dev` when
+they translate it for the host; then it counts like any other variable. That
+is why the override that sets `JFAST_ENV: prod` goes under `environment:`,
+which compose ranks above `env_file:`.
 
 So `JFAST_ENV=prod` turns production on even in a project whose `jfast.toml`
-still says `env = "local"` -- what `jfast start` wrote before 0.1.0a12. When
-the two disagree, the boot log says so on a WARNING line
-(`[app] env = 'local' in jfast.toml is overridden by JFAST_ENV='prod' from the
-environment`), so neither side changes production silently. Only the process
-environment counts, not a `.env` file read by the settings: the generated
-`.env.example` carries `JFAST_ENV=local`, and a copied `.env` must not be able
-to turn a committed `env = "prod"` off. Compose's `env_file:` does put `.env`
-into the process environment, which is why the override that sets
-`JFAST_ENV: prod` goes under `environment:`, which compose ranks above it.
+still says `env = "local"` -- what `jfast start` wrote before 0.1.0a12 -- and
+`JFAST_MAIL_BACKEND=smtp` sends mail even where the file says `console`.
 
-Projects generated from 0.1.0a12 on write no `env` at all: it defaults to
-`local`, and the deployment decides.
+### Every disagreement is visible
+
+A value the environment replaces with a *different* one is never silent:
+
+- **At boot**, one WARNING per key:
+  `[plugin.mail] backend = 'console' in jfast.toml is overridden by
+  JFAST_MAIL_BACKEND='smtp' from the environment`. A credential shows as
+  `'***'`, and a URL keeps its host and loses its user and password
+  (`postgresql+asyncpg://***@db:5432/app`).
+- **`jfast check`** lists the same disagreements under `config`, each with
+  `jfast.toml:<line>` and the variable, masked the same way (`notices` in
+  `--json`). They are reported and never fail the run, `--ci` included:
+  they describe the machine running the check, not the repository, and a file
+  default replaced by the deployment's value is the design working. Failing
+  on it would push a team to delete the default or to copy production's
+  values into CI.
+- **`jfast ai context`** carries an `environment` section: the owned keys the
+  file writes, the ones overridden in this environment, and the rule. The
+  generated `AGENTS.md` tells an agent the same: report a disagreement to a
+  human, never "fix" either side.
+- **`jfast upgrade --check`** lists, for a project written before 0.1.0a12,
+  each owned key its file sets to a chosen value (note
+  `jfast-env-wins-over-the-file`).
+
+Projects generated from 0.1.0a12 on write no `env` and no `issuer`, and every
+owned key they do write -- the log format, `serve_local`, `base_domain`, the
+LLM caps -- carries a comment naming the variable that wins over it.
 
 ## The generated file is generated
 
@@ -537,6 +604,10 @@ any number, this page's included.
 - [ ] `JFAST_DEBUG=false` — otherwise exception messages reach clients; it
       wins over `[app] debug`, like `JFAST_ENV`
 - [ ] Every secret from the environment, none from `jfast.toml`
+- [ ] Every `overridden by ... from the environment` WARNING in the boot log
+      is one you meant: each is a `jfast.toml` default this deployment replaced
+      ([Which wins](#which-wins-jfasttoml-or-the-environment)); `jfast check`
+      run with the deployment's environment lists them with file and line
 - [ ] `/ready` wired to the orchestrator's readiness probe, `/health` to
       liveness — not the other way round
 - [ ] RAG `auto_migrate` off; schema managed by Alembic

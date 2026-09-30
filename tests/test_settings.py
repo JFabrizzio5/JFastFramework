@@ -142,7 +142,7 @@ def test_jfast_debug_wins_over_a_committed_debug(
     clean_env.setenv("JFAST_DEBUG", "false")
     config = JFastConfig.load(config_path=write(tmp_path, '[app]\nname = "m"\ndebug = true\n'))
     assert config.settings.debug is False
-    assert "JFAST_DEBUG=False" in config.overridden[0]
+    assert "JFAST_DEBUG='false'" in config.overridden[0]
 
 
 def test_every_other_key_still_loses_to_the_file(

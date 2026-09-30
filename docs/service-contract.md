@@ -152,9 +152,12 @@ Python and Go apply this rule identically, and `tests/test_go_service.py`
 checks it by sending the same requests to both.
 
 In Python the plugin settings can also come from `jfast.toml`
-(`[plugin.auth]`, `[plugin.tenancy]`), which wins over the environment --
-except `JFAST_ENV` and `JFAST_DEBUG`, which beat `[app] env` and `debug` when
-set, because they describe the deployment ([deploy](deploy.md#which-wins-jfasttoml-or-the-environment)). A
+(`[plugin.auth]`, `[plugin.tenancy]`), which wins over the environment for the
+service's shape -- mode, algorithms, tenancy sources -- but not for what
+depends on where it runs: `issuer`, `audience`, `jwks_url`, the secret or
+public key and `base_domain` come from the environment when it sets them, as
+`JFAST_ENV` and `JFAST_DEBUG` do for `[app]`
+([deploy](deploy.md#which-wins-jfasttoml-or-the-environment)). A
 service in another language only has the environment, so write the values it
 must share -- mode, algorithms, secret or public key, issuer, audience,
 tenancy sources -- into its `.env`. Nothing copies them between services for

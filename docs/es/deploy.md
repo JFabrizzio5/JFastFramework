@@ -233,32 +233,102 @@ mantiene fuera de `jfast describe` y de `/info`.
 
 ## Quién gana: `jfast.toml` o el entorno
 
-`jfast.toml` es la descripción commiteada del servicio, y para todos los
-ajustes menos dos le gana al entorno: un valor escrito en el archivo es el que
-corre, diga lo que diga `JFAST_*`. Deja fuera del archivo lo que cambia según
-el entorno -- el `base_url` de un upstream, el backend de correo -- y ponlo en
-el entorno.
+Dos reglas, una para cada tipo de ajuste:
 
-Las dos excepciones describen el despliegue, no el código:
+- **La forma del servicio** -- qué plugins corren, tamaños de pool, timeouts,
+  el backend de la cola, los discos de storage, el layout de cada módulo: gana
+  `jfast.toml`. Es la descripción commiteada del servicio, y una variable que
+  quedó suelta en alguna shell no debe cambiarla en silencio.
+- **Dónde corre el servicio** -- si es producción, el servidor de correo, la
+  dirección de la base, cuánto puede gastar este despliegue en un modelo, el
+  dominio bajo el que viven sus tenants: gana **el entorno del proceso**. Un
+  valor escrito en `jfast.toml` para una de estas llaves es solo el default
+  para donde su variable no está puesta.
 
-| Llave de `[app]` | Variable | Cuando la variable está en el entorno del proceso |
+El segundo tipo es una sola tabla en el código,
+`jfastframework.deployment_keys.DEPLOYMENT_KEYS`, y esta es esa tabla. Todo lo
+que no está en ella sigue la primera regla.
+
+| Tabla | Llave | Variable |
 | --- | --- | --- |
-| `env` | `JFAST_ENV` | le gana al archivo |
-| `debug` | `JFAST_DEBUG` | le gana al archivo |
+| `[app]` | `env`, `debug` | `JFAST_ENV`, `JFAST_DEBUG` |
+| `[app]` | `cors_origins`, `cors_origin_regex` | `JFAST_CORS_ORIGINS`, `JFAST_CORS_ORIGIN_REGEX` |
+| `[app]` | `trusted_hosts`, `trusted_proxies`, `root_path` | `JFAST_TRUSTED_HOSTS`, `JFAST_TRUSTED_PROXIES`, `JFAST_ROOT_PATH` |
+| `[plugin.observability]` | `level`, `json_logs` | `JFAST_LOG_LEVEL`, `JFAST_LOG_JSON_LOGS` |
+| `[plugin.mail]` | `backend`, `host`, `port`, `username`\*, `password`\*, `from_email`, `use_starttls`, `use_ssl` | `JFAST_MAIL_<LLAVE>` |
+| `[plugin.notifications]` | `backend`, `project_id`, `credentials_json`\* | `JFAST_NOTIFICATIONS_<LLAVE>` |
+| `[plugin.llm]` | `api_key`\*, `base_url`, `chat_model`, `embedding_model`, `budget_usd`, `tenant_budget_usd` | `JFAST_LLM_<LLAVE>` |
+| `[plugin.storage]` | `serve_local`, `signing_key`\* | `JFAST_STORAGE_<LLAVE>` |
+| `[plugin.auth]` | `issuer`, `audience`, `jwks_url`, `secret`\*, `public_key`\* | `JFAST_AUTH_<LLAVE>` |
+| `[plugin.accounts]` | `frontend_url`, `bootstrap_admin_password`\* | `JFAST_ACCOUNTS_<LLAVE>` |
+| `[plugin.tenancy]` | `base_domain` | `JFAST_TENANCY_BASE_DOMAIN` |
+| `[plugin.database]` | `dsn`\* | `JFAST_DB_DSN` |
+| `[plugin.cache]` | `url`\* | `JFAST_CACHE_URL` |
+| `[plugin.mongo]` | `dsn`\* | `JFAST_MONGO_DSN` |
+| `[plugin.qdrant]` | `url`, `api_key`\* | `JFAST_QDRANT_URL`, `JFAST_QDRANT_API_KEY` |
+| `[plugin.queue]` | `rabbitmq_url`\* | `JFAST_QUEUE_RABBITMQ_URL` |
+| `[plugin.events]` | `bootstrap_servers` | `JFAST_EVENTS_BOOTSTRAP_SERVERS` |
+| `[plugin.rag]` | `ollama_url` | `JFAST_RAG_OLLAMA_URL` |
+| `[plugin.sentry]` | `dsn`\* | `JFAST_SENTRY_DSN` |
+| `[plugin.telemetry]` | `endpoint`, `traces_endpoint`, `headers`\* | `JFAST_TELEMETRY_<LLAVE>`, o `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` |
+| `[plugin.http]` | `upstreams.<nombre>.base_url` | `JFAST_HTTP_UPSTREAMS__<NOMBRE>__BASE_URL` |
+
+\* Una credencial. Nunca va en `jfast.toml`; está en la tabla para que una
+commiteada por error igual pierda contra la del despliegue, y se enmascara en
+todo lugar donde se imprime un desacuerdo.
+
+Algunas candidatas quedan fuera a propósito. El `bucket`, `endpoint_url` y
+`region` de un disco de storage viven en una tabla por disco que hoy ninguna
+variable sola direcciona (`JFAST_STORAGE_DISKS` reemplaza el mapa entero, que
+es la forma del servicio), el `target` de una ruta del gateway es un elemento de
+una lista, y `[app] port` es el bloque de puertos del que se derivan el compose,
+el Caddyfile y el `.env` del frontend generados. El `timeout` del correo, el
+pool de la base y cualquier otro número de ajuste son la forma del servicio:
+ajústalos en el archivo.
+
+**Solo cuenta el entorno del proceso, no un archivo `.env` que lean los
+settings.** El `.env.example` generado trae valores de desarrollo
+(`JFAST_ENV=local` entre ellos), y un `.env` copiado no debe poder devolver un
+`env = "prod"` -- o un `backend = "smtp"` -- commiteado a la configuración de
+una laptop sin que nadie lo decida. El `env_file:` de compose sí mete el `.env`
+al entorno del proceso, y también `jfast serve` y `jfast dev` cuando lo
+traducen para el host; entonces cuenta como cualquier otra variable. Por eso el
+override que pone `JFAST_ENV: prod` va en `environment:`, que compose pone por
+encima de `env_file:`.
 
 Así, `JFAST_ENV=prod` enciende producción aunque el `jfast.toml` del proyecto
 siga diciendo `env = "local"` -- lo que `jfast start` escribía antes de
-0.1.0a12. Cuando los dos no coinciden, el log de arranque lo dice en una línea
-WARNING (`[app] env = 'local' in jfast.toml is overridden by JFAST_ENV='prod'
-from the environment`), así que ningún lado cambia producción en silencio. Solo
-cuenta el entorno del proceso, no un archivo `.env` que lean los settings: el
-`.env.example` generado trae `JFAST_ENV=local`, y un `.env` copiado no debe
-poder apagar un `env = "prod"` commiteado. El `env_file:` de compose sí mete el
-`.env` al entorno del proceso; por eso el override que pone `JFAST_ENV: prod`
-va en `environment:`, que compose pone por encima.
+0.1.0a12 --, y `JFAST_MAIL_BACKEND=smtp` manda correo aunque el archivo diga
+`console`.
 
-Los proyectos generados desde 0.1.0a12 no escriben `env`: por defecto es
-`local`, y lo decide el despliegue.
+### Todo desacuerdo se ve
+
+Un valor que el entorno reemplaza por *otro distinto* nunca es silencioso:
+
+- **Al arrancar**, un WARNING por llave:
+  `[plugin.mail] backend = 'console' in jfast.toml is overridden by
+  JFAST_MAIL_BACKEND='smtp' from the environment`. Una credencial sale como
+  `'***'`, y una URL conserva su host y pierde usuario y contraseña
+  (`postgresql+asyncpg://***@db:5432/app`).
+- **`jfast check`** lista los mismos desacuerdos bajo `config`, cada uno con
+  `jfast.toml:<línea>` y la variable, enmascarados igual (`notices` en
+  `--json`). Se reportan y nunca hacen fallar la corrida, `--ci` incluido:
+  describen la máquina que corre el check, no el repositorio, y un default del
+  archivo reemplazado por el valor del despliegue es el diseño funcionando.
+  Fallar ahí empujaría a un equipo a borrar el default o a copiar los valores
+  de producción al CI.
+- **`jfast ai context`** trae una sección `environment`: las llaves del entorno
+  que el archivo escribe, las que este entorno sobrescribe, y la regla. El
+  `AGENTS.md` generado le dice lo mismo a un agente: reportar el desacuerdo a
+  una persona, nunca "arreglar" ninguno de los dos lados.
+- **`jfast upgrade --check`** lista, para un proyecto escrito antes de
+  0.1.0a12, cada llave del entorno que su archivo pone en un valor elegido
+  (nota `jfast-env-wins-over-the-file`).
+
+Los proyectos generados desde 0.1.0a12 no escriben `env` ni `issuer`, y cada
+llave del entorno que sí escriben -- el formato de logs, `serve_local`,
+`base_domain`, los topes del LLM -- lleva un comentario con la variable que le
+gana.
 
 ## El archivo generado es generado
 
@@ -557,6 +627,11 @@ creerle a cualquier número, incluidos los de esta página.
 - [ ] `JFAST_DEBUG=false` — si no, los mensajes de excepción llegan a los
       clientes; le gana a `[app] debug`, igual que `JFAST_ENV`
 - [ ] Todos los secretos desde el entorno, ninguno desde `jfast.toml`
+- [ ] Cada WARNING `overridden by ... from the environment` del log de
+      arranque es uno que querías: cada uno es un default de `jfast.toml` que
+      este despliegue reemplazó ([Quién gana](#quien-gana-jfasttoml-o-el-entorno));
+      `jfast check` corrido con el entorno del despliegue los lista con archivo
+      y línea
 - [ ] `/ready` conectado al readiness probe del orquestador, `/health` al
       liveness — no al revés
 - [ ] RAG `auto_migrate` apagado; esquema manejado por Alembic
