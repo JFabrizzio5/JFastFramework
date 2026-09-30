@@ -129,18 +129,23 @@ for facade in Path("modules").glob("*/public.py"):
 PYEOF
       ;;
     jfast-env-wins-over-the-file)
-      # The note's remedy: drop [app] env (local is the default); the
-      # deployment sets JFAST_ENV.
+      # The note's remedy for the two lines 0.1.0a11 wrote: [app] env = "local"
+      # and [plugin.auth] issuer = "" are development defaults that 0.1.0a12
+      # leaves to the environment (JFAST_ENV, JFAST_AUTH_ISSUER), so both go.
       "${vpy}" - <<'PYEOF'
 import re
 from pathlib import Path
 
 path = Path("jfast.toml")
 source = path.read_text(encoding="utf-8")
-fixed = re.sub(r'(?m)^env = "local"\n', "", source, count=1)
+fixed = source
+for line, where in (('env = "local"', "[app] env"), ('issuer = ""', "[plugin.auth] issuer")):
+    dropped = re.sub(rf"(?m)^{re.escape(line)}\n", "", fixed, count=1)
+    if dropped != fixed:
+        print(f"    removed {where} from jfast.toml")
+    fixed = dropped
 if fixed != source:
     path.write_text(fixed, encoding="utf-8")
-    print("    removed [app] env from jfast.toml")
 PYEOF
       ;;
     unsigned-tenant-needs-a-session)

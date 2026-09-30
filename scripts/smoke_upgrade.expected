@@ -12,8 +12,11 @@
 # repository. It has auth and tenancy with sources = ["token", "subdomain"]
 # and base_domain = "localhost", so a subdomain no longer grants a tenant
 # without a session. No local storage disk and no --unique over an optional
-# field, so those two a12 notes stay quiet. Its [app] says env = "local",
-# which JFAST_ENV now beats.
+# field, so those two a12 notes stay quiet. Its [app] says env = "local" and
+# its [plugin.auth] (jwks mode) issuer = "", which JFAST_ENV and
+# JFAST_AUTH_ISSUER now beat; its other owned lines (log level and format,
+# audience = the service name, base_domain = "localhost") are the development
+# defaults 0.1.0a12 still writes, so the note leaves them out.
 facade-tenant-optional
 jfast-env-wins-over-the-file
 unsigned-tenant-needs-a-session
