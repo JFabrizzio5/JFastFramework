@@ -112,6 +112,9 @@ class ConnectionSettings(BaseModel):
     pool_pre_ping: bool | None = None
     pool_recycle: int | None = None
     pool_timeout: float | None = None
+    # Per instance, because a replica may sit behind a pooler the primary
+    # does not. None takes the plugin's `pgbouncer`.
+    pgbouncer: bool | None = None
 
     # Deploy generation
     include_infra: bool | None = None
@@ -165,6 +168,18 @@ class DatabaseSettings(PluginSettings):
     # connect as a role that is neither a superuser nor BYPASSRLS, or the
     # policies do not apply: production refuses to start otherwise.
     rls: bool = False
+
+    # The DSN points at PgBouncer (or another pooler) in *transaction* mode.
+    # Each transaction may then run on a different server connection, and a
+    # prepared statement asyncpg cached on one does not exist on the next:
+    # `prepared statement "__asyncpg_stmt_7__" does not exist`, under load
+    # and never on a laptop. True turns both statement caches off and gives
+    # every statement a unique name, so two processes sharing a server
+    # connection cannot collide either. Not needed on PgBouncer 1.21+ with
+    # `max_prepared_statements` > 0, which tracks them itself -- but harmless
+    # there, and correct when that setting is 0. Row-level security needs
+    # nothing: the tenant is set transaction-locally. See docs/multitenancy.md.
+    pgbouncer: bool = False
 
     # Named instances. Empty means one instance called `default`, configured by
     # the fields above.
@@ -281,6 +296,10 @@ class DatabaseSettings(PluginSettings):
             "pool_timeout": pick(connection.pool_timeout, self.pool_timeout),
         }
 
+    def behind_pgbouncer(self, name: str) -> bool:
+        connection = self.resolved_connections()[name]
+        return self.pgbouncer if connection.pgbouncer is None else connection.pgbouncer
+
     def max_connections(self) -> int:
         """What one process can open across every named instance."""
         total = 0
@@ -305,7 +324,21 @@ class DatabaseSettings(PluginSettings):
         ]
 
 
-def connect_args_for(dsn: str, *, session_timezone: str, read_only: bool = False) -> dict[str, Any]:
+def _unique_statement_name() -> str:
+    """A prepared statement name no other process will choose.
+
+    asyncpg numbers its statements with a per-process counter, so two workers
+    sharing one pooled server connection would both prepare
+    ``__asyncpg_stmt_1__`` and the second would fail with ``already exists``.
+    """
+    import uuid
+
+    return f"__asyncpg_{uuid.uuid4().hex}__"
+
+
+def connect_args_for(
+    dsn: str, *, session_timezone: str, read_only: bool = False, pgbouncer: bool = False
+) -> dict[str, Any]:
     """asyncpg startup parameters for one engine, or ``{}`` for another driver.
 
     Sent in the startup packet rather than as a ``SET`` after connect, and that
@@ -324,9 +357,23 @@ def connect_args_for(dsn: str, *, session_timezone: str, read_only: bool = False
         # `session.execute(text(...))` fails on the replica instead of
         # succeeding on a database that is about to be overwritten by WAL.
         server_settings["default_transaction_read_only"] = "on"
-    if not server_settings or not dsn.startswith(ASYNCPG_PREFIX):
+    if not dsn.startswith(ASYNCPG_PREFIX):
         return {}
-    return {"server_settings": server_settings}
+    args: dict[str, Any] = {}
+    if server_settings:
+        # Through PgBouncer these are startup parameters it has to forward:
+        # `timezone` is one it tracks natively; `default_transaction_read_only`
+        # needs `track_extra_parameters` (1.20+), or the connection is refused
+        # with "unsupported startup parameter" -- loudly, which is the right
+        # failure for a replica guard.
+        args["server_settings"] = server_settings
+    if pgbouncer:
+        # Transaction pooling: the next transaction may run on another server
+        # connection, where a statement cached on this one does not exist.
+        args["statement_cache_size"] = 0
+        args["prepared_statement_cache_size"] = 0
+        args["prepared_statement_name_func"] = _unique_statement_name
+    return args
 
 
 async def server_timezone(dsn: str, *, session_timezone: str = "UTC") -> tuple[str, str]:
@@ -476,6 +523,7 @@ class TenantEngines:
         pool_pre_ping: bool = True,
         echo: bool = False,
         session_timezone: str = "UTC",
+        pgbouncer: bool = False,
     ) -> None:
         self._resolve = resolve
         self._create = create or self._build_engine
@@ -486,6 +534,7 @@ class TenantEngines:
         self._pool_pre_ping = pool_pre_ping
         self._echo = echo
         self._session_timezone = session_timezone
+        self._pgbouncer = pgbouncer
         self._entries: OrderedDict[str, TenantDatabase] = OrderedDict()
         self.evictions = 0
 
@@ -625,7 +674,9 @@ class TenantEngines:
 
         # A tenant database is a database like any other: the report it answers
         # must not depend on which server that tenant landed on.
-        connect_args = connect_args_for(dsn, session_timezone=self._session_timezone)
+        connect_args = connect_args_for(
+            dsn, session_timezone=self._session_timezone, pgbouncer=self._pgbouncer
+        )
         return create_async_engine(
             dsn,
             echo=self._echo,
@@ -822,6 +873,7 @@ class DatabasePlugin(Plugin):
             pool_pre_ping=settings.pool_pre_ping,
             echo=settings.echo,
             session_timezone=settings.session_timezone,
+            pgbouncer=settings.pgbouncer,
         )
         self._registry = registry
 
@@ -1009,6 +1061,7 @@ class DatabasePlugin(Plugin):
             dsn,
             session_timezone=settings.session_timezone,
             read_only=settings.resolved_connections()[name].read_only,
+            pgbouncer=settings.behind_pgbouncer(name),
         )
         if connect_args:
             options["connect_args"] = connect_args
