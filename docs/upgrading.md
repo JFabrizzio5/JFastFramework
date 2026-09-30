@@ -164,6 +164,84 @@ the real `packaging`, which is installed for development.
 
 ---
 
+## What changes in `0.1.0a11`
+
+Nothing in this release stops a correct `0.1.0a10` service from booting. What
+breaks is behaviour that used to fail quietly and now fails loudly, plus a few
+settings the plugins refuse at boot. The real migration of a four-module
+service (a receipts SaaS on PostgreSQL, Redis, accounts and a queue) went like
+this, and it is the order to follow.
+
+**1. Move the pin, then read the report.** Edit `requirements.txt` to
+`0.1.0a11` *after* running `jfast upgrade --check` against the old pin -- the
+report reads the version from that line. With the new extras installed, run
+`jfast check`: its seventh check, `tenancy`, is new.
+
+**2. Replace tasks queued by name with an event.** `contracts check` now sees
+`Job(task="alerta.revisar_presupuesto")` in another module as a call into it
+(`undeclared-dependency`, and a `module-cycle` if the other module reads back).
+The handler may live in a root `worker.py`: a task name's `<module>.` prefix
+names its owner.
+
+```python
+# before -- modules/comprobante/services/comprobante_service.py
+await outbox.enqueue(session, Job(task="alerta.revisar_presupuesto", payload=...))
+
+# after
+await outbox.publish(session, "comprobantes", Event(type="comprobante.registrado", data=...))
+```
+
+```python
+# modules/alerta/tasks.py
+@subscribe("comprobante.registrado")
+async def revisar_presupuesto(event: Event, session: TaskSession) -> None:
+    ...  # runs as the publishing tenant; committed on return
+```
+
+```toml
+# contracts.toml
+[modules.comprobante]
+publishes = ["comprobante.registrado"]
+```
+
+Without a subscriber and without an event bus, `outbox.publish` now raises
+`UndeliverableEvent` (a 500 naming the fix) instead of answering 201 and
+retrying the row until it died. `publish-without-receiver` finds those calls.
+
+**3. Delete `worker.py`; run `jfast worker`.** Handlers belong in
+`modules/<name>/tasks.py` (`@task`, `@subscribe`), a `TaskSession` replaces the
+session, commit and tenant check written by hand, and `jfast worker` drains on
+SIGTERM. `jfast dev` starts it. Regenerate deployments (`jfast deploy compose`,
+`jfast workspace compose`, `jfast workspace k8s`): they gain a worker service.
+Copy the `[layers.tasks]` block into `contracts.toml` so tasks files have a
+layer (`contracts-tasks-layer`).
+
+**4. Check the defaults that changed.** Four are on by default and reported as
+behaviour: sign-in rate limits with `cache`
+(`accounts-sign-in-rate-limit`), token revocation that fails open when Redis
+is down (`revocation-fail-open`), a 1 s deadline per Redis command
+(`redis-command-timeout`), and database connectivity errors answering 503
+instead of 500 (`database-unavailable-503`). Each note says how to keep the
+old behaviour.
+
+**5. Settings refused at boot.** `settings-refused-at-boot` lists values the
+plugins now reject: `pool_size = 0`, a non-IANA `session_timezone`, a storage
+`visibility` that is neither public nor private, an `access_key` without its
+secret, and more. It reads `jfast.toml` only; values from the environment are
+checked when the service starts.
+
+**6. Accounts clients.** With `email_verification = "required"`, existing users
+are unverified until the grandfathering `UPDATE` in the note runs. With
+`mfa = true`, `/auth/login` can answer a challenge instead of tokens. A
+generated frontend that reads the user from the login response has to call
+`/auth/account` after signing in; `jfast upgrade --check` finds it next to the
+service.
+
+**`jfast add` and your pin.** `jfast add <plugin>` edits `requirements.txt`
+and runs pip -- except when the pin is not the version you are running, or the
+install is editable. Then it prints the command instead: installing the old pin
+would replace the framework you are on.
+
 ## The one that stops a boot in `0.1.0a9`
 
 ### A session that commits after the response

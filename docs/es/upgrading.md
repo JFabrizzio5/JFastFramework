@@ -170,6 +170,85 @@ desarrollo.
 
 ---
 
+## Lo que cambia en `0.1.0a11`
+
+Nada en esta versión impide arrancar a un servicio correcto de `0.1.0a10`. Lo
+que se rompe es comportamiento que antes fallaba en silencio y ahora falla en
+voz alta, más algunos ajustes que los plugins rechazan al arrancar. La
+migración real de un servicio de cuatro módulos (un SaaS de comprobantes sobre
+PostgreSQL, Redis, accounts y una cola) fue así, y es el orden a seguir.
+
+**1. Mueve el pin y luego lee el reporte.** Edita `requirements.txt` a
+`0.1.0a11` *después* de correr `jfast upgrade --check` con el pin viejo: el
+reporte lee la versión de esa línea. Con los extras nuevos instalados, corre
+`jfast check`: su séptimo check, `tenancy`, es nuevo.
+
+**2. Cambia las tareas encoladas por nombre por un evento.** `contracts check`
+ahora ve `Job(task="alerta.revisar_presupuesto")` en otro módulo como una
+llamada a él (`undeclared-dependency`, y `module-cycle` si el otro lee de
+vuelta). El handler puede vivir en un `worker.py` en la raíz: el prefijo
+`<módulo>.` del nombre dice de quién es la tarea.
+
+```python
+# antes -- modules/comprobante/services/comprobante_service.py
+await outbox.enqueue(session, Job(task="alerta.revisar_presupuesto", payload=...))
+
+# después
+await outbox.publish(session, "comprobantes", Event(type="comprobante.registrado", data=...))
+```
+
+```python
+# modules/alerta/tasks.py
+@subscribe("comprobante.registrado")
+async def revisar_presupuesto(event: Event, session: TaskSession) -> None:
+    ...  # corre como el tenant que publicó; commit al volver
+```
+
+```toml
+# contracts.toml
+[modules.comprobante]
+publishes = ["comprobante.registrado"]
+```
+
+Sin suscriptor y sin bus de eventos, `outbox.publish` ahora lanza
+`UndeliverableEvent` (un 500 que dice cómo arreglarlo) en vez de responder 201
+y reintentar la fila hasta que muriera. `publish-without-receiver` encuentra
+esas llamadas.
+
+**3. Borra `worker.py`; corre `jfast worker`.** Los handlers van en
+`modules/<nombre>/tasks.py` (`@task`, `@subscribe`), un `TaskSession` reemplaza
+la sesión, el commit y la revisión de tenant escritos a mano, y `jfast worker`
+drena al recibir SIGTERM. `jfast dev` lo arranca. Regenera los despliegues
+(`jfast deploy compose`, `jfast workspace compose`, `jfast workspace k8s`):
+ganan un servicio worker. Copia el bloque `[layers.tasks]` a `contracts.toml`
+para que los tasks tengan capa (`contracts-tasks-layer`).
+
+**4. Revisa los defaults que cambiaron.** Cuatro vienen encendidos y se
+reportan como comportamiento: límites de inicio de sesión con `cache`
+(`accounts-sign-in-rate-limit`), revocación de tokens que falla abierta cuando
+Redis está caído (`revocation-fail-open`), un deadline de 1 s por comando de
+Redis (`redis-command-timeout`) y errores de conexión a la base que responden
+503 en vez de 500 (`database-unavailable-503`). Cada nota dice cómo conservar
+el comportamiento anterior.
+
+**5. Ajustes rechazados al arrancar.** `settings-refused-at-boot` lista los
+valores que los plugins ya rechazan: `pool_size = 0`, un `session_timezone` que
+no es IANA, una `visibility` de storage que no es public ni private, un
+`access_key` sin su secreto, y más. Solo lee `jfast.toml`; los valores del
+entorno se revisan al arrancar el servicio.
+
+**6. Clientes de accounts.** Con `email_verification = "required"`, los
+usuarios existentes quedan sin verificar hasta correr el `UPDATE` de la nota.
+Con `mfa = true`, `/auth/login` puede responder un reto en vez de tokens. Un
+frontend generado que lee el usuario de la respuesta del login tiene que llamar
+`/auth/account` después de iniciar sesión; `jfast upgrade --check` lo encuentra
+junto al servicio.
+
+**`jfast add` y tu pin.** `jfast add <plugin>` edita `requirements.txt` y corre
+pip, excepto cuando el pin no es la versión que estás usando o la instalación
+es editable. Entonces imprime el comando en su lugar: instalar el pin viejo
+reemplazaría el framework con el que estás trabajando.
+
 ## El que detiene un arranque en `0.1.0a9`
 
 ### Una sesión que confirma después de la respuesta
