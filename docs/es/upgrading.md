@@ -184,7 +184,7 @@ Correcciones, y una es de seguridad y cambia respuestas:
   `Depends(requested_tenant)`; un servicio cuyos tokens no traen tenant y que
   revisa la membresía por su cuenta pone `[plugin.tenancy]
   trust_unscoped_principals = true`. Ver
-  [multi-tenancy](multitenancy.md#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-sí-sola).
+  [multi-tenancy](multitenancy.md#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-si-sola).
 
 - `jfast-env-wins-over-the-file` -- `[app] env` (o `debug`) en `jfast.toml`,
   que tiene todo proyecto que generó `jfast start`. `JFAST_ENV` en el entorno

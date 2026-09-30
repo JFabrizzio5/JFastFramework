@@ -156,7 +156,7 @@ un token vencido tiene que hacer que el cliente refresque, y los clientes
 refrescan ante un 401, no ante un 403 --, y **403** cuando el tenant de quien
 llama no coincide con el que nombra el request, o las fuentes no pudieron
 limitarlo a ningún tenant (la
-[tabla de arriba](#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-sí-sola)).
+[tabla de arriba](#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-si-sola)).
 No lee nada más -- ni un header, ni un campo del body.
 En un servicio sin el plugin tenancy cae al claim `tenant_id` del token, así que
 un servicio que solo usa `auth` sigue funcionando.

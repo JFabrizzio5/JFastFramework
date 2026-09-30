@@ -212,7 +212,7 @@ puede venir del entorno en vez del archivo --
 como en todos los plugins, un valor en `jfast.toml` gana sobre el entorno, así
 que deja `base_url` fuera del archivo para un upstream cuya dirección cambia
 según el entorno. (Solo `[app] env` y `debug` van al revés; ver
-[deploy](deploy.md#quién-gana-jfasttoml-o-el-entorno).)
+[deploy](deploy.md#quien-gana-jfasttoml-o-el-entorno).)
 
 ## Salud
 
