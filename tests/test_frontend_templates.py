@@ -501,3 +501,17 @@ def test_without_accounts_the_frontend_stays_public_and_offers_no_account_pages(
     assert "const PUBLIC_BY_DEFAULT = true" in router
     assert "RegisterView" not in router and "SecurityView" not in router
     assert "/account/security" not in (root / "src/menuAside.js").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("framework", FRAMEWORKS)
+@pytest.mark.parametrize("look", ["classic", "nexora"])
+def test_the_api_client_does_not_force_json_so_uploads_stay_files(
+    tmp_path: Path, framework: str, look: str
+) -> None:
+    # Found building a receipts SaaS from scratch, then reproduced with axios
+    # 1.20: with Content-Type forced to application/json, axios serialises a
+    # FormData to {"archivo":{}} and the file never reaches the server.
+    root = _render(tmp_path, framework, look)
+    api = (root / "src/services/api.js").read_text(encoding="utf-8")
+    code = "\n".join(line for line in api.splitlines() if not line.strip().startswith("//"))
+    assert "application/json" not in code

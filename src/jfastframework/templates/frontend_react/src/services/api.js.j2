@@ -8,7 +8,9 @@ import { LOGIN_ROUTE, REFRESH_KEY, TOKEN_KEY, useAuthStore } from '@/stores/auth
 // -- which runs the expensive call a second time.
 const config = {
   baseURL: import.meta.env.VITE_API_URL,
-  headers: { 'Content-Type': 'application/json' },
+  // No Content-Type here: axios sends a plain object as JSON by itself, and a
+  // forced application/json turned FormData into {"archivo":{}} -- the file
+  // never reached the server. Left alone, an upload goes as multipart.
   timeout: Number(import.meta.env.VITE_API_TIMEOUT) || 60000,
 }
 
