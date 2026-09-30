@@ -102,6 +102,29 @@ atrapan código generado:
 
 ---
 
+## Genera el módulo que querías, y construye encima
+
+Un agente al que se le daba `jfast new module invoice` gastaba sus primeras
+ediciones borrando el ejemplo -- `name`, `description`, `is_active` y sus
+tests --, y el diff que leía el revisor era sobre todo eso. Dale los campos al
+generador y el primer borrador no tiene nada que borrar:
+
+```bash
+jfast new module invoice --fields "customer_id:int, number:str(20), total:money, paid:bool=false" \
+  --unique "number"
+```
+
+Lo que escribe ya pasa `ruff check .`, `ruff format --check .`, `mypy .`
+(estricto) y `pytest`, en todos los layouts, así que un control en rojo después
+de la edición de un agente es la edición del agente. Las rutas quedan
+protegidas según esté configurado el servicio (`current_tenant` con tenancy,
+`require_auth` con auth), y el módulo trae un `tasks.py` para su trabajo en
+segundo plano. La gramática está en
+[Módulos](modules.md#campos-genera-el-modulo-que-querias); `--bare` es la
+estructura sin ningún campo.
+
+---
+
 ## Exime una línea, no borres la regla
 
 ```python
@@ -140,16 +163,16 @@ servicio, así que escala con tu servicio. Medido sobre servicios generados —
 
 | módulos | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 8,909 | 2,910 |
-| 3 | 10,613 | 4,196 |
-| 5 | 12,333 | 5,494 |
+| 1 | 9,525 | 3,016 |
+| 3 | 11,555 | 4,578 |
+| 5 | 13,603 | 6,154 |
 
 Un servicio recién generado es el piso, porque todavía no hay nada mal en él. El
 mismo servicio de cinco módulos después de trabajarlo un rato — dos módulos que
 `main.py` nunca levantó, un archivo fuera de todo módulo, dos violaciones de
 contrato — mide unos **3.3 KB más que el piso de arriba completo, y 0.8 KB más
 con `--brief`** (medido en 0.1.0a9, cuando los pisos eran 11.5 KB y 5.4 KB).
-Aproximadamente +800 bytes por módulo; el resto es `next` y `checks`
+Aproximadamente +1,000 bytes por módulo (0.1.0a11 agregó la fachada, los eventos y las tareas de cada módulo); el resto es `next` y `checks`
 creciendo con lo que realmente está pendiente.
 
 Dónde se va el payload completo en ese servicio de cinco módulos, en bytes:

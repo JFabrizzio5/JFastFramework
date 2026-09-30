@@ -333,7 +333,20 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "plugins",
         ),
     ),
-    ("Run", ("workspaces", "deploy", "kubernetes", "cloud", "migrations", "timezones")),
+    (
+        "Run",
+        (
+            "workspaces",
+            "deploy",
+            "telemetry",
+            "kubernetes",
+            "resilience",
+            "scaling",
+            "cloud",
+            "migrations",
+            "timezones",
+        ),
+    ),
     (
         "Guard",
         (
@@ -451,6 +464,18 @@ PAGES: tuple[Page, ...] = (
     Page("cloud", "Cloud", DOCS / "cloud.md", "Secrets, functions, notifications."),
     Page("kubernetes", "Kubernetes", DOCS / "kubernetes.md", "Manifests from the contract."),
     Page(
+        "resilience",
+        "Resilience",
+        DOCS / "resilience.md",
+        "Deadlines, breakers, what fails open, what /ready says, and the drills.",
+    ),
+    Page(
+        "scaling",
+        "Scaling",
+        DOCS / "scaling.md",
+        "What a request costs, jfast bench, replicas, MinIO, RAG and aggregates — measured.",
+    ),
+    Page(
         "timezones",
         "Time zones",
         DOCS / "timezones.md",
@@ -483,6 +508,12 @@ PAGES: tuple[Page, ...] = (
     ),
     Page("plugins", "Writing a plugin", DOCS / "plugins.md", "The extension point."),
     Page("deploy", "Deployment", DOCS / "deploy.md", "Compose, Caddy, Dockerfile."),
+    Page(
+        "telemetry",
+        "Telemetry",
+        DOCS / "telemetry.md",
+        "One request traced through services, SQL, models and jobs.",
+    ),
     Page("skills", "Skills for agents", DOCS / "skills.md", "Making it legible to AI."),
     Page("architecture", "Architecture", REPO / "ARCHITECTURE.md", "Decisions and their costs."),
     Page(
@@ -561,6 +592,9 @@ NAV_ES: dict[str, str] = {
     "workspaces": "Workspaces",
     "deploy": "Despliegue",
     "kubernetes": "Kubernetes",
+    "telemetry": "Telemetría",
+    "resilience": "Resiliencia",
+    "scaling": "Escalar",
     "cloud": "Nube",
     "migrations": "Migraciones y tests",
     "timezones": "Zonas horarias",
@@ -620,6 +654,9 @@ PAGE_ICON: dict[str, str] = {
     "workspaces": "grid",
     "deploy": "ship",
     "kubernetes": "cloud",
+    "telemetry": "activity",
+    "resilience": "activity",
+    "scaling": "gauge",
     "cloud": "cloud",
     "migrations": "arrows",
     "timezones": "history",

@@ -37,7 +37,9 @@ implementation, which *is* installed for development.
 from __future__ import annotations
 
 import ast
+import functools
 import json
+import os
 import re
 import tomllib
 from collections.abc import Callable, Iterator
@@ -240,23 +242,83 @@ def _table(config: dict[str, Any], *keys: str) -> dict[str, Any]:
     return current if isinstance(current, dict) else {}
 
 
+def _active_plugins(project: Project) -> frozenset[str]:
+    """The plugins the registry will load for this project, not the list it wrote.
+
+    ``[plugins].enabled`` is an allow-list with two rules the literal list does
+    not show: an empty one loads every ``default_enabled`` plugin (metrics
+    among them), and a plugin another one ``requires`` is loaded without being
+    named (``ratelimit`` pulls in ``cache``). ``disabled`` wins over both. A
+    detector reading the list itself reports the service somebody meant to
+    write, not the one that runs.
+    """
+    return _resolved_plugins(tuple(project.plugins), tuple(project.disabled))
+
+
+@functools.lru_cache(maxsize=64)
+def _resolved_plugins(enabled: tuple[str, ...], disabled: tuple[str, ...]) -> frozenset[str]:
+    from jfastframework.plugins import registry
+
+    try:
+        chosen = registry.select(
+            _installed_plugins(), enabled=list(enabled), disabled=list(disabled)
+        )
+    except Exception:  # noqa: BLE001 -- a graph that will not resolve is `jfast check`'s report
+        # The list as written, minus what it disables: the best statement of
+        # intent available when a named plugin is not installed here.
+        return frozenset(name for name in enabled if name not in disabled)
+    return frozenset(cls.meta.name for cls in chosen)
+
+
+@functools.lru_cache(maxsize=1)
+def _installed_plugins() -> dict[str, Any]:
+    from jfastframework.plugins import registry
+
+    return dict(registry.discover())
+
+
 def _issues_tokens(project: Project) -> bool:
     """Whether this service is the one minting tokens, not just verifying them.
 
     A service that only validates somebody else's tokens is untouched by every
     change to the issuing endpoints, which is most services with `auth` on.
     """
-    if "auth" not in project.plugins:
+    if "auth" not in _active_plugins(project):
         return False
     return bool(_table(_config(project), "plugin", "auth").get("issue_tokens", False))
 
 
+def _skipped(path: Path, root: Path) -> bool:
+    """Whether *path* sits in a directory this report never reads.
+
+    Tested on the parts *below the project root*, not on the absolute path: a
+    checkout at `~/build/billing` or `/srv/site/billing` is a project, and
+    testing the absolute parts skipped every file in it -- so every note that
+    reads source reported a clean project.
+    """
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = path.parts
+    return any(part in SKIP_DIRS for part in parts)
+
+
+def _files(root: Path, *suffixes: str) -> list[Path]:
+    """Every file under *root* ending in one of *suffixes*, SKIP_DIRS pruned.
+
+    Pruned while walking rather than filtered afterwards: a `.venv` inside the
+    project holds tens of thousands of files, and `rglob` reads every one of
+    them before a filter can throw them away.
+    """
+    found: list[Path] = []
+    for directory, subdirectories, names in os.walk(root):
+        subdirectories[:] = [name for name in subdirectories if name not in SKIP_DIRS]
+        found += [Path(directory, name) for name in names if name.endswith(suffixes)]
+    return sorted(found)
+
+
 def _python_files(root: Path) -> list[Path]:
-    return [
-        path
-        for path in sorted(root.rglob("*.py"))
-        if not any(part in SKIP_DIRS for part in path.parts)
-    ]
+    return _files(root, ".py")
 
 
 def _parsed_files(root: Path) -> list[tuple[str, ast.Module]]:
@@ -537,7 +599,7 @@ def _env_drops_framework_tables(project: Project) -> list[str]:
     """
     affected = []
     for env in sorted(project.root.rglob("migrations/env.py")):
-        if any(part in SKIP_DIRS for part in env.parts):
+        if _skipped(env, project.root):
             continue
         try:
             source = env.read_text(encoding="utf-8")
@@ -561,9 +623,21 @@ def _token_store_implementations(project: Project) -> list[str]:
             if (
                 isinstance(statement, ast.AsyncFunctionDef | ast.FunctionDef)
                 and statement.name == "rotate_refresh"
+                # Already migrated: the grace keyword is the half of the new
+                # protocol a signature shows. A store fixed before the pin was
+                # bumped is not told to do what it has done.
+                and not _takes_argument(statement, "grace")
             ):
                 affected.append(f"{where}:{statement.lineno}  ->  {node.name}.rotate_refresh")
     return affected
+
+
+def _takes_argument(function: ast.AsyncFunctionDef | ast.FunctionDef, name: str) -> bool:
+    arguments = function.args
+    return any(
+        argument.arg == name
+        for argument in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+    )
 
 
 def _refresh_grace_unset(project: Project) -> list[str]:
@@ -728,14 +802,40 @@ def _globs_that_narrowed(project: Project) -> list[str]:
         if not path.is_file():
             continue
         relative = path.relative_to(project.root).as_posix()
-        if any(part in {".venv", "__pycache__", ".git"} for part in path.parts):
+        if any(
+            part in {".venv", "__pycache__", ".git"}
+            for part in path.relative_to(project.root).parts
+        ):
             continue
-        for layer, patterns in sorted(layers.items()):
-            was = any(fnmatch(relative, p) for p in patterns)
-            now = any(match_path(relative, p) for p in patterns)
-            if was and not now:
-                lost.append(f"{relative} (was layer {layer!r})")
+        # The layer each matcher *resolves* the file to, not each layer on its
+        # own: a screaming contract's catch-all also matched `use_cases/*.py`
+        # under fnmatch, but the more specific use_cases layer won then and wins
+        # now, so nothing changed hands.
+        was = _resolve_layer(layers, relative, fnmatch)
+        now = _resolve_layer(layers, relative, match_path)
+        if was is not None and was != now:
+            now_text = "no layer" if now is None else f"layer {now!r}"
+            lost.append(f"{relative} (was layer {was!r})  ->  {now_text}")
     return sorted(lost)
+
+
+def _resolve_layer(
+    layers: dict[str, list[str]], relative: str, matches: Callable[[str, str], bool]
+) -> str | None:
+    """The layer `Contract.layer_for` would pick for *relative* under *matches*.
+
+    Its specificity rule, restated so it can run under the old matcher too:
+    fewest wildcards, then the longer pattern, then the layer name.
+    """
+    best: tuple[int, int, str] | None = None
+    for name, patterns in layers.items():
+        for pattern in patterns:
+            if not matches(relative, pattern):
+                continue
+            candidate = (-sum(pattern.count(char) for char in "*?["), len(pattern), name)
+            if best is None or candidate > best:
+                best = candidate
+    return best[2] if best else None
 
 
 def _naive_datetimes(project: Project) -> list[str]:
@@ -779,7 +879,9 @@ def _session_store_missing(project: Project) -> list[str]:
     """
     if not _issues_tokens(project):
         return []
-    if "cache" in project.plugins:
+    # Resolved, not read off the list: `ratelimit` requires `cache`, and the
+    # registry loads it unasked -- so auth finds `cache.client` and never refuses.
+    if "cache" in _active_plugins(project):
         return []
     return ['[plugins] enabled has "auth" with issue_tokens = true and no "cache"']
 
@@ -818,11 +920,22 @@ def _rag_without_tenant_scope(project: Project) -> list[str]:
 
 
 def _rag_router_default(project: Project) -> list[str]:
-    """A rag service that relied on the router being mounted by default."""
+    """A rag service whose router moved: gone by default, or behind auth when kept.
+
+    Only an explicit ``false`` means nothing is left to do. ``true`` was legal in
+    0.1.0a9 without auth; 0.1.0a10 refuses to start it that way, and with auth
+    the router wants a signed-in caller and ignores the tenant in the body.
+    """
     rag = _rag_settings(project)
-    if rag is None or "mount_router" in rag:
+    if rag is None or rag.get("mount_router") is False:
         return []
-    return ["[plugin.rag] mount_router now defaults to false (POST /rag/search is gone)"]
+    if "mount_router" not in rag:
+        return ["[plugin.rag] mount_router now defaults to false (POST /rag/search is gone)"]
+    auth = "" if "auth" in _active_plugins(project) else ", and auth is not enabled"
+    return [
+        "[plugin.rag] mount_router = true: the router now needs a signed-in caller and takes "
+        f"the tenant from the token{auth}"
+    ]
 
 
 def _rag_on_qdrant(project: Project) -> list[str]:
@@ -871,7 +984,25 @@ def _module_boundary_violations(project: Project) -> list[str]:
         f"{v.path}:{v.line} {v.rule}: {v.message}"
         for v in check_placement(contract, project.root)
         if v.rule in _NEW_BOUNDARY_RULES
+        or (v.rule == _CROSS_MODULE and _widened_cross_module(project.root, v.path, v.line))
     ][:20]
+
+
+_CROSS_MODULE = "cross-module"
+
+
+def _widened_cross_module(root: Path, relative: str, line: int) -> bool:
+    """A `cross-module` finding on a spelling the rule only catches since 0.1.0a10.
+
+    Relative imports across modules, and the second and later names in
+    `import a, b`. An absolute `from modules.x import y` failed 0.1.0a9's check
+    as well, so it is not news to the project -- but these passed yesterday.
+    """
+    try:
+        text = (root / relative).read_text(encoding="utf-8").splitlines()[line - 1].strip()
+    except (OSError, IndexError):
+        return False
+    return text.startswith("from .") or (text.startswith("import ") and "," in text)
 
 
 def _screaming_contract_without_public_layer(project: Project) -> list[str]:
@@ -898,6 +1029,8 @@ def _direct_calls_to_async_dependencies(project: Project) -> list[str]:
     ``require_auth(request)`` in a service factory -- now returns a coroutine,
     and the first attribute read on it fails.
     """
+    from jfastframework.contracts._scan import call_name, import_aliases, resolve
+
     found = []
     for relative, tree in _parsed_files(project.root):
         awaited = {
@@ -905,13 +1038,20 @@ def _direct_calls_to_async_dependencies(project: Project) -> list[str]:
             for node in ast.walk(tree)
             if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
         }
-        found += [
-            f"{relative}:{node.lineno} {_called_name(node.func)}(...)"
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and _called_name(node.func) in _NOW_ASYNC
-            and id(node) not in awaited
-        ]
+        aliases = import_aliases(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or id(node) in awaited:
+                continue
+            # Resolved through the file's imports: `current_tenant` is a name any
+            # multi-tenant codebase may already have, and a helper of its own
+            # never became a coroutine.
+            written = call_name(node)
+            origin = resolve(written, aliases) if written else None
+            if origin is None or not origin.startswith("jfastframework."):
+                continue
+            name = origin.rsplit(".", 1)[-1]
+            if name in _NOW_ASYNC:
+                found.append(f"{relative}:{node.lineno} {name}(...)")
     return found
 
 
@@ -926,16 +1066,24 @@ def _sync_request_factories(project: Project) -> list[str]:
     for relative, tree in _parsed_files(project.root):
         if not relative.startswith("modules/"):
             continue
-        for node in ast.walk(tree):
+        # The module's own body: a dependency is a module-level function. A
+        # `get_service` method is ordinary Python that FastAPI never calls, and
+        # making it `async` -- the remedy -- breaks every caller.
+        for node in tree.body:
             if isinstance(node, ast.FunctionDef) and node.name in ("get_service", "get_use_cases"):
                 found.append(f"{relative}:{node.lineno} def {node.name}")
     return found
 
 
 def _metrics_enabled(project: Project) -> list[str]:
-    if "metrics" not in project.plugins:
+    """Metrics as the registry resolves it: `disabled` wins, an empty list loads it."""
+    if "metrics" not in _active_plugins(project):
         return []
-    return ["[plugins] enabled includes metrics"]
+    if "metrics" in project.plugins:
+        return ["[plugins] enabled includes metrics"]
+    if not project.plugins:
+        return ["[plugins] enabled is empty, so metrics loads by default"]
+    return ["metrics loads as a dependency of another enabled plugin"]
 
 
 def _job_timeout_past_the_claim(project: Project) -> list[str]:
@@ -1040,6 +1188,868 @@ def _client_env_vars(project: Project) -> set[str]:
     return variables
 
 
+# ---------------------------------------------------------------------------
+# 0.1.0a11
+# ---------------------------------------------------------------------------
+
+
+def _eager_adapter_imports(project: Project) -> list[str]:
+    """A module package init that imports its HTTP adapter at import time.
+
+    0.1.0a10's hexagonal template bound ``CreatePayload`` with a plain
+    ``from .adapters.http import X as CreatePayload`` at the top of
+    ``modules/<name>/__init__.py``. Python runs that file on the way to
+    ``modules.<name>.domain``, so importing the domain loaded FastAPI, Pydantic
+    and SQLAlchemy -- and the module's own domain test, which checks exactly
+    that, fails. Only the module's own body counts: the same import under
+    ``if TYPE_CHECKING:`` or inside ``__getattr__`` is the fix, not the bug.
+    """
+    modules = project.root / "modules"
+    if not modules.is_dir():
+        return []
+    found = []
+    for init in sorted(modules.glob("*/__init__.py")):
+        try:
+            tree = ast.parse(init.read_text(encoding="utf-8"), filename=str(init))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        relative = init.relative_to(project.root).as_posix()
+        for node in tree.body:
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 1
+                and (node.module or "").split(".", 1)[0] == "adapters"
+            ):
+                names = ", ".join(
+                    f"{alias.name} as {alias.asname}" if alias.asname else alias.name
+                    for alias in node.names
+                )
+                found.append(f"{relative}:{node.lineno} from .{node.module} import {names}")
+    return found
+
+
+_TASK_FILES = ("modules/*/tasks.py", "modules/*/tasks/*.py")
+
+
+def _tasks_without_a_tasks_layer(project: Project) -> list[str]:
+    """Module ``tasks.py`` files the project's contract gives to no tasks layer.
+
+    Contracts generated before 0.1.0a11 have no ``[layers.tasks]``. Under the
+    screaming contract its catch-all claims ``tasks.py`` as domain, so a task
+    that calls the use cases -- what one is for -- is a layer violation; under
+    the others the file matches no layer and no layer rule applies to it at
+    all. Reported only where a tasks file exists: a contract with nothing to
+    misclassify has nothing to fix yet.
+    """
+    from jfastframework.contracts.model import Contract
+
+    path = project.root / "contracts.toml"
+    if not path.is_file():
+        return []
+    try:
+        contract = Contract.load(path)
+    except Exception:  # noqa: BLE001 -- an unreadable contract is `contracts check`'s to report
+        return []
+
+    found = []
+    files = sorted(
+        {
+            file.relative_to(project.root).as_posix()
+            for pattern in _TASK_FILES
+            for file in project.root.glob(pattern)
+            if file.is_file() and not _skipped(file, project.root)
+        }
+    )
+    for relative in files:
+        layer = contract.layer_for(relative)
+        if layer is not None and (
+            layer.name == "tasks" or any("tasks" in pattern for pattern in layer.paths)
+        ):
+            continue
+        found.append(
+            f"{relative}  ->  "
+            + (f"layer {layer.name!r}" if layer is not None else "no layer, so no layer rule")
+        )
+    return found
+
+
+def _event_and_task_wiring(project: Project) -> list[str]:
+    """What the event and task-name rules report in this project today.
+
+    Run for real, as `module-boundaries` is: orphan-subscription,
+    undeclared-event and unused-dependency are new, and undeclared-dependency
+    now also covers a job queued by name for a task another module owns --
+    ``Job(task="alerta.revisar")`` from ``comprobante`` is a call into
+    ``alerta`` spelt so no import-based check could see it.
+    """
+    from jfastframework.contracts.model import Contract
+    from jfastframework.contracts.placement import UNDECLARED_RULE, check_placement
+    from jfastframework.contracts.wiring import (
+        ORPHAN_RULE,
+        UNDECLARED_EVENT_RULE,
+        UNUSED_RULE,
+    )
+
+    path = project.root / "contracts.toml"
+    if not path.is_file():
+        return []
+    try:
+        contract = Contract.load(path)
+    except Exception:  # noqa: BLE001 -- an unreadable contract is `contracts check`'s to report
+        return []
+    new = {ORPHAN_RULE, UNDECLARED_EVENT_RULE, UNUSED_RULE}
+    return [
+        f"{v.path}:{v.line} {v.rule}: {v.message}"
+        for v in check_placement(contract, project.root)
+        if v.rule in new or (v.rule == UNDECLARED_RULE and " queues task " in v.message)
+    ][:20]
+
+
+def _events_nobody_receives(project: Project) -> list[str]:
+    """Event types built in a module that nothing in this service can receive.
+
+    ``Outbox.publish`` delivers to this service's own ``@subscribe`` handlers
+    through the queue, and to other services through the event bus. With
+    neither it raises ``UndeliverableEvent`` in the request now -- a 500 where
+    0.1.0a10 answered 201 and wrote a row the relay could only kill. Decided
+    from string literals, as the contract rules are: a type built at run time
+    is not guessed at.
+    """
+    if "events" in _active_plugins(project):
+        return []
+    from jfastframework.contracts.wiring import scan
+
+    wiring = scan(project.root)
+    received = {site.name for site in wiring.subscriptions}
+    return [
+        f'{site.file}:{site.line} Event(type="{site.name}") -- no @subscribe("{site.name}") '
+        f"in this service and no events plugin"
+        for site in sorted(wiring.publications, key=lambda s: (s.file, s.line))
+        if site.name not in received and not site.waived
+    ]
+
+
+def _framework_calls(tree: ast.Module) -> Iterator[tuple[ast.Call, str]]:
+    """Each call in *tree* whose target resolves to a name from jfastframework.
+
+    Resolved through the file's own imports, so a project class that happens
+    to be called ``Worker`` or ``Outbox`` is not mistaken for the framework's.
+    """
+    from jfastframework.contracts._scan import call_name, import_aliases, resolve
+
+    aliases = import_aliases(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        written = call_name(node)
+        origin = resolve(written, aliases) if written else None
+        if origin is not None and origin.startswith("jfastframework."):
+            yield node, origin
+
+
+def _root_workers(project: Project) -> list[str]:
+    """A hand-written worker at the root of the service.
+
+    Before 0.1.0a11 that was the only way to run jobs: a ``worker.py`` that
+    booted the app, registered handlers with ``registry.task(...)`` and ran
+    ``Worker(...)``. Modules now declare their own with ``@task`` and
+    ``@subscribe`` in ``tasks.py`` and ``jfast worker`` runs them, which is
+    what the generated deployments start.
+    """
+    found: list[tuple[str, int, str]] = []
+    for path in sorted(project.root.glob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        workers = [
+            call for call, origin in _framework_calls(tree) if origin.rsplit(".", 1)[-1] == "Worker"
+        ]
+        if not workers:
+            continue
+        found += [(path.name, call.lineno, "Worker(...)") for call in workers]
+        # `tasks.task(...)` on the registry the app published: an attribute
+        # call on a local name, which no import resolves -- so it counts only
+        # in a file that is running a framework worker at all.
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "task"
+                and isinstance(node.func.value, ast.Name)
+            ):
+                found.append((path.name, node.lineno, f"{node.func.value.id}.task(...)"))
+    return [f"{name}:{line} {what}" for name, line, what in sorted(found)]
+
+
+def _outboxes_built_by_hand(project: Project) -> list[str]:
+    """``Outbox(...)`` constructed in the project without an event bus.
+
+    The plugin passes ``events=`` itself. A hand-built outbox without it now
+    delivers an event only to this service's own subscribers, and raises when
+    there are none, where it used to write a row for the relay to publish.
+    """
+    found = []
+    for relative, tree in _parsed_files(project.root):
+        for node, origin in _framework_calls(tree):
+            if origin.rsplit(".", 1)[-1] != "Outbox" or not origin.startswith(
+                "jfastframework.outbox"
+            ):
+                continue
+            if any(keyword.arg == "events" or keyword.arg is None for keyword in node.keywords):
+                continue
+            found.append(f"{relative}:{node.lineno} Outbox(...) without events=")
+    return found
+
+
+def _workers_without_a_drain_window(project: Project) -> list[str]:
+    """``Worker(...)`` built in the project that stops on the new default window."""
+    from jfastframework.queues.worker import DEFAULT_DRAIN_SECONDS
+
+    found = []
+    for relative, tree in _parsed_files(project.root):
+        for node, origin in _framework_calls(tree):
+            if origin.rsplit(".", 1)[-1] != "Worker" or not origin.startswith(
+                "jfastframework.queues"
+            ):
+                continue
+            if any(keyword.arg in ("drain_timeout", None) for keyword in node.keywords):
+                continue
+            found.append(
+                f"{relative}:{node.lineno} Worker(...) drains for "
+                f"{DEFAULT_DRAIN_SECONDS:g}s, then releases what is still running"
+            )
+    return found
+
+
+def _workspace_of(project: Project) -> tuple[Path, list[tuple[str, str]]] | None:
+    """The workspace this service belongs to: its root and its `(kind, path)` entries.
+
+    Only when the workspace file lists this service. A workspace file above an
+    unrelated project is an accident of where it was cloned, and its compose
+    file says nothing about this one.
+    """
+    from jfastframework.workspace import Workspace
+
+    try:
+        path = Workspace.find(project.root)
+        if path is None:
+            return None
+        workspace = Workspace.load(path)
+    except Exception:  # noqa: BLE001 -- a broken workspace file is `jfast workspace`'s report
+        return None
+    root = path.parent
+    entries = [(service.kind, service.path) for service in workspace.services]
+    mine = project.root.resolve()
+    if not any((root / where).resolve() == mine for _, where in entries):
+        return None
+    return root, entries
+
+
+def _label(path: Path, project: Project) -> str:
+    """*path* as the person at the project root would type it."""
+    return Path(os.path.relpath(path, project.root)).as_posix()
+
+
+def _compose_files(directory: Path) -> list[Path]:
+    return sorted(
+        path
+        for pattern in ("docker-compose*.yml", "docker-compose*.yaml", "compose.y*ml")
+        for path in directory.glob(pattern)
+        if path.is_file()
+    )
+
+
+_WORKER_WORD = re.compile(r"\bworker\b", re.IGNORECASE)
+
+
+def _deployments_without_a_worker(project: Project) -> list[str]:
+    """Deployment files for a service with a queue, none of which runs a worker.
+
+    Generated deployments start one next to the API since 0.1.0a11 -- the same
+    image running ``jfast worker``. Any container that mentions a worker counts
+    as one, a hand-written ``python worker.py`` included: the question is
+    whether anything consumes the queue, not whose command does it.
+    """
+    if "queue" not in _active_plugins(project):
+        return []
+    candidates: list[tuple[str, list[Path]]] = [
+        (_label(path, project), [path]) for path in _compose_files(project.root)
+    ]
+    k8s = project.root / "k8s"
+    if k8s.is_dir():
+        candidates.append((_label(k8s, project) + "/", sorted(k8s.rglob("*.y*ml"))))
+    workspace = _workspace_of(project)
+    if workspace is not None and workspace[0].resolve() != project.root.resolve():
+        root = workspace[0]
+        candidates += [(_label(path, project), [path]) for path in _compose_files(root)]
+        if (root / "k8s").is_dir():
+            candidates.append(
+                (_label(root / "k8s", project) + "/", sorted((root / "k8s").rglob("*.y*ml")))
+            )
+
+    found = []
+    for label, files in candidates:
+        texts = []
+        for file in files:
+            try:
+                texts.append(file.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+        if texts and not any(_WORKER_WORD.search(text) for text in texts):
+            found.append(f"{label}: no worker container, so nothing consumes the queue")
+    return found
+
+
+def _workspace_compose_missing_client_env(project: Project) -> list[str]:
+    """The workspace compose file without the addresses this service's plugins read.
+
+    ``jfast workspace compose`` wired the datastores it declared as workspace
+    resources and dropped the rest of each plugin's ``client_env`` -- the Kafka
+    brokers, a RabbitMQ URL, an S3 endpoint -- so those containers fell back to
+    the .env, which holds the host's addresses. 0.1.0a11 writes them.
+    """
+    workspace = _workspace_of(project)
+    if workspace is None:
+        return []
+    root, _ = workspace
+    expected = _client_env_vars(project)
+    found = []
+    for compose in _compose_files(root):
+        try:
+            body = compose.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        missing = sorted(var for var in expected if var not in body)
+        if missing:
+            found.append(
+                f"{_label(compose, project)}: no internal address for {', '.join(missing)}"
+            )
+    return found
+
+
+def _queue_settings(project: Project) -> dict[str, Any]:
+    return _table(_config(project), "plugin", "queue")
+
+
+def _framework_tables_owned_elsewhere(project: Project) -> list[str]:
+    """Framework tables that gain a column at startup, which this project also manages.
+
+    ``jfast_jobs`` gains ``trace`` and ``jfast_users`` five nullable columns,
+    each an ``ADD COLUMN IF NOT EXISTS`` the service runs as it starts. The
+    role that created the table owns it and may alter it, so a table the
+    service created itself is no concern. One that the project's own
+    migrations or SQL create, grant or alter was likely created by another
+    role -- and then the service's role cannot alter it and the start fails.
+    """
+    active = _active_plugins(project)
+    tables = []
+    queue = _queue_settings(project)
+    if "queue" in active and queue.get("backend", "postgres") == "postgres":
+        tables.append(str(queue.get("name", "jfast_jobs")))
+    if "accounts" in active:
+        tables.append("jfast_users")
+    if not tables:
+        return []
+
+    pattern = re.compile(r"\b(" + "|".join(re.escape(table) for table in tables) + r")\b")
+    sources = [
+        path
+        for path in _files(project.root, ".sql", ".py")
+        if path.suffix == ".sql" or "migrations" in path.relative_to(project.root).parts
+    ]
+    found = []
+    for path in sources:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for number, line in enumerate(lines, start=1):
+            match = pattern.search(line)
+            if match:
+                found.append(f"{_label(path, project)}:{number} names {match.group(1)}")
+                break
+    return found
+
+
+# Where a generated frontend keeps each piece, in both frameworks.
+_FRONTEND_AUTH = ("src/stores/auth.store.js", "src/services/auth.service.js")
+_FRONTEND_API = ("src/services/api.js",)
+_FRONTEND_ROUTER = ("src/router/index.js", "src/router/index.jsx")
+
+
+def _frontends(project: Project) -> list[Path]:
+    """Frontend projects that talk to this service.
+
+    The workspace's `spa` entries when the workspace lists this service --
+    ``jfast start`` puts the frontend beside the API, not inside it -- and any
+    directory directly under the service that is a Vite project of its own.
+    """
+    found: list[Path] = []
+    workspace = _workspace_of(project)
+    if workspace is not None:
+        root, entries = workspace
+        found += [root / where for kind, where in entries if kind == "spa"]
+    for child in sorted(project.root.iterdir()):
+        if (
+            child.is_dir()
+            and child.name not in SKIP_DIRS
+            and (child / "package.json").is_file()
+            and (child / "src").is_dir()
+        ):
+            found.append(child)
+    unique: dict[Path, Path] = {}
+    for directory in found:
+        if directory.is_dir():
+            unique.setdefault(directory.resolve(), directory)
+    return list(unique.values())
+
+
+def _frontend_matches(
+    project: Project, files: tuple[str, ...], pattern: re.Pattern[str]
+) -> Iterator[tuple[str, int, str]]:
+    """`(label, line, text)` for each line of those frontend files matching *pattern*."""
+    for frontend in _frontends(project):
+        for name in files:
+            path = frontend / name
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for number, line in enumerate(text.splitlines(), start=1):
+                if pattern.search(line):
+                    yield _label(path, project), number, text
+
+
+_READS_LOGIN_USER = re.compile(r"\bdata\.user\b")
+
+
+def _frontends_expecting_the_user_from_login(project: Project) -> list[str]:
+    """An auth store that takes the user from ``/auth/login`` and never asks for it.
+
+    ``accounts``' ``/auth/login`` answers with tokens -- and, with MFA on, with
+    a challenge instead of them -- never with the user. The store generated
+    before 0.1.0a11 read ``data.user`` and so held ``null`` for the whole
+    session; the current one asks ``/auth/account`` after signing in.
+    """
+    if "accounts" not in _active_plugins(project):
+        return []
+    found = []
+    for label, number, text in _frontend_matches(project, _FRONTEND_AUTH, _READS_LOGIN_USER):
+        if "/auth/login" in text and "/auth/account" not in text:
+            found.append(f"{label}:{number} reads data.user from /auth/login")
+    return found
+
+
+_PUBLIC_BY_DEFAULT = re.compile(r"\bPUBLIC_BY_DEFAULT\s*=\s*true\b")
+
+
+def _frontends_public_by_default(project: Project) -> list[str]:
+    """A router that lets every page through unless it says otherwise, over accounts."""
+    if "accounts" not in _active_plugins(project):
+        return []
+    return [
+        f"{label}:{number} PUBLIC_BY_DEFAULT = true"
+        for label, number, _ in _frontend_matches(project, _FRONTEND_ROUTER, _PUBLIC_BY_DEFAULT)
+    ]
+
+
+_THIRTY_SECONDS = re.compile(r"\btimeout\s*:\s*30000\b")
+
+
+def _effective_request_timeout(project: Project) -> float | None:
+    """What this service resolves ``request_timeout`` to, None meaning unlimited."""
+    app = _table(_config(project), "app")
+    if "request_timeout" in app:
+        value = app["request_timeout"]
+        return float(value) if isinstance(value, int | float) and value else None
+    if raises_request_limits(project.plugins, project.disabled):
+        return UPLOAD_REQUEST_TIMEOUT
+    default = JFastSettings.model_fields["request_timeout"].default
+    return float(default) if default else None
+
+
+def _frontends_giving_up_first(project: Project) -> list[str]:
+    """A frontend that abandons a request at 30 s that this API still answers.
+
+    Only where the API is built to take longer: its own request timeout is
+    above 30 s (or off), or it calls a language model. Otherwise the two
+    agree and there is nothing to change.
+    """
+    timeout = _effective_request_timeout(project)
+    reasons = []
+    if timeout is None:
+        reasons.append("this API has no request timeout")
+    elif timeout > 30:
+        reasons.append(f"this API answers for up to {timeout:g}s")
+    if "llm" in _active_plugins(project):
+        reasons.append("it calls a language model")
+    if not reasons:
+        return []
+    return [
+        f"{label}:{number} timeout: 30000 -- {' and '.join(reasons)}"
+        for label, number, _ in _frontend_matches(project, _FRONTEND_API, _THIRTY_SECONDS)
+    ]
+
+
+def _accounts_settings(project: Project) -> dict[str, Any] | None:
+    if "accounts" not in _active_plugins(project):
+        return None
+    return _table(_config(project), "plugin", "accounts")
+
+
+def _verification_required(project: Project) -> list[str]:
+    accounts = _accounts_settings(project)
+    if accounts is None or accounts.get("email_verification") != "required":
+        return []
+    return ['[plugin.accounts] email_verification = "required"']
+
+
+def _mfa_on(project: Project) -> list[str]:
+    accounts = _accounts_settings(project)
+    if accounts is None:
+        return []
+    found = []
+    if accounts.get("mfa") is True:
+        found.append("[plugin.accounts] mfa = true")
+    roles = accounts.get("mfa_required_roles")
+    if isinstance(roles, list) and roles:
+        found.append(f"[plugin.accounts] mfa_required_roles = {roles}")
+    return found
+
+
+def _sign_in_rate_limited(project: Project) -> list[str]:
+    """Sign-in limited by default, which only takes effect with a Redis to count in."""
+    accounts = _accounts_settings(project)
+    if accounts is None or "rate_limit" in accounts or "cache" not in _active_plugins(project):
+        return []
+    from jfastframework.plugins.builtin.accounts import AccountsSettings
+
+    fields = AccountsSettings.model_fields
+
+    def default(name: str) -> Any:
+        return accounts.get(name, fields[name].default)
+
+    return [
+        f"[plugin.accounts] rate_limit defaults to true: {default('login_limit_per_ip')} "
+        f"sign-ins per IP and {default('login_limit_per_account')} per account every "
+        f"{default('login_window_seconds'):g}s"
+    ]
+
+
+def _tenancy_contradictions(project: Project) -> list[str]:
+    """What `jfast check`'s new tenancy step reports for this project.
+
+    Run for real rather than restated: the step fails ``jfast check --ci`` at
+    any severity, so a project that passed yesterday's CI can fail today's.
+    """
+    from jfastframework.multitenant.consistency import consistency_findings
+
+    try:
+        findings = consistency_findings(
+            project.root,
+            config=_config(project),
+            enabled=sorted(_active_plugins(project)),
+        )
+    except Exception:  # noqa: BLE001 -- the check reports its own failures
+        return []
+    return [
+        f"{finding.path or 'jfast.toml'}:{finding.line or 0} {finding.code} "
+        f"({finding.severity}): {finding.message}"
+        for finding in findings
+    ]
+
+
+_POOLER_DSN = re.compile(
+    r"postgres(?:ql)?(?:\+\w+)?://[^\s\"']*?(?:pgbouncer|pooler|:6432/|:6543/)[^\s\"']*",
+    re.IGNORECASE,
+)
+
+
+def _database_behind_a_pooler(project: Project) -> list[str]:
+    """A DSN that goes through PgBouncer, with the setting that makes it safe unset.
+
+    In transaction mode consecutive statements of one session can land on
+    different server connections, and both asyncpg's and SQLAlchemy's prepared
+    statement caches then fail with "prepared statement does not exist".
+    ``[plugin.database] pgbouncer = true`` turns them off. Decided from the
+    DSN: a host named for a pooler, or PgBouncer's port (6432) or Supabase's
+    transaction pooler port (6543).
+    """
+    if "database" not in _active_plugins(project):
+        return []
+    database = _table(_config(project), "plugin", "database")
+    if "pgbouncer" in database:
+        return []
+    directories = [project.root]
+    workspace = _workspace_of(project)
+    if workspace is not None and workspace[0].resolve() != project.root.resolve():
+        directories.append(workspace[0])
+    found = []
+    for directory in directories:
+        files = sorted(directory.glob(".env*")) + _compose_files(directory)
+        for path in files:
+            if not path.is_file():
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError):
+                continue
+            for number, line in enumerate(lines, start=1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if _POOLER_DSN.search(line):
+                    found.append(f"{_label(path, project)}:{number} a DSN through a pooler")
+                    break
+    return found
+
+
+def _settings_refused_at_boot(project: Project) -> list[str]:
+    """Values in jfast.toml that 0.1.0a11 refuses at startup instead of at first use.
+
+    Static, and deliberately limited to what the file holds. The plugins'
+    own boot checks also judge values from the environment -- the JWKS URL,
+    the HMAC secret, the RabbitMQ URL -- and running them here would judge the
+    shell this command runs in, which is not the one the service deploys to.
+    """
+    config = _config(project)
+    active = _active_plugins(project)
+    production = _table(config, "app").get("env") == "prod"
+    found: list[str] = []
+
+    def plugin(name: str) -> dict[str, Any]:
+        return _table(config, "plugin", name) if name in active else {}
+
+    database = plugin("database")
+    connections = database.get("connections")
+    blocks = [("[plugin.database]", database)] + [
+        (f"[plugin.database.connections.{name}]", block)
+        for name, block in (connections.items() if isinstance(connections, dict) else [])
+        if isinstance(block, dict)
+    ]
+    for where, block in blocks:
+        size = block.get("pool_size")
+        if isinstance(size, int) and size < 1:
+            found.append(f"{where} pool_size = {size}: SQLAlchemy reads it as unlimited")
+    zone = database.get("session_timezone")
+    if isinstance(zone, str) and zone and not _is_zone(zone):
+        found.append(f'[plugin.database] session_timezone = "{zone}" is not an IANA zone')
+    for field in ("tenant_dsn_template", "tenant_dsn_env_template"):
+        template = database.get(field)
+        if isinstance(template, str) and template and "{tenant}" not in template:
+            found.append(f"[plugin.database] {field} has no {{tenant}} placeholder")
+
+    storage = plugin("storage")
+    disks = storage.get("disks")
+    if isinstance(disks, dict):
+        from jfastframework.plugins.builtin.storage import VISIBILITIES
+
+        for name, disk in sorted(disks.items()):
+            if not isinstance(disk, dict):
+                continue
+            where = f"[plugin.storage.disks.{name}]"
+            visibility = disk.get("visibility")
+            if visibility is not None and visibility not in VISIBILITIES:
+                found.append(f'{where} visibility = "{visibility}": public or private')
+            if disk.get("driver") == "s3" and bool(disk.get("access_key")) != bool(
+                disk.get("secret_key")
+            ):
+                found.append(f"{where} sets one of access_key and secret_key")
+
+    queue = plugin("queue")
+    if queue.get("backend", "postgres") == "postgres" and "name" in queue:
+        from jfastframework.plugins.builtin.queue import _TABLE_NAME
+
+        if not _TABLE_NAME.match(str(queue["name"])):
+            found.append(f'[plugin.queue] name = "{queue["name"]}" is not a table name')
+    if production and queue.get("backend") == "rabbitmq":
+        from jfastframework.plugins.builtin.queue import DEFAULT_RABBITMQ_URL
+
+        if queue.get("rabbitmq_url") == DEFAULT_RABBITMQ_URL:
+            found.append("[plugin.queue] rabbitmq_url is guest@localhost, in production")
+
+    auth = plugin("auth")
+    if auth.get("mode") == "public_key" and auth.get("issue_tokens") is True:
+        found.append('[plugin.auth] mode = "public_key" with issue_tokens = true')
+    algorithms = auth.get("algorithms")
+    if isinstance(algorithms, list) and algorithms:
+        known = _jwt_algorithms()
+        unknown = sorted(str(a) for a in algorithms if known and a not in known)
+        if unknown:
+            found.append(f"[plugin.auth] algorithms has {', '.join(unknown)}, unknown to PyJWT")
+    if production:
+        url = auth.get("jwks_url")
+        if isinstance(url, str) and url.lower().startswith("http://"):
+            found.append("[plugin.auth] jwks_url is plain http, in production")
+        from jfastframework.plugins.builtin.auth import MIN_SECRET_BYTES
+
+        secret = auth.get("secret")
+        if isinstance(secret, str) and len(secret.encode("utf-8")) < MIN_SECRET_BYTES:
+            found.append(f"[plugin.auth] secret is under {MIN_SECRET_BYTES} bytes, in production")
+
+    mail = plugin("mail")
+    sender = mail.get("from_email")
+    if isinstance(sender, str) and sender and "@" not in sender:
+        found.append(f'[plugin.mail] from_email = "{sender}" is not an address')
+
+    cache = plugin("cache")
+    url = cache.get("url")
+    if isinstance(url, str) and url.partition("://")[0].lower() not in ("redis", "rediss", "unix"):
+        found.append("[plugin.cache] url is not redis://, rediss:// or unix://")
+    return found
+
+
+def _is_zone(name: str) -> bool:
+    import zoneinfo
+
+    try:
+        zoneinfo.ZoneInfo(name)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
+
+
+def _jwt_algorithms() -> frozenset[str]:
+    try:
+        import jwt
+    except ImportError:  # pragma: no cover -- auth's extra not installed here
+        return frozenset()
+    return frozenset(jwt.algorithms.get_default_algorithms())
+
+
+# Redis commands that routinely run past a one-second deadline: server-side
+# scripts, full scans, and the blocking reads, which wait by design.
+_SLOW_REDIS = frozenset(
+    {
+        "eval",
+        "evalsha",
+        "fcall",
+        "register_script",
+        "scan_iter",
+        "blpop",
+        "brpop",
+        "blmove",
+        "brpoplpush",
+        "bzpopmin",
+        "bzpopmax",
+        "xread",
+        "xreadgroup",
+    }
+)
+
+
+def _slow_redis_commands(project: Project) -> list[str]:
+    """Calls to Redis commands a 1 s ``command_timeout`` will now cut off.
+
+    Only in files that reach Redis at all -- they name ``cache.client`` or
+    import ``redis`` -- because ``eval`` and ``scan_iter`` are ordinary method
+    names elsewhere.
+    """
+    if "cache" not in _active_plugins(project):
+        return []
+    if "command_timeout" in _table(_config(project), "plugin", "cache"):
+        return []
+    found = []
+    for path in _python_files(project.root):
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        if "cache.client" not in source and not re.search(
+            r"^\s*(?:from|import)\s+redis\b", source, re.MULTILINE
+        ):
+            continue
+        relative = path.relative_to(project.root).as_posix()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _SLOW_REDIS
+            ):
+                found.append(f"{relative}:{node.lineno} .{node.func.attr}(...)")
+    return found
+
+
+_DATABASE_ERRORS = frozenset(
+    {"DBAPIError", "OperationalError", "InterfaceError", "DisconnectionError", "PoolTimeout"}
+)
+
+
+def _own_database_error_handlers(project: Project) -> list[str]:
+    """Exception handlers of the project's own for the errors the database now maps to 503.
+
+    Starlette picks the most specific class, and the last handler registered
+    for a class: a handler of the project's own for ``OperationalError`` keeps
+    answering whatever it answered, and one for ``DBAPIError`` registered
+    after the app is built replaces the framework's.
+    """
+    if "database" not in _active_plugins(project):
+        return []
+    found = []
+    for relative, tree in _parsed_files(project.root):
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            if _called_name(node.func) not in ("exception_handler", "add_exception_handler"):
+                continue
+            handled = _called_name(node.args[0])
+            if handled in _DATABASE_ERRORS:
+                found.append(f"{relative}:{node.lineno} handles {handled}")
+    return found
+
+
+def _tenant_header_without_tenancy(project: Project) -> list[str]:
+    """Code that sends or configures the tenant header, in a service without ``tenancy``.
+
+    Only the places that show the header is really used -- its name in the
+    service's own code or its frontends, or a configured ``tenant_header`` --
+    because every service reads ``request.state.tenant_id`` and nearly none
+    ever relied on a bare header for it.
+    """
+    if "tenancy" in _active_plugins(project):
+        return []
+    observability = _table(_config(project), "plugin", "observability")
+    header = str(observability.get("tenant_header") or "X-Tenant-ID")
+    found: list[str] = []
+    if "tenant_header" in observability:
+        found.append(f"[plugin.observability] tenant_header = {header!r}")
+    pattern = re.compile(re.escape(header), re.IGNORECASE)
+    paths = [p for p in _python_files(project.root) if "tests" not in p.parts]
+    for frontend in _frontends(project):
+        paths += _files(frontend / "src", ".js", ".ts", ".vue", ".jsx", ".tsx")
+    for path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for number, line in enumerate(lines, start=1):
+            code = line.strip()
+            if code.startswith(("#", "//", "*")) or not pattern.search(code):
+                continue
+            found.append(f"{_label(path, project)}:{number} {code[:90]}")
+            if len(found) >= 10:
+                return found
+    return found
+
+
+def _revocation_fails_open(project: Project) -> list[str]:
+    """Revocation checked against Redis, with the new fail-open default unchosen.
+
+    A memory store never fails, so only a service whose tokens are checked
+    against the shared store -- auth with ``cache`` -- can reach the outage.
+    """
+    active = _active_plugins(project)
+    if "auth" not in active or "cache" not in active:
+        return []
+    auth = _table(_config(project), "plugin", "auth")
+    if auth.get("check_revocation") is False or "revocation_fail_open" in auth:
+        return []
+    return ["[plugin.auth] revocation_fail_open is not set, so it defaults to true"]
+
+
 # The version on a note is the version the described code LANDED in, never the
 # version being prepared. `applicable` keeps changes in `(current, installed]`,
 # so a note tagged with the version a project is already pinned to is skipped
@@ -1048,6 +2058,448 @@ def _client_env_vars(project: Project) -> set[str]:
 # `jfast upgrade` answered "nothing between those versions affects this
 # project" to every one of them.
 CHANGES: tuple[Change, ...] = (
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="hexagonal-eager-create-payload",
+        summary="A hexagonal module's __init__.py imports its HTTP adapter; its own test fails.",
+        detail=(
+            "0.1.0a10's hexagonal template bound CreatePayload with a plain `from "
+            ".adapters.http import ... as CreatePayload` at the top of the package init. "
+            "Python runs that file on the way to modules.<name>.domain, so importing the "
+            "domain loaded FastAPI, Pydantic and SQLAlchemy -- the one thing the layout "
+            "promises it does not -- and the module's generated domain test, which checks "
+            "exactly that in a subprocess, fails. 0.1.0a11's template resolves "
+            "CreatePayload in __getattr__, as it already did for router."
+        ),
+        detect=_eager_adapter_imports,
+        remedy=(
+            "Delete the listed import and resolve the name on first access instead: in the "
+            "module's `__getattr__`, next to the `router` branch, add `if name == "
+            '"CreatePayload": from .adapters.http import <Name>Create; return <Name>Create`. '
+            "Keep the import under `if TYPE_CHECKING:` for type checkers. "
+            "`from modules.<name> import CreatePayload` keeps working."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="publish-without-receiver",
+        summary="Publishing an event nothing can receive raises now, in the request.",
+        detail=(
+            "Outbox.publish delivers to this service's own @subscribe handlers through the "
+            "queue, and to other services through the event bus. With neither it raises "
+            "UndeliverableEvent -- a 500 where 0.1.0a10 answered 201 and wrote an outbox row "
+            "the relay could only mark dead. The events listed are built in a module, have "
+            "no subscriber in this service, and the events plugin is off."
+        ),
+        detect=_events_nobody_receives,
+        remedy=(
+            'Add @subscribe("<type>") in the module that reacts, in its tasks.py, and declare '
+            'the type under [modules.<publisher>] publishes = ["<type>"] in contracts.toml. '
+            'If another service consumes it, enable the "events" plugin instead.'
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="contracts-event-rules",
+        summary="contracts check reports undeclared events, orphan subscriptions, tasks by name.",
+        detail=(
+            "Events are how modules react to each other without importing each other, and "
+            "they are now a declared part of a module's API. A subscription to a type no "
+            "module declares under publishes never runs (orphan-subscription); an event a "
+            "module builds without declaring it is undeclared-event; a depends_on entry "
+            "nothing uses is unused-dependency. And a job queued by name for a task another "
+            'module owns -- Job(task="alerta.revisar") from comprobante -- is now an '
+            "undeclared-dependency: a call into that module, spelt as a string so no import "
+            "check could see it. A task's owner is the module whose @task declares it, or "
+            "the name's `<module>.` prefix when none does."
+        ),
+        detect=_event_and_task_wiring,
+        remedy=(
+            "For a task queued by name: publish an event instead (declare it under "
+            "[modules.<publisher>] publishes) and @subscribe to it in the owning module's "
+            "tasks.py -- no dependency either way -- or add the owner to depends_on. Declare "
+            "each event a module builds under its publishes; fix or delete orphan "
+            "subscriptions and unused depends_on entries. `jfast contracts explain <rule>` "
+            "gives the fix for each."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="outbox-manual-construction",
+        summary="An Outbox built by hand without events= no longer relays events to a bus.",
+        detail=(
+            "Outbox takes the event bus as events= now. Without it an event reaches only this "
+            "service's own subscribers, and publish raises UndeliverableEvent when there are "
+            "none -- where it used to write a row for the relay to send. The outbox plugin "
+            "passes it; an Outbox constructed in project code does not."
+        ),
+        detect=_outboxes_built_by_hand,
+        remedy=(
+            'Pass the bus: Outbox(queue=..., events=ctx.require("events")) when the events '
+            'plugin is on. Better, take the plugin\'s: ctx.require("outbox").'
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="frontend-login-without-account",
+        summary="The frontend reads the user from /auth/login, which never returns one.",
+        detail=(
+            "accounts' /auth/login answers with tokens -- and, with MFA on, with a challenge "
+            "{mfa_required | mfa_enrollment_required, mfa_token, expires_in} instead of them. "
+            "The auth store generated before 0.1.0a11 took `data.user` from that response, "
+            "so it held null for the whole session, and it has no step for the challenge."
+        ),
+        detect=_frontends_expecting_the_user_from_login,
+        remedy=(
+            "After a successful sign-in, GET /auth/account and keep that as the user. When "
+            "the login response has mfa_required or mfa_enrollment_required, ask for the code "
+            "and POST it with the mfa_token to /auth/login/mfa. The store a fresh `jfast new "
+            "service <name> --kind spa` writes does both, and can be copied over."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="accounts-verification-required",
+        summary='email_verification = "required" locks out every existing user until verified.',
+        detail=(
+            "Verification is new, and required mode refuses sign-in to an unverified "
+            "address. Every row already in jfast_users has email_verified_at NULL, so "
+            "switching it on refuses every account that exists today, and each needs a "
+            "verification email to get back in."
+        ),
+        detect=_verification_required,
+        remedy=(
+            "Grandfather the accounts you already trust, in a migration or by hand, before "
+            "deploying: UPDATE jfast_users SET email_verified_at = created_at WHERE "
+            "email_verified_at IS NULL. New sign-ups are verified from then on."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="accounts-mfa-login-challenge",
+        summary="With MFA on, /auth/login can answer with a challenge instead of tokens.",
+        detail=(
+            "A user with TOTP enrolled -- or in a role listed in mfa_required_roles -- gets "
+            "{mfa_required | mfa_enrollment_required, mfa_token, expires_in} and no tokens. "
+            "Every client that assumes a successful login always carries access_token "
+            "breaks for those users, scripts and mobile apps included."
+        ),
+        detect=_mfa_on,
+        remedy=(
+            "Handle the challenge in each client: ask for the code and POST it with the "
+            "mfa_token to /auth/login/mfa, which answers with the tokens. Service accounts "
+            "that sign in unattended should not be in a role that requires MFA."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="settings-refused-at-boot",
+        summary="Settings that used to fail at first use now stop the service starting.",
+        detail=(
+            "Each plugin checks its settings as it starts, and a value that could never work "
+            "is a refused boot rather than an error on the first query, send or upload: "
+            "pool_size = 0 (SQLAlchemy reads it as unlimited), a session_timezone that is "
+            "not an IANA zone, a tenant DSN template without {tenant}, a storage visibility "
+            "other than public or private, an S3 key without its secret, a queue name that "
+            "is not a table name, public_key mode that issues tokens, an algorithm PyJWT "
+            "does not know, a from_email that is not an address. In production also a plain "
+            "http jwks_url, an HMAC secret under 32 bytes and RabbitMQ's guest default. Only "
+            "what jfast.toml holds is listed here; values from the environment are checked "
+            "at boot where they are known."
+        ),
+        detect=_settings_refused_at_boot,
+        remedy="Correct each value listed. Every refusal names its key and the fix at boot too.",
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="tenancy-consistency-check",
+        summary="jfast check has a tenancy step, and `jfast check --ci` fails on its findings.",
+        detail=(
+            "It reports tenant settings that contradict each other or the code -- a "
+            "tenant-scoped rag store with no tenancy plugin to resolve a tenant, a per-tenant "
+            "LLM budget with no tenant, and the like. Plain `jfast check` still exits 0 on a "
+            "medium finding; `--ci` fails on any, so a pipeline that passed yesterday fails "
+            "today."
+        ),
+        detect=_tenancy_contradictions,
+        remedy=(
+            "One customer: set the store single-tenant (for rag, [plugin.rag] tenant_scoped "
+            "= false). Several: `jfast tenancy enable --tenant <id>` turns tenancy on and "
+            "writes the migration. `jfast check` prints the reason under each finding."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="frontend-public-by-default",
+        summary="The frontend router lets every page through, over a service with accounts.",
+        detail=(
+            "Generated frontends default to PUBLIC_BY_DEFAULT = false when the workspace has "
+            "accounts: a page must say public: true to be reachable signed out. The router "
+            "generated before 0.1.0a11 said true, so a page that forgot requiresAuth was "
+            "open, and the API's 401 was the only guard."
+        ),
+        detect=_frontends_public_by_default,
+        remedy=(
+            "Set PUBLIC_BY_DEFAULT = false and mark the pages that must work signed out -- "
+            "login, register, verify-email, forgot and reset password, a landing page -- "
+            "with meta public: true (handle.public in React)."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="frontend-api-timeout",
+        summary="The frontend gives up at 30 s on requests this API still answers.",
+        detail=(
+            "Generated frontends read VITE_API_TIMEOUT and default to 60 s. A client timeout "
+            "shorter than the slowest endpoint turns a slow answer into an error the user "
+            "retries -- which runs the expensive call a second time, and for a language "
+            "model that is money."
+        ),
+        detect=_frontends_giving_up_first,
+        remedy=(
+            "In src/services/api.js use `timeout: Number(import.meta.env.VITE_API_TIMEOUT) || "
+            "60000` and add VITE_API_TIMEOUT to the frontend's .env files, at least as long "
+            "as this API's request_timeout."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="accounts-sign-in-rate-limit",
+        summary="Sign-in is rate limited per IP and per account by default.",
+        detail=(
+            "With cache on, accounts counts sign-in attempts in Redis and answers 429 with "
+            "Retry-After past the limit, and limits verification and reset emails too. "
+            "Clients that share one address -- a load test, an e2e suite, every user behind "
+            "a proxy whose X-Forwarded-For this service does not trust -- share one budget."
+        ),
+        detect=_sign_in_rate_limited,
+        remedy=(
+            "Make sure the client address is the real one (trusted proxies), then raise "
+            "login_limit_per_ip for a shared egress. Set [plugin.accounts] rate_limit = false "
+            "to keep 0.1.0a10's behaviour."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="breaking",
+        code="tenant-header-not-a-tenant",
+        summary="A bare X-Tenant-ID header no longer sets the tenant; only tenancy can trust it.",
+        detail=(
+            "observability used to copy the header into request.state.tenant_id when nothing "
+            "else had resolved a tenant, and current_tenant, the RLS session and every Job or "
+            "Event built in the request trusted that value. With auth on and tenancy off an "
+            "anonymous request was served as whichever tenant it named. The header is now only "
+            "a log field, tenant_claimed; the tenant comes from a signed token or from tenancy."
+        ),
+        detect=_tenant_header_without_tenancy,
+        remedy=(
+            "If a trusted gateway in front of this service sets the header, enable tenancy with "
+            'sources = ["header"] (after "token" if tokens carry a tenant). Otherwise put the '
+            "tenant in the token (auth's tenant claim) and stop sending the header."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="revocation-fail-open",
+        summary="A revocation store that is down now accepts tokens instead of failing requests.",
+        detail=(
+            "When Redis does not answer, the revocation check is skipped and the token is "
+            "accepted, with a warning in the log -- so an outage of the cache does not take "
+            "down every authenticated route. The cost is that a token revoked by a logout "
+            "works until Redis is back or it expires."
+        ),
+        detect=_revocation_fails_open,
+        remedy=(
+            "Keep the default for availability, or set [plugin.auth] revocation_fail_open = "
+            "false where a logout that does not take effect for a few minutes is worse than "
+            "an outage: requests then get 503 while the store is down."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="redis-command-timeout",
+        summary="Every Redis command gives up after 1 s now.",
+        detail=(
+            "The cache client had no command deadline, so a Redis that stopped answering "
+            "hung every request that touched it. command_timeout is 1 s by default, with a "
+            "breaker behind it. A server-side script, a full scan or a blocking read waits "
+            "longer than that by design, and is now cut off."
+        ),
+        detect=_slow_redis_commands,
+        remedy=(
+            "Raise [plugin.cache] command_timeout above the slowest call listed, or give that "
+            "call its own client; for a blocking read, pass it a timeout below the deadline. "
+            "0 turns the deadline off."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="database-unavailable-503",
+        summary="A lost database connection or a full pool answers 503, not 500.",
+        detail=(
+            "The database plugin registers a handler for DBAPIError and PoolTimeout: a lost "
+            "connection or a pool with nothing free is backpressure, and a client may retry "
+            "it. A handler of this project's own for those classes either keeps answering "
+            "what it did (a subclass such as OperationalError wins) or replaces the "
+            "framework's (the same class, registered after it)."
+        ),
+        detect=_own_database_error_handlers,
+        remedy=(
+            "Drop the handlers listed unless they do more than choose a status code, or make "
+            "them answer 503 with Retry-After for a lost connection and a full pool."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="regenerate-deploy-for-worker",
+        summary="Generated deployments run a worker now; nothing here consumes the queue.",
+        detail=(
+            "A queue nobody consumes is jobs piling up while the API answers 201. The "
+            "compose and Kubernetes generators add a worker next to the API -- the same "
+            "image running `jfast worker`, with a stop grace period longer than its drain "
+            "window -- and the files listed predate that."
+        ),
+        detect=_deployments_without_a_worker,
+        remedy=(
+            "Regenerate: `jfast deploy compose` for the service's own compose file, `jfast "
+            "workspace compose` and `jfast workspace k8s` for the workspace's. A file edited "
+            "by hand gains a service with the API's build, environment and volumes, command "
+            '["jfast", "worker", "--grace=25"] and stop_grace_period: 30s.'
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="workspace-compose-client-env",
+        summary="The workspace compose file lacks the internal addresses some plugins read.",
+        detail=(
+            "`jfast workspace compose` wired the datastores declared as workspace resources "
+            "and dropped the rest of each plugin's client addresses -- Kafka brokers, a "
+            "RabbitMQ URL, an S3 endpoint -- so those containers fell back to the .env, which "
+            "holds the host's addresses: localhost, inside a container, is the container. "
+            "0.1.0a11 writes them under each service's environment."
+        ),
+        detect=_workspace_compose_missing_client_env,
+        remedy=(
+            "Run `jfast workspace compose` from the workspace root to rewrite it, or add "
+            "each variable listed under this service's `environment:` by hand."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="worker-drain-timeout",
+        summary="A stopping Worker waits 25 s for running jobs, then hands them back.",
+        detail=(
+            "Worker used to wait for every in-flight job however long it took, and the "
+            "orchestrator's SIGKILL -- 30 s after SIGTERM in Kubernetes -- then killed it "
+            "mid-job, leaving the job invisible until the visibility timeout. It now waits "
+            "drain_timeout seconds and releases the rest to the queue without spending an "
+            "attempt. A job longer than the window is cancelled on shutdown and runs again "
+            "from the start."
+        ),
+        detect=_workers_without_a_drain_window,
+        remedy=(
+            "If a job must not be cut short, pass drain_timeout= above it and raise the "
+            "orchestrator's grace period (stop_grace_period, terminationGracePeriodSeconds) "
+            "above that. Make long jobs safe to re-run either way."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="deprecated",
+        code="worker-py-to-module-tasks",
+        summary="A hand-written root worker.py is superseded by module tasks and `jfast worker`.",
+        detail=(
+            "Handlers registered in a root worker.py belong to no module, so the contract "
+            "cannot see which module owns a task or who queues it, and the generated "
+            "deployments start `jfast worker`, not this file. Modules now declare their own "
+            "work with @task and @subscribe in tasks.py, get a session with TaskSession, and "
+            "`jfast worker` runs every module's tasks. The file keeps working."
+        ),
+        detect=_root_workers,
+        remedy=(
+            'Move each handler into modules/<owner>/tasks.py as `@task("<name>")` (from '
+            "jfastframework.tasks), taking its session from TaskSession; delete worker.py; "
+            "run `jfast worker`. Copy [layers.tasks] from a freshly generated contracts.toml "
+            "so the contract governs the new files. To react to another module, prefer an "
+            "event and @subscribe over queuing its task by name."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="contracts-tasks-layer",
+        summary="Module tasks.py files fall in no layer, or in the wrong one, under this contract.",
+        detail=(
+            "Contracts generated since 0.1.0a11 have a [layers.tasks] for modules/*/tasks.py: "
+            "an entry point like a route, which may call the service or use cases and may "
+            "not import FastAPI or SQLAlchemy. Without it the screaming contract's catch-all "
+            "claims tasks.py as domain -- so a task that calls a use case is a layer "
+            "violation -- and the other layouts' contracts leave it ungoverned."
+        ),
+        detect=_tasks_without_a_tasks_layer,
+        remedy=(
+            "Copy the [layers.tasks] block from a freshly generated contracts.toml for this "
+            "layout (`jfast new service tmp` then `jfast new module x --layout <layout>`), "
+            "adjusting may_import to this contract's layer names."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="framework-tables-altered-at-startup",
+        summary="jfast_jobs and jfast_users gain columns at startup, which needs ALTER on them.",
+        detail=(
+            "The PostgreSQL queue adds a nullable trace column to its table, and accounts "
+            "adds five nullable columns to jfast_users, each with ADD COLUMN IF NOT EXISTS "
+            "as the service starts -- a catalogue change, no row is rewritten. The role that "
+            "created a table owns it and may alter it. These files also manage the table, "
+            "which suggests another role created it; then the service's role cannot, and "
+            "the start fails."
+        ),
+        detect=_framework_tables_owned_elsewhere,
+        remedy=(
+            "Run the ALTERs as the owner before deploying -- ALTER TABLE jfast_jobs ADD "
+            "COLUMN IF NOT EXISTS trace JSONB; for jfast_users, start the service once as "
+            "the owning role -- or make the service's role the owner of those tables."
+        ),
+    ),
+    Change(
+        version="0.1.0a11",
+        kind="behaviour",
+        code="database-behind-pgbouncer",
+        summary="This DSN goes through a pooler, and [plugin.database] pgbouncer is new.",
+        detail=(
+            "In PgBouncer's transaction mode consecutive statements of one session can land "
+            "on different server connections, and asyncpg's and SQLAlchemy's prepared "
+            "statement caches then fail with 'prepared statement does not exist' under "
+            "load. pgbouncer = true turns both caches off and names statements uniquely; "
+            "tenant row-level security behind it is verified."
+        ),
+        detect=_database_behind_a_pooler,
+        remedy=(
+            "Set [plugin.database] pgbouncer = true when the pooler runs in transaction "
+            "mode (per connection under [plugin.database.connections.<name>]). Session mode "
+            "needs nothing: set pgbouncer = false to say so and silence this note."
+        ),
+    ),
     Change(
         version="0.1.0a10",
         kind="breaking",

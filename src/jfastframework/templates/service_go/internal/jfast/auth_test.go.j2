@@ -1,0 +1,355 @@
+package jfast
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+const testSecret = "a-test-secret-that-is-at-least-32-bytes-long"
+
+func segment(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// mint signs a token the way PyJWT does, so the tests exercise exactly the
+// bytes a Python service would send.
+func mint(t *testing.T, alg string, key any, claims map[string]any) string {
+	t.Helper()
+	input := segment(map[string]any{"alg": alg, "typ": "JWT"}) + "." + segment(claims)
+	spec := algorithms[alg]
+	digest := newHash(spec.hash)()
+	digest.Write([]byte(input))
+
+	var signature []byte
+	switch spec.family {
+	case "HS":
+		mac := hmac.New(newHash(spec.hash), key.([]byte))
+		mac.Write([]byte(input))
+		signature = mac.Sum(nil)
+	case "RS":
+		var err error
+		signature, err = rsa.SignPKCS1v15(rand.Reader, key.(*rsa.PrivateKey), spec.hash, digest.Sum(nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+	case "ES":
+		r, s, err := ecdsa.Sign(rand.Reader, key.(*ecdsa.PrivateKey), digest.Sum(nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		size := (spec.curve.Params().BitSize + 7) / 8
+		signature = make([]byte, 2*size)
+		r.FillBytes(signature[:size])
+		s.FillBytes(signature[size:])
+	}
+	return input + "." + base64.RawURLEncoding.EncodeToString(signature)
+}
+
+func validClaims() map[string]any {
+	now := time.Now().Unix()
+	return map[string]any{
+		"sub":       "user-1",
+		"jti":       "token-1",
+		"iat":       now,
+		"nbf":       now,
+		"exp":       now + 900,
+		"typ":       "access",
+		"iss":       "https://id.example.com/",
+		"aud":       "billing",
+		"scope":     "invoices:read invoices:write",
+		"roles":     []string{"admin"},
+		"tenant_id": "acme",
+	}
+}
+
+func secretConfig() AuthConfig {
+	return AuthConfig{
+		Enabled:     true,
+		Mode:        "secret",
+		Algorithms:  []string{"HS256"},
+		Secret:      testSecret,
+		Issuer:      "https://id.example.com/",
+		Audience:    "billing",
+		Leeway:      30,
+		ScopeClaim:  "scope",
+		RolesClaim:  "roles",
+		TenantClaim: "tenant_id",
+	}
+}
+
+func newTestAuth(t *testing.T, cfg AuthConfig) *Auth {
+	t.Helper()
+	auth, err := NewAuth(cfg, Config{Env: "local"}, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return auth
+}
+
+func publicPEM(t *testing.T, key any) string {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
+func TestHS256TokenIsAccepted(t *testing.T) {
+	auth := newTestAuth(t, secretConfig())
+	claims, err := auth.Verify(mint(t, "HS256", []byte(testSecret), validClaims()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.Subject != "user-1" || claims.TenantID != "acme" || claims.TokenID != "token-1" {
+		t.Fatalf("claims = %+v", claims)
+	}
+	if !claims.HasScope("invoices:read", "invoices:write") || !claims.HasAnyRole("admin") {
+		t.Fatalf("scopes/roles = %v %v", claims.Scopes, claims.Roles)
+	}
+}
+
+func TestTokensThatMustBeRefused(t *testing.T) {
+	auth := newTestAuth(t, secretConfig())
+	now := time.Now().Unix()
+	with := func(key string, value any) map[string]any {
+		claims := validClaims()
+		if value == nil {
+			delete(claims, key)
+		} else {
+			claims[key] = value
+		}
+		return claims
+	}
+
+	cases := map[string]string{
+		"expired":               mint(t, "HS256", []byte(testSecret), with("exp", now-60)),
+		"not yet valid (nbf)":   mint(t, "HS256", []byte(testSecret), with("nbf", now+600)),
+		"issued in future":      mint(t, "HS256", []byte(testSecret), with("iat", now+600)),
+		"wrong signature":       mint(t, "HS256", []byte("another-secret-that-is-also-32-bytes!!"), validClaims()),
+		"wrong issuer":          mint(t, "HS256", []byte(testSecret), with("iss", "https://evil.example.com/")),
+		"no issuer":             mint(t, "HS256", []byte(testSecret), with("iss", nil)),
+		"wrong audience":        mint(t, "HS256", []byte(testSecret), with("aud", "payroll")),
+		"no audience":           mint(t, "HS256", []byte(testSecret), with("aud", nil)),
+		"no exp":                mint(t, "HS256", []byte(testSecret), with("exp", nil)),
+		"no iat":                mint(t, "HS256", []byte(testSecret), with("iat", nil)),
+		"no sub":                mint(t, "HS256", []byte(testSecret), with("sub", nil)),
+		"algorithm not allowed": mint(t, "HS512", []byte(testSecret), validClaims()),
+		"garbage":               "not.a.token",
+	}
+	for name, token := range cases {
+		if _, err := auth.Verify(token); err == nil {
+			t.Errorf("%s: accepted, want refused", name)
+		}
+	}
+}
+
+func TestExpiryHonoursTheLeeway(t *testing.T) {
+	auth := newTestAuth(t, secretConfig())
+	claims := validClaims()
+	claims["exp"] = time.Now().Unix() - 10 // inside the 30 s leeway
+	if _, err := auth.Verify(mint(t, "HS256", []byte(testSecret), claims)); err != nil {
+		t.Fatalf("a token 10 s past expiry was refused inside a 30 s leeway: %v", err)
+	}
+}
+
+func TestAudienceMayBeAList(t *testing.T) {
+	auth := newTestAuth(t, secretConfig())
+	claims := validClaims()
+	claims["aud"] = []string{"payroll", "billing"}
+	if _, err := auth.Verify(mint(t, "HS256", []byte(testSecret), claims)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAlgNoneIsRefused(t *testing.T) {
+	auth := newTestAuth(t, secretConfig())
+	token := segment(map[string]any{"alg": "none", "typ": "JWT"}) + "." + segment(validClaims()) + "."
+	if _, err := auth.Verify(token); err == nil {
+		t.Fatal("an unsigned alg:none token was accepted")
+	}
+}
+
+func TestAlgorithmConfusionIsRefused(t *testing.T) {
+	// The classic attack: an HS256 token whose HMAC key is the RSA *public*
+	// key the service trusts. A verifier that lets the token pick the
+	// algorithm accepts it.
+	private, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := publicPEM(t, &private.PublicKey)
+	cfg := secretConfig()
+	cfg.Mode, cfg.Secret, cfg.PublicKey, cfg.Algorithms = "public_key", "", public, []string{"RS256"}
+	auth := newTestAuth(t, cfg)
+
+	forged := mint(t, "HS256", []byte(public), validClaims())
+	if _, err := auth.Verify(forged); err == nil {
+		t.Fatal("an HS256 token signed with the public key was accepted by an RS256 service")
+	}
+}
+
+func TestRS256TokenIsAccepted(t *testing.T) {
+	private, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := secretConfig()
+	cfg.Mode, cfg.Secret, cfg.PublicKey, cfg.Algorithms = "public_key", "", publicPEM(t, &private.PublicKey), []string{"RS256"}
+	auth := newTestAuth(t, cfg)
+
+	if _, err := auth.Verify(mint(t, "RS256", private, validClaims())); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := rsa.GenerateKey(rand.Reader, 2048)
+	if _, err := auth.Verify(mint(t, "RS256", other, validClaims())); err == nil {
+		t.Fatal("a token signed by another RSA key was accepted")
+	}
+}
+
+func TestES256TokenIsAccepted(t *testing.T) {
+	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := secretConfig()
+	cfg.Mode, cfg.Secret, cfg.PublicKey, cfg.Algorithms = "public_key", "", publicPEM(t, &private.PublicKey), []string{"ES256"}
+	auth := newTestAuth(t, cfg)
+
+	if _, err := auth.Verify(mint(t, "ES256", private, validClaims())); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConfigurationsPythonRefusesAreRefused(t *testing.T) {
+	mixed := secretConfig()
+	mixed.Algorithms = []string{"HS256", "RS256"}
+	short := secretConfig()
+	short.Secret = "too-short"
+	pemSecret := secretConfig()
+	pemSecret.Secret = "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"
+	none := secretConfig()
+	none.Algorithms = []string{"none"}
+	jwks := secretConfig()
+	jwks.Mode, jwks.Algorithms, jwks.JWKSURL = "jwks", []string{"RS256"}, "https://id.example.com/jwks.json"
+	noSecret := secretConfig()
+	noSecret.Secret = ""
+
+	cases := map[string]AuthConfig{
+		"mixed families":                mixed,
+		"short secret in production":    short,
+		"PEM used as an HMAC secret":    pemSecret,
+		"alg none":                      none,
+		"jwks is not implemented in Go": jwks,
+		"secret mode without a secret":  noSecret,
+	}
+	for name, cfg := range cases {
+		if _, err := NewAuth(cfg, Config{Env: "prod"}, newTestLogger()); err == nil {
+			t.Errorf("%s: started, want a startup error", name)
+		}
+	}
+}
+
+func TestLoadAuthConfigIsOffUntilConfigured(t *testing.T) {
+	for _, key := range []string{"JFAST_AUTH_MODE", "JFAST_AUTH_SECRET", "JFAST_AUTH_PUBLIC_KEY", "JFAST_AUTH_JWKS_URL", "JFAST_AUTH_ALGORITHMS"} {
+		t.Setenv(key, "")
+	}
+	cfg, err := LoadAuthConfig()
+	if err != nil || cfg.Enabled {
+		t.Fatalf("auth enabled with nothing configured: %+v %v", cfg, err)
+	}
+
+	t.Setenv("JFAST_AUTH_SECRET", testSecret)
+	t.Setenv("JFAST_AUTH_ALGORITHMS", `["HS256"]`)
+	cfg, err = LoadAuthConfig()
+	if err != nil || !cfg.Enabled || cfg.Mode != "secret" || cfg.Algorithms[0] != "HS256" {
+		t.Fatalf("cfg = %+v, err = %v", cfg, err)
+	}
+}
+
+func serve(handler http.Handler, request *http.Request) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func TestRequireAuthAnswers401ProblemJSON(t *testing.T) {
+	auth := newTestAuth(t, secretConfig())
+	handler := Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), RequestID, Authenticate(auth), RequireAuth)
+
+	anonymous := serve(handler, httptest.NewRequest(http.MethodGet, "/private", nil))
+	if anonymous.Code != http.StatusUnauthorized || anonymous.Header().Get("Content-Type") != ProblemContentType {
+		t.Fatalf("no token: %d %q", anonymous.Code, anonymous.Header().Get("Content-Type"))
+	}
+
+	bad := httptest.NewRequest(http.MethodGet, "/private", nil)
+	bad.Header.Set("Authorization", "Bearer not.a.token")
+	if got := serve(handler, bad).Code; got != http.StatusUnauthorized {
+		t.Fatalf("bad token: %d, want 401", got)
+	}
+
+	good := httptest.NewRequest(http.MethodGet, "/private", nil)
+	good.Header.Set("Authorization", "bearer "+mint(t, "HS256", []byte(testSecret), validClaims()))
+	if got := serve(handler, good).Code; got != http.StatusNoContent {
+		t.Fatalf("good token: %d, want 204", got)
+	}
+}
+
+func TestARefreshTokenIsNotABearer(t *testing.T) {
+	auth := newTestAuth(t, secretConfig())
+	handler := Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), Authenticate(auth), RequireAuth)
+
+	claims := validClaims()
+	claims["typ"] = "refresh"
+	request := httptest.NewRequest(http.MethodGet, "/private", nil)
+	request.Header.Set("Authorization", "Bearer "+mint(t, "HS256", []byte(testSecret), claims))
+	if got := serve(handler, request).Code; got != http.StatusUnauthorized {
+		t.Fatalf("refresh token as bearer: %d, want 401", got)
+	}
+}
+
+func TestABadTokenDoesNotCloseAPublicRoute(t *testing.T) {
+	auth := newTestAuth(t, secretConfig())
+	handler := Authenticate(auth)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/public", nil)
+	request.Header.Set("Authorization", "Bearer garbage")
+	if got := serve(handler, request).Code; got != http.StatusOK {
+		t.Fatalf("public route with a bad token: %d, want 200", got)
+	}
+}
+
+func TestRequireScopesIs403ForAKnownCaller(t *testing.T) {
+	auth := newTestAuth(t, secretConfig())
+	handler := Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), Authenticate(auth), RequireScopes("invoices:delete"))
+
+	request := httptest.NewRequest(http.MethodDelete, "/invoices/1", nil)
+	request.Header.Set("Authorization", "Bearer "+mint(t, "HS256", []byte(testSecret), validClaims()))
+	recorder := serve(handler, request)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "invoices:delete") {
+		t.Fatalf("missing scope: %d %s", recorder.Code, recorder.Body)
+	}
+}

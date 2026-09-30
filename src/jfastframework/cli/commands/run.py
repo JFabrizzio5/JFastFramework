@@ -125,8 +125,11 @@ def dev(
     infra: bool = typer.Option(True, "--infra/--no-infra", help="Bring up database and cache."),
     migrate: bool = typer.Option(True, "--migrate/--no-migrate", help="Run alembic upgrade head."),
     web: bool = typer.Option(True, "--web/--no-web", help="Also start the frontend dev server."),
+    worker: bool = typer.Option(
+        True, "--worker/--no-worker", help="Also run the queue worker, when the queue is on."
+    ),
 ) -> None:
-    """Everything needed to develop: infrastructure, migrations, API and frontend.
+    """Everything needed to develop: infrastructure, migrations, API, worker and frontend.
 
     `jfast serve` starts the backend and nothing else. This is the other thing:
     the four steps somebody does every morning, in the order that makes the
@@ -156,6 +159,7 @@ def dev(
     workspace = Workspace.load_or_none()
 
     processes: list[devtools.Process] = []
+    started: set[str] = set()
 
     # -- infrastructure --------------------------------------------------
     compose_file = _find_compose(service_dir)
@@ -244,6 +248,25 @@ def dev(
         )
     )
 
+    # The queue is on in every generated service, and a queue nobody consumes
+    # is jobs piling up in a table while the API answers 201. The worker boots
+    # the same app, so it sees the same tasks and subscribers. It does not
+    # reload: restart `jfast dev` after changing a task.
+    if not worker:
+        ui.note("worker   skipped (--no-worker)")
+    elif "queue" not in settings.plugins:
+        ui.note("worker   skipped: the queue plugin is not enabled")
+    else:
+        processes.append(
+            devtools.spawn(
+                [devtools.python_executable(), "-m", "jfastframework", "worker"],
+                cwd=service_dir,
+                name="worker",
+                env=env,
+            )
+        )
+        started.add("worker")
+
     front_dir = frontend or _find_frontend(service_dir, workspace)
     resolved_web_port = web_port if web_port is not None else WEB_PORT
     if not web:
@@ -259,6 +282,7 @@ def dev(
         if web_port is not None:
             command += ["--", "--port", str(web_port)]
         processes.append(devtools.spawn(command, cwd=front_dir, name="web"))
+        started.add("web")
 
     ui.next_steps(
         "Running",
@@ -267,7 +291,12 @@ def dev(
             (f"http://{host}:{resolved_port}/docs", "its docs"),
             *(
                 [(f"http://localhost:{resolved_web_port}", "the frontend")]
-                if len(processes) > 1
+                if "web" in started
+                else []
+            ),
+            *(
+                [("jfast worker", "running the queue's jobs and subscribers")]
+                if "worker" in started
                 else []
             ),
             ("Ctrl-C", "stops everything it started" if len(processes) > 1 else "stops it"),

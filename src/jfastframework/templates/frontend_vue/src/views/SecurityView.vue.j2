@@ -1,0 +1,133 @@
+<template>
+  <LayoutAuthenticated>
+    <SectionMain>
+      <SectionTitleLineWithButton :icon="mdiShieldLockOutline" title="Security" main />
+
+      <CardBox class="mb-6">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h2 class="font-semibold">Email</h2>
+          <BaseBadge v-if="user" :tone="user.email_verified ? 'success' : 'warning'"
+            :label="user.email_verified ? 'Confirmed' : 'Not confirmed'" />
+        </div>
+        <p class="text-sm text-ink-soft">{{ user?.email }}</p>
+        <BaseButton v-if="user && !user.email_verified && features?.email_verification !== 'off'" variant="outline"
+          class="mt-4" :loading="busy === 'resend'" :disabled="resent" @click="resend">
+          {{ resent ? 'Sent -- check your inbox' : 'Send the confirmation link again' }}
+        </BaseButton>
+      </CardBox>
+
+      <CardBox v-if="features?.mfa" class="mb-6">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h2 class="font-semibold">Two-step verification</h2>
+          <BaseBadge :tone="user?.mfa_enabled ? 'success' : 'neutral'" :label="user?.mfa_enabled ? 'On' : 'Off'" />
+        </div>
+
+        <MfaSetupPanel v-if="!user?.mfa_enabled" @done="auth.fetchAccount()" />
+
+        <template v-else>
+          <ul v-if="codes.length" class="mb-4 grid grid-cols-2 gap-2 rounded-lg bg-elevated p-3 font-mono text-sm">
+            <li v-for="item in codes" :key="item">{{ item }}</li>
+          </ul>
+          <form novalidate class="flex flex-col gap-4" @submit.prevent>
+            <p class="text-sm text-ink-soft">
+              To turn it off or replace your recovery codes, confirm with your password and a code.
+            </p>
+            <BaseInput v-if="user?.has_password !== false" v-model="password" label="Current password"
+              type="password" autocomplete="current-password" />
+            <BaseInput v-model="code" label="Code from your app, or a recovery code" autocomplete="one-time-code"
+              :error="error" />
+            <div class="flex flex-wrap gap-3">
+              <BaseButton variant="outline" :loading="busy === 'codes'" @click="replaceCodes">
+                New recovery codes
+              </BaseButton>
+              <BaseButton variant="danger" :loading="busy === 'off'" @click="turnOff">Turn off</BaseButton>
+            </div>
+          </form>
+        </template>
+      </CardBox>
+
+      <CardBox>
+        <h2 class="mb-2 font-semibold">Sessions</h2>
+        <p class="mb-4 text-sm text-ink-soft">
+          Signed in somewhere you should not be? This ends every session, on every device, this one included.
+        </p>
+        <BaseButton variant="danger" :loading="busy === 'everywhere'" @click="everywhere">
+          Sign out everywhere
+        </BaseButton>
+      </CardBox>
+    </SectionMain>
+  </LayoutAuthenticated>
+</template>
+
+<script setup>
+import { mdiShieldLockOutline } from '@mdi/js'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+
+import BaseBadge from '@/components/BaseBadge.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import BaseInput from '@/components/BaseInput.vue'
+import CardBox from '@/components/CardBox.vue'
+import MfaSetupPanel from '@/components/MfaSetupPanel.vue'
+import SectionMain from '@/components/SectionMain.vue'
+import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.vue'
+import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.vue'
+import { LOGIN_ROUTE, useAuthStore } from '@/stores/auth.store.js'
+
+const auth = useAuthStore()
+const router = useRouter()
+const user = computed(() => auth.user)
+const features = ref(null)
+const password = ref('')
+const code = ref('')
+const codes = ref([])
+const error = ref(null)
+const busy = ref(null)
+const resent = ref(false)
+
+onMounted(async () => {
+  features.value = await auth.loadFeatures()
+  // Fresh from the server: the copy in storage may predate a change made on
+  // another device.
+  await auth.fetchAccount()
+})
+
+async function run(name, action) {
+  error.value = null
+  busy.value = name
+  try {
+    await action()
+  } catch (failure) {
+    error.value = failure.message
+  } finally {
+    busy.value = null
+  }
+}
+
+const turnOff = () =>
+  run('off', async () => {
+    await auth.mfaDisable(password.value || null, code.value)
+    password.value = ''
+    code.value = ''
+    codes.value = []
+  })
+
+const replaceCodes = () =>
+  run('codes', async () => {
+    codes.value = await auth.newRecoveryCodes(password.value || null, code.value)
+    password.value = ''
+    code.value = ''
+  })
+
+const resend = () =>
+  run('resend', async () => {
+    await auth.resendVerification(user.value.email)
+    resent.value = true
+  })
+
+const everywhere = () =>
+  run('everywhere', async () => {
+    await auth.logoutEverywhere()
+    await router.replace(LOGIN_ROUTE)
+  })
+</script>

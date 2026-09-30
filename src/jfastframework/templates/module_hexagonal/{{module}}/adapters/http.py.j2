@@ -1,3 +1,4 @@
+{% import "_module_shared/access.j2" as access_m with context %}
 """HTTP adapter for {{ module_title }}.
 
 Router and wire schemas together, because they change together. The router
@@ -12,54 +13,28 @@ what a composition root is for, and confining it to two lines in
 
 from __future__ import annotations
 
-from datetime import datetime
+{% for line in import_lines(spec.model_stdlib()) %}
+{{ line }}
+{% endfor %}
 
-from fastapi import APIRouter, Depends, Query, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+{{ access_m.fastapi_import()|trim }}
+{% for line in import_lines(spec.pydantic()) %}
+{{ line }}
+{% endfor %}
 
-from jfastframework.plugins.builtin.database import DbSession
+{{ access_m.framework_imports()|trim }}
 
 from ..application.use_cases import {{ Module }}UseCases
 from ..infrastructure.repository import Sql{{ Module }}Repository
 
-router = APIRouter(prefix="/{{ table }}", tags=["{{ module }}"])
+{{ access_m.router()|trim }}
 
 
-class {{ Module }}Create(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    description: str | None = Field(default=None, max_length=2000)
-    is_active: bool = True
+{% set optional_timestamps = true %}
+{% include "_module_shared/pydantic_classes.j2" %}
 
 
-class {{ Module }}Update(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=200)
-    description: str | None = Field(default=None, max_length=2000)
-    is_active: bool | None = None
-
-
-class {{ Module }}Read(BaseModel):
-    # from_attributes because the use cases return domain dataclasses, not
-    # rows and not dicts. Pydantic reads either the same way.
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    name: str
-    description: str | None
-    is_active: bool
-    # Nullable on the entity, because an entity that has not been stored yet
-    # has no timestamps. Everything this router returns has been.
-    created_at: datetime | None
-    updated_at: datetime | None
-
-
-# DbSession commits when the endpoint returns, before the response is sent,
-# so a write that fails to commit is a 500 and not a 201 for a missing row.
-# `async def`, not `def`, although nothing here awaits: FastAPI runs a plain
-# `def` dependency in its threadpool, a hop that costs more per request than
-# the whole middleware stack.
-async def get_use_cases(request: Request, session: DbSession) -> {{ Module }}UseCases:
-    tenant_id = getattr(request.state, "tenant_id", None)
-    return {{ Module }}UseCases(Sql{{ Module }}Repository(session, tenant_id=tenant_id))
+{{ access_m.dependency("get_use_cases", Module ~ "UseCases", Module ~ "UseCases(Sql" ~ Module ~ "Repository(session, tenant_id=tenant_id))")|trim }}
 
 
 @router.get("", response_model=list[{{ Module }}Read], summary="List {{ module }}")

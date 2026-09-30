@@ -1,0 +1,30 @@
+<template>
+  <AuthShell title="Set up two-step verification" eyebrow="Required for your role" hero="Protect your account."
+    hero-faded="Your role requires a second step."
+    hero-text="From now on, signing in asks for a code from an app on your phone.">
+    <MfaSetupPanel v-if="mfaToken" :mfa-token="mfaToken" @done="finish" />
+    <p v-else class="text-sm text-ink-soft">This sign-in has expired.</p>
+    <template #footer>
+      <RouterLink :to="LOGIN_ROUTE" class="hover:text-ink">Back to sign in</RouterLink>
+    </template>
+  </AuthShell>
+</template>
+
+<script setup>
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+
+import AuthShell from '@/components/AuthShell.vue'
+import MfaSetupPanel from '@/components/MfaSetupPanel.vue'
+import { LOGIN_ROUTE, safeNext } from '@/stores/auth.store.js'
+
+// Reached from the sign-in page when a role of the account requires MFA and
+// it has none. The enrolment token rides in history state, not the address;
+// a reload loses it on purpose, and the way back is to sign in again.
+const route = useRoute()
+const router = useRouter()
+const mfaToken = window.history.state?.mfaToken ?? null
+
+function finish() {
+  return router.replace(safeNext(route.query.next))
+}
+</script>

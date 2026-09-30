@@ -34,6 +34,7 @@ func NotFound(detail string) Problem     { return NewProblem(http.StatusNotFound
 func Conflict(detail string) Problem     { return NewProblem(http.StatusConflict, detail) }
 func BadRequest(detail string) Problem   { return NewProblem(http.StatusBadRequest, detail) }
 func Unauthorized(detail string) Problem { return NewProblem(http.StatusUnauthorized, detail) }
+func Forbidden(detail string) Problem    { return NewProblem(http.StatusForbidden, detail) }
 
 // WriteProblem renders an error response and attaches the request id, so a
 // client's error report is enough to find the server-side log line.

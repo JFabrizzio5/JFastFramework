@@ -99,22 +99,21 @@ class RequestContextMiddleware:
         raw_id = headers.get(REQUEST_ID_HEADER_BYTES)
         request_id = raw_id.decode("latin-1") if raw_id else uuid.uuid4().hex
 
-        # The tenancy plugin, when enabled, is the authority on which tenant
-        # this is: it can read a signed claim, which a header never is. This
-        # middleware only fills the gap when nothing has resolved one, so a
-        # header cannot quietly overwrite a tenant that came from a token.
-        resolved = tenant_id_var.get()
+        # The tenant is never taken from the header here. It used to fill the
+        # gap when nothing had resolved one, and `current_tenant`, the RLS
+        # session and every Job/Event built in the request trust that gap:
+        # with `auth` on and `tenancy` off, an anonymous request carrying
+        # `X-Tenant-ID: victim` was served as tenant `victim`. A tenant comes
+        # from a signed token (`auth`) or from `tenancy`, where `header` is a
+        # source someone chose. The header survives only as a log field,
+        # `tenant_claimed`, labelled as what it is: unverified.
+        tenant_id = tenant_id_var.get()
         raw_tenant = headers.get(self.tenant_header)
-        tenant_id = (
-            resolved
-            if resolved is not None
-            else (raw_tenant.decode("latin-1") if raw_tenant else None)
-        )
 
         state = scope.setdefault("state", {})
         state["request_id"] = request_id
-        if state.get("tenant_id") is None:
-            state["tenant_id"] = tenant_id
+        if raw_tenant:
+            state["tenant_claimed"] = raw_tenant.decode("latin-1")[:128]
 
         rid_token = request_id_var.set(request_id)
         tid_token = tenant_id_var.set(tenant_id)
@@ -166,6 +165,8 @@ class RequestContextMiddleware:
         # already reset its own context by the time this line is written.
         if (resolved_tenant := state.get("tenant_id")) is not None:
             fields["tenant_id"] = resolved_tenant
+        elif (claimed := state.get("tenant_claimed")) is not None:
+            fields["tenant_claimed"] = claimed
         self.logger.info("request", extra=fields)
 
 

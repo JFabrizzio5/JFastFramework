@@ -1,121 +1,83 @@
 """Tests for the {{ module_title }} module.
 
-Service-level tests use a fake repository so they run without a database.
-Router tests need the `database` plugin and a live PostgreSQL; mark them
-`@pytest.mark.integration` and keep them out of the fast suite.
+Service-level tests use an in-memory repository so they run without a
+database. Router tests need the `database` plugin and a live PostgreSQL; mark
+them `@pytest.mark.integration` and keep them out of the fast suite.
 
 Run from the project root so that `modules` is importable::
 
     pytest modules/{{ module }}/tests
 """
 
+{% set subject = "service" %}
+{% set Subject = Module ~ "Service" %}
+{% set dict_payloads = false %}
+{% set item = "item" %}
+{% set stored = "{}.id" %}
+{% set entity_class = Module %}
+{% set rules = (uniques|map(attribute="rule")|list) + (["ensure_can_deactivate"] if example else []) %}
 from __future__ import annotations
 
+{% for line in import_lines(spec.sample_stdlib() + ["typing.Any"]) %}
+{{ line }}
+{% endfor %}
+
+{% if spec.non_nullable or spec.has_limits %}
+import pydantic
+{% endif %}
 import pytest
 
-from jfastframework.errors import ConflictError, NotFoundError, ValidationError
+from jfastframework.db import Page
+from jfastframework.errors import {{ (["NotFoundError"] + (["ConflictError"] if uniques else []) + (["ValidationError"] if example else []))|sort|join(", ") }}
 
-from modules.{{ module }}.models import {{ Module }}Create, {{ Module }}Update
+from modules.{{ module }}.models import {{ Module }}, {{ Module }}Create{{ ", " ~ Module ~ "Update" if fields }}
 from modules.{{ module }}.services import {{ Module }}Service
-from modules.{{ module }}.validations import ensure_name_is_available
+{% if uniques %}
+from modules.{{ module }}.validations import {{ uniques[0].rule }}
+{% endif %}
 
 # Explicit rather than relying on `asyncio_mode = auto`, so these tests pass in
 # a project that has not configured pytest-asyncio yet.
 pytestmark = pytest.mark.asyncio
 
 
-class Fake{{ Module }}:
-    def __init__(self, item_id: int, **values: object) -> None:
-        self.id = item_id
-        for key, value in values.items():
-            setattr(self, key, value)
-
-
-class FakeRepository:
-    """In-memory stand-in for {{ Module }}Repository."""
-
-    def __init__(self) -> None:
-        self.items: dict[int, Fake{{ Module }}] = {}
-        self._next_id = 1
-
-    async def paginate(self, *, limit: int = 50, offset: int = 0, **_: object):
-        from jfastframework.db import Page
-
-        values = list(self.items.values())
-        return Page(items=values[offset : offset + limit], total=len(values), limit=limit, offset=offset)
-
-    async def get_or_raise(self, item_id: int) -> Fake{{ Module }}:
-        try:
-            return self.items[item_id]
-        except KeyError:
-            raise NotFoundError(f"{{ Module }} {item_id!r} not found") from None
-
-    async def by_name(self, name: str) -> Fake{{ Module }} | None:
-        return next((i for i in self.items.values() if i.name == name), None)
-
-    async def create(self, **values: object) -> Fake{{ Module }}:
-        item = Fake{{ Module }}(self._next_id, **values)
-        self.items[self._next_id] = item
-        self._next_id += 1
-        return item
-
-    async def update(self, instance: Fake{{ Module }}, **values: object) -> Fake{{ Module }}:
-        for key, value in values.items():
-            setattr(instance, key, value)
-        return instance
-
-    async def delete(self, instance: Fake{{ Module }}) -> None:
-        self.items.pop(instance.id, None)
+{% include "_module_shared/fake_repository.j2" %}
 
 
 @pytest.fixture
 def service() -> {{ Module }}Service:
+    # A stand-in, not a subclass: the service is typed against the real
+    # repository, and this is the one place that is knowingly not it.
     return {{ Module }}Service(FakeRepository())  # type: ignore[arg-type]
 
 
-async def test_create_returns_persisted_item(service: {{ Module }}Service) -> None:
-    item = await service.create({{ Module }}Create(name="first"))
-    assert item.id == 1
-    assert item.name == "first"
+def first() -> {{ Module }}Create:
+    {{ fit("return " ~ Module ~ "Create(", spec.sample_items(0), ")", indent=4) }}
 
 
-async def test_create_rejects_duplicate_name(service: {{ Module }}Service) -> None:
-    await service.create({{ Module }}Create(name="dup"))
-    with pytest.raises(ConflictError):
-        await service.create({{ Module }}Create(name="dup"))
-
-
-async def test_get_missing_raises_not_found(service: {{ Module }}Service) -> None:
-    with pytest.raises(NotFoundError):
-        await service.get(404)
-
-
-async def test_update_applies_only_set_fields(service: {{ Module }}Service) -> None:
-    item = await service.create({{ Module }}Create(name="before", description="keep"))
-    updated = await service.update(item.id, {{ Module }}Update(name="after"))
-    assert updated.name == "after"
-    assert updated.description == "keep"
-
-
-async def test_delete_removes_item(service: {{ Module }}Service) -> None:
-    item = await service.create({{ Module }}Create(name="gone"))
-    await service.delete(item.id)
-    with pytest.raises(NotFoundError):
-        await service.get(item.id)
+def second() -> {{ Module }}Create:
+    {{ fit("return " ~ Module ~ "Create(", spec.sample_items(1), ")", indent=4) }}
+{% include "_module_shared/service_tests.j2" %}
+{% include "_module_shared/model_tests.j2" %}
+{% if example %}
 
 
 async def test_deactivating_twice_is_rejected(service: {{ Module }}Service) -> None:
-    item = await service.create({{ Module }}Create(name="closing"))
+    item = await service.create(first())
     await service.update(item.id, {{ Module }}Update(is_active=False))
     with pytest.raises(ValidationError):
         await service.update(item.id, {{ Module }}Update(is_active=False))
+{% endif %}
+{% if uniques %}
+{% set unique = uniques[0] %}
 
 
 async def test_rules_are_testable_without_a_service() -> None:
     """The reason validations is a package: the rule runs on its own."""
     repository = FakeRepository()
-    await repository.create(name="taken")
+    await repository.create(**first().model_dump())
 
-    await ensure_name_is_available(repository, "free")
+    {{ fit("await " ~ unique.rule ~ "(", ["repository"] + unique.sample_arguments(1), ")", indent=4) }}
     with pytest.raises(ConflictError):
-        await ensure_name_is_available(repository, "taken")
+        {{ fit("await " ~ unique.rule ~ "(", ["repository"] + unique.sample_arguments(0), ")", indent=8) }}
+{% endif %}

@@ -1,0 +1,78 @@
+{#
+  Tests of the framework-free entity, from the declared fields: a valid one is
+  accepted, and each limit validate() enforces is enforced. The including file
+  sets `domain_module`, the dotted path the entity is imported from.
+#}
+{% set checked = fields|selectattr("too_long")|list + fields|rejectattr("nullable")|selectattr("type", "in", ["str", "text"])|list %}
+{% set hexagonal = hexagonal|default(false) %}
+from __future__ import annotations
+
+{% if hexagonal %}
+import subprocess
+import sys
+{% endif %}
+{% set std = spec.sample_stdlib() + (["pathlib.Path"] if hexagonal else []) %}
+{% for line in import_lines(std) %}
+{{ line }}
+{% endfor %}
+{% if std or hexagonal %}
+
+{% endif %}
+{% if checked or example or hexagonal %}
+import pytest
+
+{% endif %}
+from {{ domain_module }} import {{ Module }}{{ ", " ~ Module ~ "RuleViolation" if checked or example or hexagonal }}
+{% if hexagonal %}
+from modules.{{ module }}.domain.ports import {{ Module }}Repository
+from modules.{{ module }}.tests import InMemory{{ Module }}Repository
+
+# modules/<name>/tests/this_file.py -> the project root, whatever the cwd is.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+{% endif %}
+
+
+def valid() -> {{ Module }}:
+    {{ fit("return " ~ Module ~ "(", spec.sample_items(0), ")", indent=4) }}
+
+
+def test_a_valid_entity_is_accepted() -> None:
+    entity = valid()
+    assert entity.id is None
+{% for f in fields %}
+    assert {{ f.check("entity." ~ f.name, 0) }}
+{% endfor %}
+{% for f in fields if f.type in ["str", "text"] and not f.nullable %}
+
+
+def test_an_empty_{{ f.name }}_is_rejected() -> None:
+    entity = valid()
+    entity.{{ f.name }} = "   "
+    with pytest.raises({{ Module }}RuleViolation):
+        entity.validate()
+{% endfor %}
+{% for f in fields if f.too_long %}
+
+
+def test_an_overlong_{{ f.name }}_is_rejected() -> None:
+    entity = valid()
+    entity.{{ f.name }} = {{ f.too_long }}
+    with pytest.raises({{ Module }}RuleViolation):
+        entity.validate()
+{% endfor %}
+{% if example %}
+
+
+def test_rename_revalidates() -> None:
+    entity = valid()
+    with pytest.raises({{ Module }}RuleViolation):
+        entity.rename("")
+
+
+def test_deactivating_twice_is_a_rule_violation() -> None:
+    entity = valid()
+    entity.deactivate()
+    assert entity.is_active is False
+    with pytest.raises({{ Module }}RuleViolation):
+        entity.deactivate()
+{% endif %}

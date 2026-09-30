@@ -24,7 +24,9 @@ Requires: ``pip install jfastframework[db]``
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import logging
 import os
 import time
 from collections import OrderedDict
@@ -40,6 +42,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from jfastframework.errors import PluginError, ServiceUnavailableError
+from jfastframework.http.resilience import BreakerPolicy, CircuitBreaker
 from jfastframework.plugins.base import (
     HealthReport,
     InfraService,
@@ -51,6 +54,8 @@ from jfastframework.resources import POSTGRES_SHM_SIZE
 
 if TYPE_CHECKING:
     from jfastframework.context import AppContext
+
+logger = logging.getLogger("jfast.database")
 
 # The instance a configuration without a `connections` block describes.
 DEFAULT_CONNECTION = "default"
@@ -96,6 +101,19 @@ class TenantPoolExhausted(ServiceUnavailableError, RuntimeError):
     """
 
 
+class DatabaseUnavailableError(ServiceUnavailableError):
+    """The database did not accept a connection, or dropped the one in use.
+
+    503, because nothing about the request is wrong and the same request can
+    succeed in a moment -- which is exactly what a client, a load balancer and
+    a retrying proxy each need to be told. As a bare ``TimeoutError`` from the
+    driver it reached the unhandled handler and answered 500, and a 500 reads
+    as a bug in this service rather than an outage of the one behind it.
+    """
+
+    title = "Database Unavailable"
+
+
 class ConnectionSettings(BaseModel):
     """One database instance. Anything left unset falls back to the plugin's value."""
 
@@ -112,6 +130,12 @@ class ConnectionSettings(BaseModel):
     pool_pre_ping: bool | None = None
     pool_recycle: int | None = None
     pool_timeout: float | None = None
+    # Per instance, because a replica may sit behind a pooler the primary
+    # does not. None takes the plugin's `pgbouncer`.
+    pgbouncer: bool | None = None
+    connect_timeout: float | None = None
+    ping_timeout: float | None = None
+    command_timeout: float | None = None
 
     # Deploy generation
     include_infra: bool | None = None
@@ -146,6 +170,39 @@ class DatabaseSettings(PluginSettings):
     # busy one.
     pool_timeout: float = 30.0
 
+    # -- deadlines ---------------------------------------------------
+    # Seconds to open a connection: TCP, TLS and authentication together.
+    # asyncpg's own default is 60, which is two request timeouts: a database
+    # that accepts the socket and never answers -- a paused container, a
+    # frozen VM, a full accept queue -- held every request that needed a new
+    # connection for a minute and answered 504 from the edge. Ten covers SCRAM
+    # on a busy server (measured at up to 4.4 s on a loaded laptop) and still
+    # leaves a request time to answer 503 itself.
+    connect_timeout: float = 10.0
+    # Seconds the liveness check on checkout may take (`pool_pre_ping`).
+    # SQLAlchemy's own ping has no deadline of its own, so a connection to a
+    # database that stopped answering hung its request until the socket died
+    # -- measured: never, before the request timeout. The framework runs a
+    # bounded ping instead: past this, the connection is discarded and a new
+    # one is tried under `connect_timeout`. A healthy server answers in
+    # milliseconds; two seconds is headroom, not an estimate.
+    ping_timeout: float = 2.0
+    # Seconds one statement may run, client side. Off by default: migrations
+    # and reports legitimately run for minutes, a request is already bounded
+    # by `[app] request_timeout` and a job by the worker's `job_timeout`, and a
+    # database that stops answering is caught by the ping and the connect
+    # timeout above. Set it on a service whose every query should be fast.
+    command_timeout: float = 0.0
+    # Failed connection attempts in a row that open a breaker on connecting,
+    # and how long it stays open. Without it every request during an outage
+    # waits out `connect_timeout` -- ten seconds of a worker per request, the
+    # queue behind them growing -- to learn what the previous request already
+    # learned. Open, a request that needs a new connection answers 503 at once
+    # and one probe per cool-down finds out whether the server is back.
+    # Connections already in the pool are unaffected. 0 turns it off.
+    breaker_failures: int = 2
+    breaker_cool_down: float = 5.0
+
     # The zone every session computes in, whatever the server is configured
     # with. `date_trunc('day', ...)`, `CURRENT_DATE`, `now()::date` and any
     # `AT TIME ZONE` without an explicit zone all read the session's TimeZone,
@@ -165,6 +222,18 @@ class DatabaseSettings(PluginSettings):
     # connect as a role that is neither a superuser nor BYPASSRLS, or the
     # policies do not apply: production refuses to start otherwise.
     rls: bool = False
+
+    # The DSN points at PgBouncer (or another pooler) in *transaction* mode.
+    # Each transaction may then run on a different server connection, and a
+    # prepared statement asyncpg cached on one does not exist on the next:
+    # `prepared statement "__asyncpg_stmt_7__" does not exist`, under load
+    # and never on a laptop. True turns both statement caches off and gives
+    # every statement a unique name, so two processes sharing a server
+    # connection cannot collide either. Not needed on PgBouncer 1.21+ with
+    # `max_prepared_statements` > 0, which tracks them itself -- but harmless
+    # there, and correct when that setting is 0. Row-level security needs
+    # nothing: the tenant is set transaction-locally. See docs/multitenancy.md.
+    pgbouncer: bool = False
 
     # Named instances. Empty means one instance called `default`, configured by
     # the fields above.
@@ -281,6 +350,87 @@ class DatabaseSettings(PluginSettings):
             "pool_timeout": pick(connection.pool_timeout, self.pool_timeout),
         }
 
+    def behind_pgbouncer(self, name: str) -> bool:
+        connection = self.resolved_connections()[name]
+        return self.pgbouncer if connection.pgbouncer is None else connection.pgbouncer
+
+    def deadlines(self, name: str) -> tuple[float, float, float]:
+        """``(connect, ping, command)`` seconds for one instance."""
+        connection = self.resolved_connections()[name]
+
+        def pick(override: float | None, fallback: float) -> float:
+            return fallback if override is None else override
+
+        return (
+            pick(connection.connect_timeout, self.connect_timeout),
+            pick(connection.ping_timeout, self.ping_timeout),
+            pick(connection.command_timeout, self.command_timeout),
+        )
+
+    def validate_for_boot(self) -> None:
+        """Every value that would otherwise fail on the first query, refused now."""
+        import zoneinfo
+
+        if self.session_timezone:
+            try:
+                zoneinfo.ZoneInfo(self.session_timezone)
+            except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+                raise PluginError(
+                    f"[plugin.database] session_timezone = {self.session_timezone!r} is "
+                    f"not an IANA zone, so every connection would be refused by the "
+                    f'server. Use a name like "UTC" or "America/Mexico_City".'
+                ) from None
+        for name in self.resolved_connections():
+            options = self.engine_options(name)
+            where = (
+                "[plugin.database]"
+                if name == DEFAULT_CONNECTION and not self.connections
+                else f"[plugin.database.connections.{name}]"
+            )
+            if int(options["pool_size"]) < 1:
+                # SQLAlchemy reads 0 as "no limit", the opposite of what it says.
+                raise PluginError(
+                    f"{where} pool_size must be at least 1; SQLAlchemy reads 0 as "
+                    f"unlimited, which is the connection storm the pool exists to stop."
+                )
+            if int(options["max_overflow"]) < 0:
+                raise PluginError(f"{where} max_overflow cannot be negative; 0 means no overflow.")
+            if float(options["pool_timeout"]) <= 0:
+                raise PluginError(
+                    f"{where} pool_timeout must be positive: it is how long a request "
+                    f"waits for a free connection before answering 503."
+                )
+            connect, ping, command = self.deadlines(name)
+            if connect <= 0 or ping <= 0:
+                raise PluginError(
+                    f"{where} connect_timeout and ping_timeout must be positive; "
+                    f"without them a database that stops answering hangs every request."
+                )
+            if command < 0:
+                raise PluginError(f"{where} command_timeout cannot be negative; 0 turns it off.")
+        if self.breaker_failures < 0 or self.breaker_cool_down <= 0:
+            raise PluginError(
+                "[plugin.database] breaker_failures cannot be negative (0 turns it off) "
+                "and breaker_cool_down must be positive."
+            )
+        if self.read_write_split and self.pin_window <= 0:
+            raise PluginError(
+                "[plugin.database] pin_window must be positive while read_write_split "
+                "is on, or a client reads its own write from a replica that has not "
+                "replayed it."
+            )
+        for field in ("tenant_dsn_template", "tenant_dsn_env_template"):
+            template = str(getattr(self, field))
+            if template and "{tenant}" not in template:
+                raise PluginError(
+                    f"[plugin.database] {field} = {template!r} has no {{tenant}} "
+                    f"placeholder, so every tenant would share one database."
+                )
+        if self.tenant_max_engines < 1 or self.tenant_pool_size < 1:
+            raise PluginError(
+                "[plugin.database] tenant_max_engines and tenant_pool_size must be at least 1."
+            )
+
     def max_connections(self) -> int:
         """What one process can open across every named instance."""
         total = 0
@@ -305,7 +455,21 @@ class DatabaseSettings(PluginSettings):
         ]
 
 
-def connect_args_for(dsn: str, *, session_timezone: str, read_only: bool = False) -> dict[str, Any]:
+def _unique_statement_name() -> str:
+    """A prepared statement name no other process will choose.
+
+    asyncpg numbers its statements with a per-process counter, so two workers
+    sharing one pooled server connection would both prepare
+    ``__asyncpg_stmt_1__`` and the second would fail with ``already exists``.
+    """
+    import uuid
+
+    return f"__asyncpg_{uuid.uuid4().hex}__"
+
+
+def connect_args_for(
+    dsn: str, *, session_timezone: str, read_only: bool = False, pgbouncer: bool = False
+) -> dict[str, Any]:
     """asyncpg startup parameters for one engine, or ``{}`` for another driver.
 
     Sent in the startup packet rather than as a ``SET`` after connect, and that
@@ -324,9 +488,207 @@ def connect_args_for(dsn: str, *, session_timezone: str, read_only: bool = False
         # `session.execute(text(...))` fails on the replica instead of
         # succeeding on a database that is about to be overwritten by WAL.
         server_settings["default_transaction_read_only"] = "on"
-    if not server_settings or not dsn.startswith(ASYNCPG_PREFIX):
+    if not dsn.startswith(ASYNCPG_PREFIX):
         return {}
-    return {"server_settings": server_settings}
+    args: dict[str, Any] = {}
+    if server_settings:
+        # Through PgBouncer these are startup parameters it has to forward:
+        # `timezone` is one it tracks natively; `default_transaction_read_only`
+        # needs `track_extra_parameters` (1.20+), or the connection is refused
+        # with "unsupported startup parameter" -- loudly, which is the right
+        # failure for a replica guard.
+        args["server_settings"] = server_settings
+    if pgbouncer:
+        # Transaction pooling: the next transaction may run on another server
+        # connection, where a statement cached on this one does not exist.
+        args["statement_cache_size"] = 0
+        args["prepared_statement_cache_size"] = 0
+        args["prepared_statement_name_func"] = _unique_statement_name
+    return args
+
+
+_FRESH = "jfast_fresh"
+
+
+def guarded_connect(
+    name: str, timeout: float, breaker: CircuitBreaker | None = None
+) -> Callable[..., Any]:
+    """``asyncpg.connect`` that fails as a 503 when the server is not there.
+
+    The driver raises a bare ``TimeoutError`` or ``OSError`` for a server that
+    is down, and SQLAlchemy passes both through untranslated, so they reached
+    the unhandled handler as 500s. Translated here, where it is certain the
+    error came from connecting to *this* database and not from anything else
+    the request did.
+    """
+
+    async def connect(*args: Any, **kwargs: Any) -> Any:
+        import asyncpg  # type: ignore[import-untyped]
+
+        from jfastframework.http.errors import CircuitOpenError
+
+        permit = None
+        if breaker is not None:
+            try:
+                permit = breaker.acquire()
+            except CircuitOpenError as exc:
+                raise DatabaseUnavailableError(
+                    f"database {name!r} failed its last connection attempts; the next "
+                    f"is in {exc.retry_after:.1f}s",
+                    retry_after=round(exc.retry_after, 3),
+                ) from None
+        try:
+            connection = await asyncpg.connect(*args, **kwargs)
+        except asyncio.CancelledError:
+            if breaker is not None and permit is not None:
+                breaker.release(permit)
+            raise
+        except (
+            TimeoutError,
+            OSError,
+            asyncpg.exceptions.CannotConnectNowError,
+            asyncpg.exceptions.TooManyConnectionsError,
+            asyncpg.exceptions.ConnectionDoesNotExistError,
+        ) as exc:
+            if breaker is not None and permit is not None:
+                breaker.record(permit, failed=True)
+            detail = str(exc) or f"no answer within {timeout}s"
+            raise DatabaseUnavailableError(
+                f"database {name!r} is not accepting connections ({type(exc).__name__}: {detail})"
+            ) from exc
+        except Exception:
+            # A wrong password or a missing database is an answer: the server
+            # is there. The breaker is for servers that are not.
+            if breaker is not None and permit is not None:
+                breaker.record(permit, failed=False)
+            raise
+        if breaker is not None and permit is not None:
+            breaker.record(permit, failed=False)
+        return connection
+
+    return connect
+
+
+def install_bounded_ping(engine: Any, timeout: float) -> None:
+    """``pool_pre_ping`` with a deadline.
+
+    SQLAlchemy's pre-ping has none: it runs ``BEGIN``/``;``/``ROLLBACK`` under
+    whatever ``command_timeout`` the connection has -- none, by default -- so a
+    pooled connection to a database that stopped answering hung the request
+    that borrowed it for as long as the socket lived. This ping answers within
+    ``timeout`` or the connection is terminated and SQLAlchemy opens a new one,
+    which ``connect_timeout`` bounds.
+
+    A simple-protocol ``SELECT 1``: no prepared statement, so it works behind
+    PgBouncer in transaction mode, and outside a transaction for the same
+    reason. A connection that was just opened is not pinged -- it has just
+    proved itself.
+    """
+    from sqlalchemy import event
+    from sqlalchemy import exc as sa_exc
+    from sqlalchemy.util import await_only
+
+    pool = engine.sync_engine.pool
+
+    @event.listens_for(pool, "connect")
+    def _mark_fresh(dbapi_connection: Any, record: Any) -> None:
+        record.info[_FRESH] = True
+
+    @event.listens_for(pool, "checkout")
+    def _ping(dbapi_connection: Any, record: Any, proxy: Any) -> None:
+        if record.info.pop(_FRESH, False):
+            return
+        driver = dbapi_connection.driver_connection
+        try:
+            await_only(asyncio.wait_for(driver.execute("SELECT 1"), timeout))
+        except Exception as exc:
+            # Terminated, not closed: a graceful close is a round trip to the
+            # server that just failed to answer one.
+            driver.terminate()
+            raise sa_exc.DisconnectionError(
+                f"pool ping got no answer within {timeout}s: {exc!r}"
+            ) from exc
+
+
+def build_engine(
+    dsn: str,
+    *,
+    name: str,
+    options: dict[str, Any],
+    connect_args: dict[str, Any],
+    connect_timeout: float,
+    ping_timeout: float,
+    command_timeout: float = 0.0,
+    breaker_failures: int = 0,
+    breaker_cool_down: float = 5.0,
+) -> Any:
+    """One engine with the framework's deadlines, for asyncpg; plain for any other driver."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    options = dict(options)
+    args = dict(connect_args)
+    bounded_ping = False
+    if dsn.startswith(ASYNCPG_PREFIX):
+        args["timeout"] = connect_timeout
+        if command_timeout:
+            args["command_timeout"] = command_timeout
+        # Read by SQLAlchemy's asyncpg adapter in place of `asyncpg.connect`.
+        breaker = (
+            CircuitBreaker(
+                f"database {name}",
+                BreakerPolicy(failure_threshold=breaker_failures, cool_down=breaker_cool_down),
+            )
+            if breaker_failures > 0
+            else None
+        )
+        args["async_creator_fn"] = guarded_connect(name, connect_timeout, breaker)
+        bounded_ping = bool(options.get("pool_pre_ping"))
+        if bounded_ping:
+            options["pool_pre_ping"] = False
+    if args:
+        options["connect_args"] = args
+    engine = create_async_engine(dsn, **options)
+    if bounded_ping:
+        install_bounded_ping(engine, ping_timeout)
+    return engine
+
+
+def is_unavailable(exc: BaseException) -> bool:
+    """Whether a SQLAlchemy error means "the database is not there right now"."""
+    from sqlalchemy import exc as sa_exc
+
+    if isinstance(exc, DatabaseUnavailableError | sa_exc.TimeoutError):
+        return True
+    if isinstance(exc, sa_exc.DBAPIError):
+        return bool(exc.connection_invalidated) or isinstance(exc, sa_exc.InterfaceError)
+    return False
+
+
+async def _unavailable_handler(request: Request, exc: Exception) -> Response:
+    """503 for a lost connection or a full pool; anything else stays a 500."""
+    from jfastframework.errors import problem_response
+
+    if isinstance(exc, DatabaseUnavailableError):
+        return problem_response(exc, request)
+    if not is_unavailable(exc):
+        # Re-raised to the outermost handler, which renders the 500 exactly as
+        # it would have without this one.
+        raise exc
+    logger.warning("database unavailable: %s", exc)
+    return problem_response(
+        DatabaseUnavailableError(
+            "the database is not answering; retry shortly"
+            if not isinstance(exc, _pool_timeout_class())
+            else "every database connection is in use; retry shortly"
+        ),
+        request,
+    )
+
+
+def _pool_timeout_class() -> type[Exception]:
+    from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+    return PoolTimeout
 
 
 async def server_timezone(dsn: str, *, session_timezone: str = "UTC") -> tuple[str, str]:
@@ -476,6 +838,12 @@ class TenantEngines:
         pool_pre_ping: bool = True,
         echo: bool = False,
         session_timezone: str = "UTC",
+        pgbouncer: bool = False,
+        connect_timeout: float = 10.0,
+        ping_timeout: float = 2.0,
+        command_timeout: float = 0.0,
+        breaker_failures: int = 2,
+        breaker_cool_down: float = 5.0,
     ) -> None:
         self._resolve = resolve
         self._create = create or self._build_engine
@@ -486,6 +854,12 @@ class TenantEngines:
         self._pool_pre_ping = pool_pre_ping
         self._echo = echo
         self._session_timezone = session_timezone
+        self._pgbouncer = pgbouncer
+        self._connect_timeout = connect_timeout
+        self._ping_timeout = ping_timeout
+        self._command_timeout = command_timeout
+        self._breaker_failures = breaker_failures
+        self._breaker_cool_down = breaker_cool_down
         self._entries: OrderedDict[str, TenantDatabase] = OrderedDict()
         self.evictions = 0
 
@@ -621,19 +995,27 @@ class TenantEngines:
         self._resolve = resolve
 
     def _build_engine(self, tenant: str, dsn: str) -> Any:
-        from sqlalchemy.ext.asyncio import create_async_engine
-
         # A tenant database is a database like any other: the report it answers
-        # must not depend on which server that tenant landed on.
-        connect_args = connect_args_for(dsn, session_timezone=self._session_timezone)
-        return create_async_engine(
+        # must not depend on which server that tenant landed on, and it gets
+        # the same deadlines.
+        return build_engine(
             dsn,
-            echo=self._echo,
-            pool_size=self._pool_size,
-            max_overflow=self._max_overflow,
-            pool_pre_ping=self._pool_pre_ping,
-            pool_recycle=self._pool_recycle,
-            **({"connect_args": connect_args} if connect_args else {}),
+            name=f"tenant:{tenant}",
+            options={
+                "echo": self._echo,
+                "pool_size": self._pool_size,
+                "max_overflow": self._max_overflow,
+                "pool_pre_ping": self._pool_pre_ping,
+                "pool_recycle": self._pool_recycle,
+            },
+            connect_args=connect_args_for(
+                dsn, session_timezone=self._session_timezone, pgbouncer=self._pgbouncer
+            ),
+            connect_timeout=self._connect_timeout,
+            ping_timeout=self._ping_timeout,
+            command_timeout=self._command_timeout,
+            breaker_failures=self._breaker_failures,
+            breaker_cool_down=self._breaker_cool_down,
         )
 
 
@@ -786,6 +1168,7 @@ class DatabasePlugin(Plugin):
         settings: DatabaseSettings = self.settings
         connections = settings.resolved_connections()
         default = settings.default_name()
+        settings.validate_for_boot()
 
         engines: dict[str, Any] = {}
         sessionmakers: dict[str, Any] = {}
@@ -822,12 +1205,26 @@ class DatabasePlugin(Plugin):
             pool_pre_ping=settings.pool_pre_ping,
             echo=settings.echo,
             session_timezone=settings.session_timezone,
+            pgbouncer=settings.pgbouncer,
+            connect_timeout=settings.connect_timeout,
+            ping_timeout=settings.ping_timeout,
+            command_timeout=settings.command_timeout,
+            breaker_failures=settings.breaker_failures,
+            breaker_cool_down=settings.breaker_cool_down,
         )
         self._registry = registry
 
         ctx.provide("db.engine", engines[default])
         ctx.provide("db.sessionmaker", sessionmakers[default])
         ctx.provide("db.databases", registry)
+
+        # A lost connection or a full pool answers 503 wherever it escapes a
+        # route; every other database error keeps its 500.
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        ctx.app.add_exception_handler(DBAPIError, _unavailable_handler)
+        ctx.app.add_exception_handler(PoolTimeout, _unavailable_handler)
 
         if settings.read_write_split:
             # Appended rather than added: `add_middleware` puts a middleware
@@ -1000,19 +1397,25 @@ class DatabasePlugin(Plugin):
     # -- internals ------------------------------------------------------
 
     def _build_engine(self, name: str) -> Any:
-        from sqlalchemy.ext.asyncio import create_async_engine
-
         settings: DatabaseSettings = self.settings
         dsn = settings.dsn_for(name)
-        options = settings.engine_options(name)
-        connect_args = connect_args_for(
+        connect, ping, command = settings.deadlines(name)
+        return build_engine(
             dsn,
-            session_timezone=settings.session_timezone,
-            read_only=settings.resolved_connections()[name].read_only,
+            name=name,
+            options=settings.engine_options(name),
+            connect_args=connect_args_for(
+                dsn,
+                session_timezone=settings.session_timezone,
+                read_only=settings.resolved_connections()[name].read_only,
+                pgbouncer=settings.behind_pgbouncer(name),
+            ),
+            connect_timeout=connect,
+            ping_timeout=ping,
+            command_timeout=command,
+            breaker_failures=settings.breaker_failures,
+            breaker_cool_down=settings.breaker_cool_down,
         )
-        if connect_args:
-            options["connect_args"] = connect_args
-        return create_async_engine(dsn, **options)
 
     def _port_offsets(
         self, wanted: list[tuple[str, ConnectionSettings]], default: str

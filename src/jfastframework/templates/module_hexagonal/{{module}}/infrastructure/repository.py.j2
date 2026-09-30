@@ -15,7 +15,9 @@ can reach a session through an inherited method nobody meant to expose.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+{% for line in import_lines(["typing.TYPE_CHECKING"] + spec.key_stdlib()) %}
+{{ line }}
+{% endfor %}
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,10 +60,12 @@ class Sql{{ Module }}Repository:
         row = await self.rows.get(item_id)
         return row.to_domain() if row is not None else None
 
-    async def find_by_name(self, name: str) -> {{ Module }} | None:
-        row = await self.rows.find_one(name=name)
+{% for unique in uniques %}
+    {{ fit("async def " ~ unique.port_finder ~ "(", ["self"] + unique.parameter_list, ") -> " ~ Module ~ " | None:", indent=4) }}
+        row = await self.rows.find_one({{ unique.keywords }})
         return row.to_domain() if row is not None else None
 
+{% endfor %}
     async def add(self, entity: {{ Module }}) -> {{ Module }}:
         row = await self.rows.create(**to_columns(entity))
         return row.to_domain()

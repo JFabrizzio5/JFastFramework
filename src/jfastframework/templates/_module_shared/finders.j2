@@ -1,0 +1,15 @@
+{#
+  One finder per unique key, on a BaseRepository subclass. The rule in the
+  service reads through it; the constraint on the table is what holds.
+#}
+{% set row = entity_class|default(Module) %}
+{% for unique in uniques %}
+
+    {{ fit("async def " ~ unique.finder ~ "(", ["self"] + unique.parameter_list, ") -> " ~ row ~ " | None:", indent=4) }}
+        return await self.find_one({{ unique.keywords }})
+{% endfor %}
+{% if example %}
+
+    async def active(self) -> list[{{ row }}]:
+        return await self.find(is_active=True)
+{% endif %}

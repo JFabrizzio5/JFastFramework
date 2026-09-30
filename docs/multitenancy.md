@@ -286,7 +286,8 @@ rls = true
 
 It is `set_config('jfast.tenant_id', ..., true)` as each transaction begins:
 transaction-local, so a pooled connection never carries a tenant into the next
-request, and safe behind PgBouncer in transaction mode.
+request, and safe behind PgBouncer in transaction mode -- verified, not assumed:
+see [Behind PgBouncer](#behind-pgbouncer).
 
 **3. Connect as a role the policies bind.** A superuser, or a role with
 `BYPASSRLS`, ignores every policy -- and the generated compose file connects as
@@ -398,6 +399,8 @@ bug that got past the one above it:
 | Background work | jobs carry the tenant; the worker restores it | a job that runs as "nobody" and sees everything |
 | Retrieval | the `rag` store refuses a call without a tenant ([RAG](rag.md)) | a search across every customer's documents |
 | Spending | `tenant_budget_usd` in the [`llm` plugin](llm.md) | one tenant spending everyone's AI budget |
+| Configuration | the `tenancy` check of `jfast check` | two of the settings above contradicting each other |
+| The switch | `jfast check --multitenant-ready` | code that still assumes one customer, before a second one arrives |
 
 Turn them on from the top. The first three cost nothing and come with the
 framework; row-level security is one setting, one migration and one database
@@ -407,6 +410,242 @@ What none of them catches: **a tenant id that is wrong but well-formed.** If
 your own code maps a user to the wrong organisation, every layer will
 faithfully enforce the wrong answer. That mapping -- where it lives, who can
 change it -- deserves the most careful review in the service.
+
+## Going multitenant later
+
+Most services start with one customer, and should: tenancy you do not need is
+configuration you have to keep consistent. What makes the later switch cheap is
+decided on day one and costs nothing -- **keep the `tenant_id` column**. Every
+generated entity carries `TenantMixin` (a nullable `tenant_id`) and
+tenant-aware unique keys even in a single-tenant service, so going
+multitenant is a data backfill, not a schema rewrite.
+
+The rest is three tools, in the order you use them.
+
+### Settings that contradict each other
+
+Isolation is configured piece by piece, and every piece is valid on its own.
+The failures are between them, and none stops the service from starting. The
+`tenancy` check of `jfast check` reads them together:
+
+| Code | Severity | What is wrong | The fix it names |
+| --- | --- | --- | --- |
+| `tenancy-rag-scoped-without-tenancy` | medium | `[plugin.rag] tenant_scoped` is true (the default) and the tenancy plugin is off: every rag call needs a tenant nothing resolves | `tenant_scoped = false` for one customer; `jfast tenancy enable` for several |
+| `tenancy-budget-without-tenancy` | medium | `tenant_budget_usd > 0` with no tenancy: only the global cap ever applies | drop it and size `budget_usd`, or enable tenancy |
+| `tenancy-rls-without-tenancy` | high (medium when an auth `tenant_id` claim could set it) | `rls = true` and nothing resolves a tenant: every policy table reads empty | `rls = false`, or enable tenancy |
+| `tenancy-policies-without-rls` | high | a revision calls `enable_tenant_rls` and `rls = false`: no session sets the tenant, so those tables read empty for the service's own role | `rls = true`, or drop the policy |
+| `tenancy-current-tenant-without-source` | high | code depends on `current_tenant` and there is neither a tenancy plugin nor an auth claim: every request gets 401/403 | `require_auth` for one customer; enable tenancy for several |
+| `tenancy-source-unresolvable` | high | a source that can never answer here: `subdomain` without `base_domain`, `token`/`user` without the auth plugin | set the base domain, enable auth, or change the sources |
+
+It reads the built plugins' settings when the plugin graph resolves, so an
+override in the environment (`JFAST_RAG_TENANT_SCOPED=false`) is what is judged.
+
+### What a switch would break: `jfast check --multitenant-ready`
+
+A single-tenant service is right to assume one customer, and does, in places
+nothing marks. This lists them with file and line, the way `jfast upgrade
+--check` lists what an upgrade breaks:
+
+```
+  shop: what a switch to multitenant would break
+  tenant tables: customers, invoices
+
+  ✗ modules/invoice/api/routes.py:26  factory-without-tenant  [high]
+      get_service() opens a database session with no tenant dependency;
+      used by create_invoice(), delete_invoice(), get_invoice(),
+      list_invoice() and 1 more
+      → fix
+        The generated factory reads `getattr(request.state,
+        "tenant_id", None)`, and `None` builds a repository with no
+        tenant filter. Take the tenant as a dependency ...
+```
+
+| Rule | Severity | Looks for |
+| --- | --- | --- |
+| `tenant-none-literal` | high | a call passing `tenant_id=None`: a repository, a facade, `rag`, `llm` |
+| `route-without-tenant` | high | a route that opens a database session and has no tenant dependency |
+| `factory-without-tenant` | high | the same, in a dependency (`get_service`), reported once with the routes that use it |
+| `raw-sql-without-tenant` | high | an SQL string naming a tenant table and never `tenant_id` |
+| `storage-key-without-tenant` | high | `storage.put(f"invoices/{id}.pdf", ...)`: a key built without the tenant |
+| `cache-key-without-tenant` | high | `cache.get(f"report:{month}")`: a key built without the tenant |
+| `rag-unscoped` | high | `[plugin.rag] tenant_scoped = false` |
+| `scheduled-job-without-tenant` | medium | a task scheduled with `every=`/`cron=` (or `tasks.schedule`) that builds a `Job` or `Event` with no `tenant_id`, or takes a `TaskSession` -- a tick runs as no tenant, so its session sees every row today and none under RLS |
+| `llm-call-without-tenant` | medium | `llm.chat(...)` with no `tenant_id`: no per-tenant budget applies |
+
+**These are heuristics**, read from the source without importing it, and they
+are built to stay quiet when they cannot decide rather than to guess:
+
+- A tenant dependency is `current_tenant`, `TenantSession`, or an `Annotated`
+  alias of either declared in the project. A dependency is followed into
+  functions of the same file or the same `modules/<name>/`; one imported from
+  elsewhere is not followed.
+- A storage or cache call is recognised by its receiver's name (`storage`,
+  `disk`, `cache`), and its key must *visibly* lack the tenant: a literal, an
+  f-string, a `.format()`, or a local variable assigned one. A key that arrives
+  as a parameter is not judged -- whoever built it is not in view.
+- Raw SQL is a string literal (or f-string, or `+` of them) containing
+  `SELECT`/`INSERT`/`UPDATE`/`DELETE` and a tenant table after `FROM`, `JOIN`,
+  `UPDATE` or `INTO`, and no `tenant` anywhere. Docstrings are prose and skipped.
+- Tenant tables are the models whose base closure includes `TenantMixin` or
+  that declare `tenant_id`.
+- Tests and `migrations/` are not read: a test passing `tenant_id=None`
+  exercises single-tenant behaviour on purpose, and a revision is history.
+
+What is reported and deliberate is waived inline with the comment
+`jfast contracts check` already honours, on the line of the finding or on a
+comment line directly above it:
+
+```python
+rates = await cache.get("fx:usd")  # contracts: allow exchange rates are global
+```
+
+A waived finding is listed as waived, with its reason, so the decision stays
+reviewable. `--json` carries `findings`, `waived`, `tenant_tables` and the
+`rules` table. Exit 1 while anything is left to fix, 0 when nothing is.
+
+It is a flag of `jfast check` and not a check in its battery because its
+findings are about a hypothetical: a correct single-tenant service would fail
+`jfast check` forever. The flag replaces the battery with this one report.
+
+### The switch: `jfast tenancy enable`
+
+```bash
+jfast tenancy enable --tenant acme --dry-run   # print everything, write nothing
+jfast tenancy enable --tenant acme             # write the revision and jfast.toml
+alembic upgrade head                           # the step that changes data
+```
+
+It writes **one Alembic revision**, on top of the current head, with a
+statement per table a reviewer can strike out:
+
+1. every NULL `tenant_id` becomes `--tenant` -- the customer served until now;
+2. with `--not-null`, the column becomes NOT NULL (declare it on the models
+   too, or the next autogenerate reverts it);
+3. `enable_tenant_rls` on each table -- **after** its backfill, because
+   `FORCE ROW LEVEL SECURITY` binds the migration's own role and a migration
+   sets no tenant;
+4. the RAG chunks table, when `[plugin.rag]` keeps chunks in pgvector: its NULL
+   `tenant_id` re-keyed to the same tenant and the same policy applied, inside
+   a `DO` block guarded on the table existing (the rag plugin creates it at
+   startup, so a migrated service may not have it yet).
+
+And it edits `jfast.toml` in place, keeping its comments: `tenancy` in
+`[plugins].enabled`, `[plugin.tenancy] sources = ["token", "user"]` (or
+`--sources`, with `--base-domain` for `subdomain`), `[plugin.database] rls =
+true`, `[plugin.rag] tenant_scoped = true`.
+
+Then it prints what it cannot do, in order: apply the revision as the tables'
+owner; create the role the policies bind (the SQL above); decide who can see the
+backfilled rows; fix what the readiness report still finds. It refuses, with
+the fix in the message, when there is no revision yet, when the revisions have
+several heads (`alembic merge heads`), when a switch revision already exists,
+and when the chosen sources could never resolve (`token`/`user` without auth).
+
+**Choosing `--tenant`.** Existing rows belong to it, so a request sees them only
+when it resolves to it: a token whose `tenant_id` claim says so, or -- with the
+`user` source -- the user whose id it is. If the app so far was one person's,
+that person's user id is the right value.
+
+The downgrade removes the policies and leaves the backfilled tenant in place: a
+single-tenant service reads those rows with no filter either way, and guessing
+which rows were NULL before would be a second, silent data change.
+
+### Row-level security is the safety net
+
+The readiness report is a list of heuristics and it will miss something. The
+switch turns row-level security on so that what it misses fails *closed*: a raw
+query nobody moved to the tenant returns no rows instead of another customer's,
+a write for the wrong tenant is refused by the database. A visible bug, not a
+leak. `tests/test_tenancy_enable_pg.py` proves it on a generated service, as a
+role with neither SUPERUSER nor BYPASSRLS: after `jfast tenancy enable` and
+`alembic upgrade head`, a second tenant reads zero rows from every table --
+chunks included -- with no `WHERE` at all, its `UPDATE` and `DELETE` touch
+nothing, and an `INSERT` claiming the first tenant's id fails on the policy.
+
+### Behind PgBouncer
+
+Transaction pooling hands one server connection to many clients, one
+transaction at a time. What `tests/test_rls_pgbouncer.py` verifies there
+(PgBouncer 1.25, `pool_mode = transaction`, `default_pool_size = 1`, so every
+transaction is on the same backend):
+
+- **The tenant is transaction-local.** After a transaction for `acme`, the next
+  client's transaction on the same server connection reads
+  `current_setting('jfast.tenant_id', true)` as empty and sees no rows.
+- **Interleaved tenants never see each other.** Fifty concurrent transactions,
+  two tenants, one backend: each sees only its own rows, and a tenant-less
+  transaction afterwards sees none.
+- **Row-level security needs nothing from the pooler.** No `SET`, no
+  `server_reset_query`: `set_config(..., true)` ends with the transaction.
+
+**asyncpg needs one setting.** asyncpg caches prepared statements per client
+connection; behind a transaction pool the next transaction may run on another
+server connection, where the statement was never prepared:
+
+```
+prepared statement "__asyncpg_stmt_7__" does not exist
+```
+
+Measured: with `max_prepared_statements = 0` and more than one server
+connection in the pool, eight concurrent workers fail within twenty
+transactions on asyncpg's defaults. The fix is one setting:
+
+```toml
+[plugin.database]
+pgbouncer = true   # per connection: [plugin.database.connections.x] pgbouncer = true
+```
+
+It sets `statement_cache_size = 0` (asyncpg), `prepared_statement_cache_size =
+0` (SQLAlchemy) and a unique name per statement, so two processes sharing one
+server connection cannot collide on `__asyncpg_stmt_1__` either. On PgBouncer
+1.21+ with `max_prepared_statements > 0` (200 by default in the 1.25 we ran)
+asyncpg's defaults also worked in the same run, because PgBouncer tracks the
+statements itself; the setting is harmless there and correct where tracking is
+off.
+
+**Startup parameters.** The database plugin pins `timezone` as a startup
+parameter, which PgBouncer forwards natively. A read replica's
+`default_transaction_read_only` is not one PgBouncer knows: the connection is
+refused with `unsupported startup parameter` unless PgBouncer (1.20+) has
+`track_extra_parameters = default_transaction_read_only` -- verified: two
+clients, one read-only, alternating on one backend, each saw its own value.
+Do not put it in `ignore_startup_parameters`: that drops the replica guard
+silently.
+
+CI, for GitHub Actions (the two URLs the test reads):
+
+```yaml
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    env: { POSTGRES_USER: jfast, POSTGRES_PASSWORD: jfast, POSTGRES_DB: jfast }
+    ports: ["5499:5432"]
+    options: >-
+      --health-cmd "pg_isready -U jfast" --health-interval 5s --health-retries 10
+  pgbouncer:
+    image: edoburu/pgbouncer:latest   # pin the tag you verified
+    env:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: jfast
+      DB_USER: jfast_bouncer          # created by the test, NOSUPERUSER NOBYPASSRLS
+      DB_PASSWORD: jfast_bouncer
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      DEFAULT_POOL_SIZE: "1"          # every transaction on one backend
+      MAX_PREPARED_STATEMENTS: "0"    # the strict case
+    ports: ["6435:5432"]
+env:
+  JFAST_TEST_PG_URL: postgresql+asyncpg://jfast:jfast@localhost:5499
+  JFAST_TEST_PGBOUNCER_URL: postgresql+asyncpg://jfast_bouncer:jfast_bouncer@localhost:6435/jfast
+```
+
+The same environment variables were checked against a local container. The
+PgBouncer image connects to PostgreSQL when the first client logs in, which is
+after the test has created the role, so no ordering is needed between the two
+services. `JFAST_TEST_PGBOUNCER_MULTI_URL` -- a PgBouncer database with several
+server connections and `max_prepared_statements = 0` -- additionally runs the
+test that reproduces the asyncpg failure and shows the setting fixing it.
 
 ## See also
 

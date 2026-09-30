@@ -1,0 +1,464 @@
+package jfast
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/rsa"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Verifying the workspace's JWTs, the way the Python `auth` plugin does
+// (jfastframework/plugins/builtin/auth.py). Same environment variables, same
+// claims checked, same 401/403 answers -- so one token works against a
+// Python and a Go service, and fails against both for the same reasons.
+//
+// Verify only. This service never mints tokens: that stays with the service
+// that owns the users (the `accounts` plugin).
+
+// Modes, as in Python: jwks | public_key | secret.
+var authModes = []string{"jwks", "public_key", "secret"}
+
+// supportedAlgorithms is jfastframework.auth.tokens.SUPPORTED_ALGORITHMS.
+var supportedAlgorithms = []string{"ES256", "ES384", "HS256", "HS384", "HS512", "RS256", "RS384", "RS512"}
+
+// minSecretBytes is the production floor the Python plugin enforces
+// (RFC 7518 3.2: an HMAC key at least as long as the hash).
+const minSecretBytes = 32
+
+// pythonAccessLifetimeMinutes is AuthSettings.access_lifetime_minutes' default.
+const pythonAccessLifetimeMinutes = 15
+
+// AuthConfig is the JFAST_AUTH_* block. The names are the Python plugin's
+// settings with its env prefix, so the same values work for both.
+type AuthConfig struct {
+	Enabled    bool
+	Mode       string   // JFAST_AUTH_MODE
+	Algorithms []string // JFAST_AUTH_ALGORITHMS: ["HS256"] or HS256
+	Secret     string   // JFAST_AUTH_SECRET
+	PublicKey  string   // JFAST_AUTH_PUBLIC_KEY (PEM)
+	JWKSURL    string   // JFAST_AUTH_JWKS_URL
+	Issuer     string   // JFAST_AUTH_ISSUER
+	Audience   string   // JFAST_AUTH_AUDIENCE
+	Leeway     int      // JFAST_AUTH_LEEWAY, seconds, default 30
+
+	ScopeClaim  string // JFAST_AUTH_SCOPE_CLAIM, default "scope"
+	RolesClaim  string // JFAST_AUTH_ROLES_CLAIM, default "roles"
+	TenantClaim string // JFAST_AUTH_TENANT_CLAIM, default "tenant_id"
+
+	// Only used to say, at startup, how long a revoked token stays usable.
+	AccessLifetimeMinutes int // JFAST_AUTH_ACCESS_LIFETIME_MINUTES, default 15
+}
+
+// envList reads a list the way pydantic-settings does (a JSON array), and
+// also as a plain comma- or space-separated string.
+func envList(key string) ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(raw, "[") {
+		var values []string
+		if err := json.Unmarshal([]byte(raw), &values); err != nil {
+			return nil, fmt.Errorf("%s is not a JSON list of strings: %w", key, err)
+		}
+		return values, nil
+	}
+	return strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' }), nil
+}
+
+func envInt(key string, fallback int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer, not %q", key, raw)
+	}
+	return value, nil
+}
+
+// LoadAuthConfig reads JFAST_AUTH_*. Auth is off unless configured, as in
+// Python, where the plugin is off until it is enabled. It is on when
+// JFAST_AUTH_MODE is set, or when exactly one kind of key is (then that key
+// names the mode).
+func LoadAuthConfig() (AuthConfig, error) {
+	cfg := AuthConfig{
+		Mode:        strings.TrimSpace(os.Getenv("JFAST_AUTH_MODE")),
+		Secret:      os.Getenv("JFAST_AUTH_SECRET"),
+		PublicKey:   os.Getenv("JFAST_AUTH_PUBLIC_KEY"),
+		JWKSURL:     strings.TrimSpace(os.Getenv("JFAST_AUTH_JWKS_URL")),
+		Issuer:      os.Getenv("JFAST_AUTH_ISSUER"),
+		Audience:    os.Getenv("JFAST_AUTH_AUDIENCE"),
+		ScopeClaim:  env("JFAST_AUTH_SCOPE_CLAIM", "scope"),
+		RolesClaim:  env("JFAST_AUTH_ROLES_CLAIM", "roles"),
+		TenantClaim: env("JFAST_AUTH_TENANT_CLAIM", "tenant_id"),
+	}
+	var err error
+	if cfg.Leeway, err = envInt("JFAST_AUTH_LEEWAY", 30); err != nil {
+		return cfg, err
+	}
+	if cfg.AccessLifetimeMinutes, err = envInt("JFAST_AUTH_ACCESS_LIFETIME_MINUTES", pythonAccessLifetimeMinutes); err != nil {
+		return cfg, err
+	}
+	if cfg.Algorithms, err = envList("JFAST_AUTH_ALGORITHMS"); err != nil {
+		return cfg, err
+	}
+
+	if cfg.Mode == "" {
+		var named []string
+		if cfg.Secret != "" {
+			named = append(named, "secret")
+		}
+		if cfg.PublicKey != "" {
+			named = append(named, "public_key")
+		}
+		if cfg.JWKSURL != "" {
+			named = append(named, "jwks")
+		}
+		switch len(named) {
+		case 0:
+			return cfg, nil
+		case 1:
+			cfg.Mode = named[0]
+		default:
+			return cfg, fmt.Errorf("JFAST_AUTH_* sets keys for more than one mode (%s); set JFAST_AUTH_MODE", strings.Join(named, ", "))
+		}
+	}
+	cfg.Enabled = true
+	if len(cfg.Algorithms) == 0 {
+		// Python defaults to ["RS256"], which the secret mode refuses at
+		// boot; HS256 is the only default that mode can start with, and it
+		// is what the generated Python services configure.
+		if cfg.Mode == "secret" {
+			cfg.Algorithms = []string{"HS256"}
+		} else {
+			cfg.Algorithms = []string{"RS256"}
+		}
+	}
+	return cfg, nil
+}
+
+// Claims is the verified caller: jfastframework.auth.Principal in Go.
+type Claims struct {
+	Subject   string
+	Scopes    []string
+	Roles     []string
+	TenantID  string
+	TokenID   string
+	Issuer    string
+	ExpiresAt time.Time
+	// Everything the token carried. Read it; do not trust what you did not
+	// put there yourself.
+	Raw map[string]any
+}
+
+// HasScope is true when every required scope is present.
+func (c *Claims) HasScope(required ...string) bool {
+	for _, scope := range required {
+		if !contains(c.Scopes, scope) {
+			return false
+		}
+	}
+	return true
+}
+
+// HasAnyRole is true when at least one of the roles is present.
+func (c *Claims) HasAnyRole(candidates ...string) bool {
+	for _, role := range candidates {
+		if contains(c.Roles, role) {
+			return true
+		}
+	}
+	return false
+}
+
+// Auth verifies bearer tokens. A nil *Auth means auth is off.
+type Auth struct {
+	cfg    AuthConfig
+	keys   verifyKeys
+	logger *slog.Logger
+	now    func() time.Time
+}
+
+func isSymmetric(alg string) bool { return strings.HasPrefix(alg, "HS") }
+
+// NewAuth validates the configuration the way the Python plugin does at
+// boot, and refuses to start rather than accept tokens it cannot check.
+// Returns nil, nil when auth is off.
+func NewAuth(cfg AuthConfig, app Config, logger *slog.Logger) (*Auth, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	if !contains(authModes, cfg.Mode) {
+		return nil, fmt.Errorf("auth mode must be one of %s, not %q", strings.Join(authModes, ", "), cfg.Mode)
+	}
+	if len(cfg.Algorithms) == 0 {
+		return nil, errors.New(`JFAST_AUTH_ALGORITHMS is empty; list at least one, e.g. ["RS256"]`)
+	}
+	var unknown []string
+	symmetric, asymmetric := false, false
+	for _, alg := range cfg.Algorithms {
+		if !contains(supportedAlgorithms, alg) {
+			unknown = append(unknown, alg)
+		}
+		if isSymmetric(alg) {
+			symmetric = true
+		} else {
+			asymmetric = true
+		}
+	}
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("JFAST_AUTH_ALGORITHMS has %s, which is not supported. Supported: %s",
+			strings.Join(unknown, ", "), strings.Join(supportedAlgorithms, ", "))
+	}
+	if symmetric && asymmetric {
+		// Allowing both is the algorithm-confusion attack, configured in.
+		return nil, fmt.Errorf("JFAST_AUTH_ALGORITHMS mixes symmetric and asymmetric algorithms (%s). "+
+			"Allowing both lets a token signed with the public key as an HMAC secret verify. Pick one family.",
+			strings.Join(cfg.Algorithms, ", "))
+	}
+	if cfg.Leeway < 0 {
+		return nil, fmt.Errorf("JFAST_AUTH_LEEWAY must be at least 0, not %d", cfg.Leeway)
+	}
+
+	auth := &Auth{cfg: cfg, logger: logger, now: time.Now}
+	switch cfg.Mode {
+	case "jwks":
+		// Fetching, caching and rotating a key set -- with a deadline and a
+		// breaker, as the Python JWKSClient has -- is a library's job, not
+		// 300 vendored lines. Refusing to start is the only safe answer: a
+		// service that "has auth" and checks nothing is worse than none.
+		return nil, errors.New(`auth mode "jwks" is not implemented by the generated Go service. ` +
+			"Verify JWKS-signed tokens with a library, e.g. github.com/MicahParks/keyfunc/v3 " +
+			"with github.com/golang-jwt/jwt/v5, or pin the issuer's key with " +
+			"JFAST_AUTH_MODE=public_key and JFAST_AUTH_PUBLIC_KEY")
+	case "public_key":
+		if cfg.PublicKey == "" {
+			return nil, errors.New(`auth mode "public_key" needs JFAST_AUTH_PUBLIC_KEY`)
+		}
+		if symmetric {
+			return nil, errors.New(`auth mode "public_key" cannot verify HMAC algorithms`)
+		}
+		key, err := parsePublicKey(cfg.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+		switch typed := key.(type) {
+		case *rsa.PublicKey:
+			auth.keys.rsa = typed
+		case *ecdsa.PublicKey:
+			auth.keys.ecdsa = typed
+		default:
+			return nil, fmt.Errorf("JFAST_AUTH_PUBLIC_KEY is a %T; RSA or EC keys only", key)
+		}
+		for _, alg := range cfg.Algorithms {
+			spec := algorithms[alg]
+			if spec.family == "RS" && auth.keys.rsa == nil {
+				return nil, fmt.Errorf("%s needs an RSA key; JFAST_AUTH_PUBLIC_KEY is not one", alg)
+			}
+			if spec.family == "ES" && (auth.keys.ecdsa == nil || auth.keys.ecdsa.Curve != spec.curve) {
+				return nil, fmt.Errorf("%s needs a %s key; JFAST_AUTH_PUBLIC_KEY is not one", alg, spec.curve.Params().Name)
+			}
+		}
+	case "secret":
+		if cfg.Secret == "" {
+			return nil, errors.New(`auth mode "secret" needs JFAST_AUTH_SECRET`)
+		}
+		if asymmetric {
+			return nil, errors.New(`auth mode "secret" cannot verify asymmetric algorithms`)
+		}
+		trimmed := strings.TrimSpace(cfg.Secret)
+		if strings.HasPrefix(trimmed, "-----BEGIN") || strings.HasPrefix(trimmed, "ssh-") {
+			// PyJWT refuses a PEM or SSH key as an HMAC secret: a public
+			// key used as a shared secret is exactly the confusion attack.
+			return nil, errors.New("JFAST_AUTH_SECRET looks like a PEM or SSH key; it must not be used as an HMAC secret")
+		}
+		if app.IsProduction() && len(cfg.Secret) < minSecretBytes {
+			return nil, fmt.Errorf("JFAST_AUTH_SECRET is %d bytes; production needs at least %d (RFC 7518 3.2), "+
+				"or the HMAC can be brute-forced offline from any one token. Generate one with `openssl rand -hex 32`",
+				len(cfg.Secret), minSecretBytes)
+		}
+		auth.keys.secret = []byte(cfg.Secret)
+	}
+
+	if cfg.Audience == "" {
+		logger.Warn("auth has no audience configured: a token minted for any other service " +
+			"of the same issuer will be accepted here")
+	}
+	// Said once, at every start, because it is the one real difference from
+	// a Python service with the cache plugin: those look up revoked token
+	// ids in Redis on every request, and this does not.
+	logger.Info("auth: revoked tokens are not checked here; a revoked access token is accepted until it expires",
+		"mode", cfg.Mode,
+		"algorithms", strings.Join(cfg.Algorithms, ","),
+		"access_lifetime_minutes", cfg.AccessLifetimeMinutes,
+	)
+	return auth, nil
+}
+
+// Verify checks a token and returns the caller. The error is for the log,
+// never for the response: why a token failed is free reconnaissance.
+func (a *Auth) Verify(token string) (*Claims, error) {
+	payload, err := verifySignature(token, a.cfg.Algorithms, a.keys)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateClaims(payload, a.cfg, a.now()); err != nil {
+		return nil, err
+	}
+
+	claims := &Claims{
+		Subject: payload["sub"].(string),
+		Scopes:  claimSet(payload[a.cfg.ScopeClaim]),
+		Roles:   claimSet(payload[a.cfg.RolesClaim]),
+		Raw:     payload,
+	}
+	// From a signed claim, never from a header.
+	claims.TenantID = claimString(payload[a.cfg.TenantClaim])
+	claims.TokenID, _ = payload["jti"].(string)
+	claims.Issuer, _ = payload["iss"].(string)
+	if exp, ok, _ := numericDate(payload, "exp"); ok {
+		claims.ExpiresAt = time.Unix(exp, 0).UTC()
+	}
+	return claims, nil
+}
+
+// claimSet reads scopes and roles: a space-delimited string or a list,
+// depending on the issuer -- the same two shapes Python accepts.
+func claimSet(value any) []string {
+	var out []string
+	switch typed := value.(type) {
+	case string:
+		out = strings.Fields(typed)
+	case []any:
+		for _, item := range typed {
+			out = append(out, claimString(item))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func claimString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case json.Number:
+		return typed.String()
+	default:
+		return ""
+	}
+}
+
+const claimsKey contextKey = "jfast_claims"
+
+// Authenticate verifies a bearer token when one is present and never rejects
+// the request itself -- the Python AuthMiddleware's rule. A public route must
+// keep working with a bad token in the header; the Require* middlewares are
+// what answer 401 and 403. A nil auth passes everything through.
+func Authenticate(auth *Auth) Middleware {
+	return func(next http.Handler) http.Handler {
+		if auth == nil {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			header := r.Header.Get("Authorization")
+			if len(header) < 7 || !strings.EqualFold(header[:7], "bearer ") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			claims, err := auth.Verify(strings.TrimSpace(header[7:]))
+			if err != nil {
+				auth.logger.Info("token rejected", "reason", err.Error(), "request_id", RequestIDFrom(r.Context()))
+				next.ServeHTTP(w, r)
+				return
+			}
+			if typ, _ := claims.Raw["typ"].(string); typ == "refresh" {
+				// A refresh token verifies like any other -- same key, issuer,
+				// audience -- so without this a 30-day token opens a session
+				// anywhere an access token would. Only an explicit "refresh"
+				// is refused: tokens from an external issuer carry no typ.
+				auth.logger.Info("refresh token used as bearer", "subject", claims.Subject)
+				next.ServeHTTP(w, r)
+				return
+			}
+			if fields := logFieldsFrom(r.Context()); fields != nil && claims.TenantID != "" {
+				fields.tenantID = claims.TenantID
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsKey, claims)))
+		})
+	}
+}
+
+// ClaimsFrom returns the verified caller, if there is one.
+func ClaimsFrom(ctx context.Context) (*Claims, bool) {
+	claims, ok := ctx.Value(claimsKey).(*Claims)
+	return claims, ok && claims != nil
+}
+
+// RequireAuth answers 401 problem+json without a verified caller.
+func RequireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := ClaimsFrom(r.Context()); !ok {
+			WriteProblem(w, r, Unauthorized("authentication required"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireScopes needs every listed scope: 401 without a caller, 403 with one
+// that lacks them. Collapsing the two makes permission bugs guesswork.
+func RequireScopes(scopes ...string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFrom(r.Context())
+			if !ok {
+				WriteProblem(w, r, Unauthorized("authentication required"))
+				return
+			}
+			if !claims.HasScope(scopes...) {
+				var missing []string
+				for _, scope := range scopes {
+					if !contains(claims.Scopes, scope) && !contains(missing, scope) {
+						missing = append(missing, scope)
+					}
+				}
+				sort.Strings(missing)
+				WriteProblem(w, r, Forbidden("missing scope(s): "+strings.Join(missing, ", ")))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireRoles needs any one of the roles: 401 without a caller, 403 without the role.
+func RequireRoles(roles ...string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFrom(r.Context())
+			if !ok {
+				WriteProblem(w, r, Unauthorized("authentication required"))
+				return
+			}
+			if !claims.HasAnyRole(roles...) {
+				sorted := append([]string(nil), roles...)
+				sort.Strings(sorted)
+				WriteProblem(w, r, Forbidden("requires one of: "+strings.Join(sorted, ", ")))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}

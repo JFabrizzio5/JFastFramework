@@ -25,64 +25,529 @@ archivo para leer antes de depender de cualquier parte de esto.
 
 ## [Unreleased]
 
-### Agregado
+## [0.1.0a11] - 2026-09-30
 
-Cinco comandos que llevan a la CLI más allá de los primeros diez minutos de un
-proyecto. Cada uno responde algo que el framework ya podía responder y no
-respondía.
+Sale de construir dos servicios reales sobre 0.1.0a10, Cuadra y Dictamen, y de
+lo que tuvieron que rodear. El peor hallazgo rompía una regla que este proyecto
+no había escrito: los contratos le decían a un módulo que publicara un evento
+en vez de llamar a otro módulo, y en el stack por defecto ese evento no llegaba
+a ningún lado -- `outbox.publish` respondía 201 y la fila se reintentaba hasta
+morir. Así que este release trata sobre todo de que el camino recomendado sea
+el que funciona: eventos que llegan a un suscriptor sin broker, un worker que
+existe, cuentas con las que un SaaS puede abrir, un paso de un cliente a
+varios que es un comando y no una cacería, un deadline en cada llamada a algo
+que se puede colgar, y código generado que pasa sus propios controles.
 
-- **`jfast check`** — todos los checks que existen, una pantalla, un exit code.
-  Ya existían todos; lo que no existía era una sola cosa que correr, así que CI
-  corría tres y los dos que nadie cableó no corrían nunca. La precedencia de
-  exit codes va por **cuánto del reporte invalida el fallo**, no por severidad:
-  un `jfast.toml` que no parsea vuelve conjetura todo lo demás. `--json` lleva
-  el código de *cada* check que falló, porque un solo número nunca es la
-  respuesta completa. Bajo `--ci` un **skip falla** — en CI un skip significa
-  que al runner le faltaba algo, y una batería que reporta verde sobre lo que no
-  ejecutó es peor que no tenerla.
+Para cada cambio incompatible de abajo, corre `jfast upgrade --check`: lista
+los que aplican a tu proyecto, con archivo y línea, y el arreglo.
 
-- **`jfast migration check` / `plan`** — lee las revisiones antes de correrlas:
-  `NOT NULL` sobre tabla poblada, un rename renderizado como drop más add, un
-  índice construido reteniendo un lock de escritura, un cambio de tipo sin
-  `USING`. Verificado mirando fallar `alembic upgrade head` contra PostgreSQL
-  real y prediciéndolo. Los conteos de filas salen de `EXISTS ... LIMIT 1` y
-  `pg_class.reltuples`, nunca de un `count(*)`, y sin base de datos reporta
-  "desconocido, trátalo como poblado" en vez de asumir vacío.
+### Cambios incompatibles
 
-- **`jfast contracts explain`** — por qué existe una regla, dónde está
-  declarada, y qué hacer en su lugar. `contracts check` te dice que una regla se
-  rompió; a un agente con una violación sin remedio le sale más barato
-  satisfacer al checker que arreglar el diseño, borrando el import o apagando la
-  regla. La respuesta cita la línea de tu `contracts.toml` y el comentario que
-  escribió su autor, no prosa inventada. `contracts diff` compara la
-  arquitectura que el contrato permite contra los imports que el código tiene
-  — **no** es un diff de git, y la doc lo dice sin rodeos.
+- **Un header `X-Tenant-ID` suelto ya no es un tenant (seguridad).** El
+  middleware de observability lo copiaba a `request.state.tenant_id` cuando
+  nada más había resuelto uno, y `current_tenant`, la sesión con RLS y cada
+  `Job` o `Event` creado en la petición confiaban en ese valor: con `auth`
+  activo y `tenancy` apagado, una petición anónima con `X-Tenant-ID: victim` se
+  atendía como el tenant `victim` (un usuario con sesión no podía cambiarse: el
+  token ganaba). El header ahora es solo un campo del log, `tenant_claimed`. Un
+  servicio detrás de un gateway confiable que lo pone declara `header` en
+  `[plugin.tenancy] sources`. Encontrado al replicar tenancy en el scaffold de
+  Go. `jfast upgrade --check`: `tenant-header-not-a-tenant`.
 
-- **`jfast ai context --json` y `jfast next`** — todo lo que un modelo necesita
-  de un proyecto en una llamada. El tamaño **depende del proyecto y no hay un
-  número único**: un servicio generado mide 8,3 KB con un módulo y 11,5 KB con
-  cinco, y un servicio de cinco módulos con hallazgos y violaciones de contrato
-  reales mide 14,8 KB (`--brief` va de 2,8 KB a 6,1 KB en ese mismo rango).
-  **`jfast ai context --size` imprime la cifra de tu proyecto** — esa es la que
-  hay que usar para planificar. Para escala: enviar `docs/` en su lugar habrían
-  sido 555.859 bytes. Lo que deja fuera a propósito queda listado en un campo
-  `omitted` con el comando que lo recupera, `jfast migration check` incluido.
-  `next` ordena los pasos por **dependencia,
-  no por severidad** — un módulo sin registrar va antes que sus tests faltantes,
-  porque testear un módulo no cableado no prueba nada — y en un proyecto limpio
-  dice qué revisó en vez de inventar trabajo.
+- **`outbox.publish` rechaza un evento que nadie va a recibir.** Sin ningún
+  módulo con `@subscribe` al tipo del evento y sin bus configurado, lanza
+  `UndeliverableEvent` -- un 500 cuyo detalle dice cómo arreglarlo, sin
+  escribir nada -- en vez de responder 201 y reintentar la fila hasta que
+  muera. Declara un suscriptor (abajo) o habilita `events`. Falla en la
+  petición, no al arrancar: nada compara los `publishes` declarados contra los
+  suscriptores al inicio.
+- **Un `Outbox(...)` construido a mano necesita `events=<bus>`** para escribir
+  filas de evento.
+- **`contracts check` tiene reglas nuevas.** `orphan-subscription` (un
+  suscriptor a un evento que nadie publica), `undeclared-event` (un módulo que
+  publica un tipo que su `[modules.x] publishes` no lista) y
+  `unused-dependency` (un `depends_on` que nada usa, reportado en su línea de
+  `contracts.toml` y eximible ahí). `undeclared-dependency` ahora cubre
+  `Job(task="<task de otro módulo>")`, que además cuenta como arista para
+  `module-cycle`: el acoplamiento escondido por el que pasaba el parche de
+  Cuadra. Los proyectos existentes pueden fallar hasta declarar `publishes` y
+  quitar entradas de `depends_on` que ya no se usan. Los contratos generados
+  antes de este release no tienen el bloque `[layers.tasks]`, y en el layout
+  screaming un `tasks.py` que importa `use_cases` se reporta hasta agregarlo.
+- **`Worker.run()` espera como máximo `drain_timeout` (25 s) al detenerse**, y
+  luego devuelve a la cola los jobs que siguen corriendo sin gastar un
+  intento. Pasa `drain_timeout=` para jobs que necesiten más al apagar.
+- **`POST /auth/login` puede responder un reto de MFA** --
+  `{mfa_required | mfa_enrollment_required, mfa_token, expires_in}` -- en vez
+  de un par de tokens cuando `mfa = true`. Con `email_verification =
+  "required"`, `POST /auth/register` responde 202 sin tokens, y los usuarios
+  existentes quedan sin verificar hasta que los marques (`UPDATE jfast_users
+  SET email_verified_at = created_at WHERE email_verified_at IS NULL`).
+- **Los frontends generados son privados por defecto** (`PUBLIC_BY_DEFAULT =
+  false`) cuando algún backend del workspace habilita `accounts`, y piden
+  `/auth/account` después del sign-in en vez de leer al usuario de la
+  respuesta del login. Los dos `LoginView` de nexora se reemplazan por un
+  `LoginView` compartido dentro de un `AuthShell` por look.
+- **El arranque rechaza configuraciones inválidas** en los settings de
+  `database`, `cache`, `storage`, `mail`, `auth` y `queue`, una prueba por
+  regla. Entre ellas: `pool_size = 0` (SQLAlchemy lo lee como ilimitado), un
+  `session_timezone` desconocido, una plantilla de DSN por tenant sin
+  `{tenant}`, un `visibility` de storage que no es `public` ni `private` (un
+  error de dedo volvía privado un disco sin avisar), `access_key` sin
+  `secret_key`, un nombre de cola de PostgreSQL que no es identificador SQL
+  (se interpola en el SQL), el modo `public_key` con `issue_tokens`,
+  algoritmos que PyJWT no conoce, un `from_email` sin `@`; en producción, un
+  `jwks_url` http, un secreto HMAC o llave de firma de menos de 32 bytes y el
+  `guest` por defecto de RabbitMQ.
+- **Los comandos de Redis vencen a 1 s** (`[plugin.cache] command_timeout`).
+  Súbelo para scripts Lua largos o `SCAN`. Los comandos bloqueantes y pub/sub
+  quedan fuera.
+- **Una base caída responde 503, no 500 ni se cuelga.** Las fallas al
+  conectar, las conexiones perdidas y un pool lleno lanzan
+  `DatabaseUnavailableError`; cualquier otro error de base sigue siendo 500.
+- **La revocación de tokens falla abierta por defecto.** Una caída de Redis
+  respondía 500 en toda petición autenticada; ahora el token se acepta sin
+  revisar la revocación, con un aviso espaciado y `/ready` degradado.
+  `revocation_fail_open = false` responde 503. Es un compromiso, no un
+  arreglo gratis: durante la caída un token revocado sigue sirviendo hasta que
+  vence.
+- **`jfast check --ci` falla en un servicio con `rag` activo, `tenancy`
+  apagado y `tenant_scoped` distinto de false**
+  (`tenancy-rag-scoped-without-tenancy`, media). `jfast check` a secas sigue
+  saliendo con 0. Pon `tenant_scoped = false`, o corre `jfast tenancy enable`.
+- **Los módulos hexagonales ya no importan FastAPI desde el init del
+  paquete.** La plantilla hexagonal de 0.1.0a10 importaba `CreatePayload`
+  desde el adaptador HTTP al inicio de `__init__.py`, así que importar el
+  dominio arrastraba FastAPI y el test generado del propio módulo fallaba. El
+  import se difiere con `__getattr__`; los módulos generados por 0.1.0a10
+  necesitan el mismo cambio (`hexagonal-eager-create-payload`).
 
-- **`jfast upgrade --check`** — qué rompe al pasar a una versión más nueva,
-  **filtrado a lo que aplica a este proyecto**: lee tus modelos, tu
-  `contracts.toml` y la configuración de tus plugins, y reporta solo los cambios
-  que pueden afectarte. Un aviso que no aplica es como la gente aprende a
-  saltarse la salida. El manifiesto son datos en el paquete y no un parseo del
-  changelog, que es prosa, no viaja en el wheel, y se rompe en silencio si
-  alguien reescribe un encabezado. `--apply` está rechazado, no stubbeado:
-  reescribir el proyecto de alguien necesita una vuelta atrás que esto no tiene.
+### Agregado -- eventos y trabajo en segundo plano
 
+- **Eventos de dominio locales y durables.** `@subscribe("<tipo>")` en
+  `modules/<nombre>/tasks.py`; `outbox.publish` encola un job por suscriptor
+  en la transacción que publica, así que un evento existe si y solo si sus
+  filas se confirmaron. Los ids de job son deterministas por evento y
+  suscriptor, así que publicar dos veces encola a cada suscriptor una vez. Los
+  suscriptores se emparejan por tipo de evento, nunca por tópico; la entrega
+  es al menos una vez, y un suscriptor que recibe una `TaskSession` reclama el
+  evento en su propia transacción -- un efecto por suscriptor. Con un bus
+  configurado el evento también va a Kafka.
+- **`@task` declarado en el módulo dueño** (`jfastframework.tasks`),
+  descubierto desde `modules/<nombre>/tasks.py` igual por la API que por el
+  worker; un `tasks.py` roto detiene el arranque. **`TaskSession`** es una
+  sesión en la base primaria con el tenant del job (respeta RLS), con commit
+  al regresar y rollback ante error. **`idempotent_on=`** reclama una llave
+  con `claim_once` en la transacción del handler.
+- **`jfast worker`** arranca el lifespan de la app y corre las tasks y
+  suscripciones de cada módulo. SIGTERM deja de reclamar y drena durante
+  `--grace` segundos (25); lo que queda se libera sin gastar un intento; una
+  segunda señal libera de inmediato. **`jfast dev` lo arranca** cuando la cola
+  está activa (`--no-worker`). Los compose generados (servicio y workspace)
+  traen un servicio `<svc>-worker` y Kubernetes un Deployment `<svc>-worker`.
+- **`jfast jobs dead` y `jfast jobs retry <id...> | --all`** para las colas
+  de PostgreSQL y Redis. RabbitMQ recibe un mensaje que apunta a su consola de
+  administración.
+- **Eventos en el contrato.** `[modules.x] publishes`; las suscripciones, el
+  dueño de cada task y las referencias `Job(task=...)` se leen del código.
+  `contracts show --json`, `CONTRACTS.md` y `jfast ai context` listan
+  publicadores, suscriptores, tasks y las funciones de la fachada de cada
+  módulo.
+- **`Job.trace` y `Event.trace`** llevan el contexto de traza W3C junto al
+  tenant y al request id; los spans de jobs y handlers de eventos son spans
+  consumer dentro de la traza de la petición que los creó.
 
+### Agregado -- telemetría
 
+- **Plugin `telemetry`** (`pip install "jfastframework[telemetry]"`): trazas
+  de OpenTelemetry por OTLP a Jaeger, Tempo, Honeycomb, Datadog o un
+  Collector. Spans para cada petición (plantilla de ruta, nunca el path
+  crudo), cada sentencia SQL (nunca los parámetros; el texto solo con
+  `record_sql_statement = true`), cada llamada del cliente `http` y del
+  gateway, `llm.chat`/`llm.embed` con tokens y costo, `rag.ingest`/`rag.search`
+  con conteos, jobs y handlers de eventos. **Nunca texto de prompts,
+  documentos, respuestas, consultas ni bodies**, impuesto en los puntos de
+  llamada y otra vez en el backend, que descarta todo atributo que no sea un
+  escalar pequeño.
+- **Gratis hasta configurarlo.** Sin `OTEL_EXPORTER_OTLP_ENDPOINT` no se
+  instala nada -- ni middleware, ni listener de SQL, ni tracer -- y
+  OpenTelemetry ni siquiera tiene que estar instalado. Medido en proceso: 41
+  us por petición sin el plugin, 41 con él y sin endpoint, 66 exportando a
+  memoria. `/ready` reporta el exportador y nunca es crítico.
+- **Una traza a través de servicios.** El cliente `http` manda `traceparent`
+  y `tracestate` en cada llamada dentro de un span client propio; el gateway
+  reemplaza el header de quien llama por el de su propio span, y lo pasa
+  intacto cuando la telemetría está apagada; las peticiones entrantes
+  continúan la traza de quien llama. `sample_ratio` decide en el borde y cada
+  servicio detrás lo sigue.
+- **`include_infra = true`** agrega un OpenTelemetry Collector y Jaeger al
+  compose generado -- un par para todo un workspace.
+- `tracing.span(...)` y `tracing.inject()` para spans propios y clientes
+  crudos, gratis con la telemetría apagada; el provider se registra como el
+  global de OpenTelemetry cuando nadie registró uno antes.
+
+### Agregado -- cuentas
+
+- **Verificación de email** (`email_verification = "off" | "optional" |
+  "required"`) y **recuperación de contraseña por correo**, que termina todas
+  las sesiones, tokens de acceso incluidos. Los tokens se guardan como hash
+  SHA-256, de un solo uso y con vencimiento. "Olvidé" y "reenviar" responden
+  202 antes de buscar la dirección, y en modo `required` registrarse con una
+  dirección ocupada recibe la misma respuesta que una nueva.
+- **MFA TOTP** (RFC 6238, solo biblioteca estándar) con códigos de
+  recuperación y protección contra repetición, obligatorio por rol
+  (`mfa_required_roles`) al entrar, al refrescar y al desactivar; el secreto se
+  cifra en reposo. Un sign-in social de una cuenta con MFA también recibe el
+  reto. Los códigos incorrectos cuentan para los intentos del token de MFA y
+  para el bloqueo de la cuenta.
+- **Sign-in con límite por defecto** cuando `cache` está activo: token
+  buckets por IP, por cuenta y para peticiones de correo, 429 con
+  `Retry-After`.
+- `POST /auth/logout/all`, `GET /auth/features` y un reset de MFA por un
+  admin (`DELETE /accounts/users/{id}/mfa`). Desactivar a un usuario termina
+  sus sesiones de inmediato. Los errores que un frontend debe distinguir
+  llevan un `code`.
+- **Las tablas del framework reciben columnas nuevas al arrancar**
+  (`ensure_columns`), así que una tabla `jfast_users` de 0.1.0a10 se
+  actualiza en su lugar.
+- **Los frontends Vue y React generados hablan con accounts:** sign-in con el
+  paso de MFA, registro, verificación de email, olvido y reset de contraseña,
+  inscripción de MFA y una página de Seguridad; `VITE_API_TIMEOUT` (60 s por
+  defecto, para llamadas de IA). Sin ningún backend con `accounts`, el
+  frontend queda público y sin esas páginas.
+- El servicio no arranca con verificación o reset activos y sin el plugin
+  `mail` o sin `frontend_url`, con `mfa_required_roles` y `mfa` apagado, ni con
+  `mfa` activo y sin `JFAST_ENCRYPTION_KEYS`.
+
+### Agregado -- un cliente hoy, varios mañana
+
+- **`jfast check` suma un séptimo check, `tenancy`**: ajustes de tenant que se
+  contradicen entre sí o con el código -- rag con scope sin tenancy,
+  presupuesto por tenant sin tenant, `rls = true` sin nada que ponga el
+  tenant, políticas en revisiones con `rls = false`, `current_tenant` sin
+  fuente, fuentes que nunca resuelven. Cada hallazgo nombra el arreglo.
+- **`jfast check --multitenant-ready`**: qué rompería pasar a varios
+  clientes, con archivo y línea -- `tenant_id=None`, rutas y factories de
+  servicio sin dependencia de tenant, SQL crudo, llaves de storage y cache,
+  RAG sin scope, tareas programadas, llamadas a LLM. Heurísticas,
+  documentadas con sus puntos ciegos; una regla que no puede decidir se calla.
+  Se eximen con `# contracts: allow <razón>`; `--json`.
+- **`jfast tenancy enable --tenant <id>`**: una revisión de Alembic revisable
+  (relleno, `--not-null` opcional, RLS por tenant, fragmentos de RAG
+  re-asignados) más la edición de `jfast.toml` conservando sus comentarios, y
+  luego los pasos manuales que quedan. `--dry-run` no escribe nada.
+  Verificado de punta a punta en un servicio generado: con un rol sin
+  `BYPASSRLS`, PostgreSQL no le muestra a un segundo tenant ninguna fila del
+  primero y rechaza sus escrituras.
+- **`[plugin.database] pgbouncer = true`** para pooling por transacción: sin
+  caché de statements de asyncpg ni de SQLAlchemy, nombres únicos; los
+  engines por tenant lo heredan. RLS detrás de PgBouncer 1.25 en modo
+  transacción está verificado por `tests/test_rls_pgbouncer.py`: el tenant no
+  sobrevive a la siguiente transacción de otro cliente en el mismo backend, y
+  cincuenta transacciones intercaladas de dos tenants en un backend nunca se
+  ven entre sí.
+- **`jfast init` pregunta si la app sirve a varios clientes**, y la respuesta
+  ajusta cada pieza de forma consistente: tenancy y sus fuentes, auth,
+  `rag.tenant_scoped`, `llm.tenant_budget_usd` y rutas generadas sobre
+  `current_tenant`. `jfast start` es de un solo tenant por defecto;
+  `--multitenant` genera `JFAST_AUTH_SECRET` y una contraseña del primer admin
+  en `.env` para que `jfast check --ci` pase. Las columnas `tenant_id` se
+  quedan en ambos casos.
+
+### Agregado -- deadlines, breakers y simulacros de falla
+
+- **Toda llamada externa tiene deadline y breaker por defecto**, cada uno un
+  setting con su razón en el código. PostgreSQL: 10 s para conectar (el de
+  asyncpg es 60), un ping del pool acotado a 2 s que reemplaza al de
+  SQLAlchemy (que no tenía deadline y colgaba peticiones), un breaker de
+  conexión. Redis: 2 s para conectar, 1 s por comando, un breaker. JWKS: 5 s
+  para el intento completo, un reintento solo ante 429, 5xx y errores de red,
+  un breaker, y quienes esperaban detrás de una descarga fallida comparten su
+  falla. S3/MinIO: timeouts, reintentos y breaker configurables por disco; un
+  404 nunca cuenta.
+- **`/ready` nunca falla por un plugin no crítico.** Auth queda degradado, no
+  no disponible, mientras sirve claves JWKS cacheadas; un object store queda
+  degradado; una falla del disco local es crítica.
+- **`get_or_set` falla abierto en una sola ida y vuelta** con Redis caído.
+- **El correo rechazado con 5xx, demasiado grande o malformado va a dead
+  letters de inmediato;** los timeouts y los 4xx conservan sus reintentos.
+- **Simulacros de falla**, `tests/test_failure_drills.py`: PostgreSQL y Redis
+  pausados (`docker pause`: el socket sigue abierto y nadie contesta) y el
+  proveedor de identidad colgado. Cada uno revisa el status dentro de su
+  deadline, qué nombra `/ready` y la recuperación sin reiniciar. Los tiempos
+  están en `docs/resilience.md`, nueva.
+
+### Agregado -- código generado que pasa sus propios controles
+
+- **Los servicios generados pasan ruff, ruff format, `mypy --strict` y
+  pytest** en cada layout y forma: cada uno trae un `ruff.toml` que nombra sus
+  reglas (con `Depends` y compañía de FastAPI permitidos como llamadas por
+  defecto) y un `mypy.ini` estricto. `scripts/smoke_generated_quality.sh`
+  genera `jfast start` de un tenant y multitenant y `jfast new service` con 19
+  plugins, un módulo por layout en cada forma, y los revisa todos.
+- **`jfast new module --fields "..." --unique "..." --bare`** en los cuatro
+  layouts: int, bigint, `str(N)`, text, bool, float, `decimal(P,S)`, money
+  (unidades menores enteras), date, datetime con zona horaria y json; `?` para
+  nullable, `=valor` para un default. Entidad, modelos con los mismos límites,
+  finders del repositorio, unicidad al crear y al actualizar, reglas de
+  dominio, puerto y adaptador, DTO de `public.py`, README y tests salen de los
+  campos. `--access open|auth|tenant` elige cómo se protegen las rutas; su
+  default sigue a `jfast.toml`. `--ui htmx` se rechaza junto con `--fields` o
+  `--bare`.
+- **`jfast init` lista los plugins desde el catálogo**, así que uno nuevo ya
+  no se puede quedar fuera; `telemetry` y `queue` vienen recomendados y
+  premarcados. `jfast start --no-telemetry`.
+- **`jfast add <plugin>` y `jfast remove <plugin>`**: `add` lo habilita junto
+  con lo que requiere, fija el extra, agrega su bloque de settings e imprime
+  las variables de entorno, conservando los comentarios; `remove` se niega
+  mientras otro plugin lo requiera.
+- **Los módulos traen `tasks.py`** y los contratos generados una capa `tasks`.
+- **`scripts/smoke_upgrade.sh`**: el release anterior desde PyPI, un proyecto
+  generado con él, el wheel de este checkout encima, y exactamente los códigos
+  de `scripts/smoke_upgrade.expected` desde `jfast upgrade --check`.
+- **`JFAST_TEST_WINDOWS_CLOCK=1`** redondea `time.monotonic` a 1/64 s, como
+  Windows, para toda la suite. Contra el código de JWKS anterior al arreglo
+  falló 16 de 30 corridas; con él activo, las suites de concurrencia pasaron
+  10 de 10.
+
+### Agregado -- servicios en Go en un workspace de Python
+
+"Contrato sí, framework no": el scaffold de Go recibe lo que un servicio en Go
+necesita para convivir con los de Python -- sigue siendo solo biblioteca
+estándar, todo middleware de `net/http` plano que envuelve tal cual un engine
+de Gin, Echo o Chi.
+
+- **Los servicios en Go propagan el trace context.** `traceparent`/`tracestate`
+  se validan (W3C versión 00; uno inválido se descarta con su state), se
+  loguean como `trace_id` y se pasan sin cambios, junto con `X-Request-ID`,
+  con `jfast.Propagate` / `jfast.PropagatingTransport`. No se crean spans; el
+  README muestra `otelhttp` como decisión del usuario.
+- **Los servicios en Go verifican los JWT del workspace y resuelven el
+  tenant**, con los nombres de variables y las reglas de los plugins de
+  Python: `JFAST_AUTH_*` en modo `secret` (HS256/384/512) o `public_key`
+  (RS256/384/512, ES256/384), algoritmos fijados por configuración,
+  `exp`/`iat`/`sub` obligatorios, `nbf`, `iss` y `aud` verificados con el
+  mismo leeway de 30 s, refresh tokens rechazados como bearer, y los mismos
+  rechazos al arrancar; fuentes `JFAST_TENANCY_*` en el mismo orden de
+  confianza. `RequireAuth`, `RequireScopes`, `RequireRoles` (401/403) y
+  `RequireTenant` (401 sin sesión, 403 sin tenant), con `ClaimsFrom(ctx)` y
+  `TenantFrom(ctx)`; el tenant va en el access log. Apagado salvo que se
+  configure. El modo `jwks` no arranca y nombra una librería. **La revocación
+  no se consulta**: un access token revocado sirve contra un servicio en Go
+  hasta que vence (15 minutos por default); el servicio lo dice en cada
+  arranque.
+- El módulo de ejemplo separa su store por tenant, y funciona igual con auth
+  y tenancy apagados.
+- **El formato de la cola de PostgreSQL está documentado para otros
+  lenguajes** (`docs/es/service-contract.md`, "Consumir la cola desde otro
+  lenguaje"): las columnas y estados de `jfast_jobs`, las sentencias de
+  claim, ack, reintento, muerte y release, el sobre del evento, y lo que un
+  consumidor debe hacer para ser seguro. Un formato documentado, no un
+  cliente soportado: no hay worker de Go.
+- `tests/test_go_service.py`: los tokens que emite el propio `TokenIssuer`
+  del plugin auth (HS256 y RS256) los acepta el middleware del servicio
+  generado bajo un toolchain de Go real y resuelven el mismo tenant que
+  resuelve una app JFast; refresh y vencidos reciben 401 de los dos lados; un
+  `traceparent` llega sin cambios a la llamada saliente del servicio en Go.
+  `scripts/smoke_go.sh` además corre el binario con tokens emitidos por
+  Python (aislamiento por tenant, `trace_id` y `tenant_id` en el log, `jwks`
+  rechazado) y revisa `gofmt`.
+
+### Agregado -- CI
+
+- El job `go` también corre la prueba entre lenguajes de arriba.
+- Jobs para los controles de proyectos generados, el smoke de actualización,
+  las suites de concurrencia con un reloj de grano Windows, RLS detrás de un
+  PgBouncer fijado (`edoburu/pgbouncer:v1.25.2-p0`), y spans exportados por
+  OTLP y leídos de vuelta desde Jaeger (`scripts/smoke_telemetry.sh`); el
+  presupuesto de rendimiento contra la base del cambio en el mismo runner; el
+  disco S3 contra MinIO; la suite de varias réplicas. Los
+  simulacros de falla corren al final del job principal, pausando su propio
+  PostgreSQL y Redis. Las suites de eventos locales, el worker, dead letters,
+  flujos de cuentas, spans de SQL y el paso a multitenant están en la lista
+  que tumba el build si se saltan.
+
+### Cambiado
+
+- `Event` se movió a `jfastframework.events` (se sigue pudiendo importar
+  desde `plugins.builtin.events`) y hereda `tenant_id` y `request_id` del
+  contexto, como `Job`. Los handlers `@on` de Kafka corren con el tenant, el
+  request id y la traza del evento.
+- `module-cycle` de `jfast inspect` usa los `depends_on` declarados además de
+  los imports, como `contracts check`; no coincidían.
+- La cola de PostgreSQL agrega una columna `trace` al arrancar (`ADD COLUMN IF
+  NOT EXISTS`; el rol de la app necesita `ALTER` sobre `jfast_jobs`) y guarda
+  el error de un job fallido.
+- El contador de fallos de accounts solo se limpia al emitir una sesión. Una
+  contraseña correcta lo reiniciaba, así que quien tuviera la contraseña
+  recibía una tanda nueva de intentos de MFA en cada sign-in.
+- El timeout de axios del frontend generado es de 60 s (`VITE_API_TIMEOUT`).
+- `--with accounts` también habilita `auth`; el generador enciende lo que
+  requiera un plugin elegido.
+- `jfast new enum` escribe `StrEnum`. Reescribir el `.env` de un servicio
+  conserva las llaves que no son del grafo del workspace.
+- Más silencioso por defecto: el aviso de "no signing key" de storage solo
+  aparece en producción (`temporary_url()` sigue fallando con el arreglo), y
+  el aviso del token store en memoria de auth es info fuera de producción.
+- `docs/modules.md` ya no recomienda `outbox.publish` más `@on` de Kafka entre
+  módulos -- el callejón sin salida -- sino `publishes` más `@subscribe`.
+
+### Corregido
+
+- **El arranque de cada proceso tomaba locks exclusivos y `/ready` oscilaba.**
+  La imagen generada corre un proceso de uvicorn por CPU, y cada uno ejecuta el
+  arranque de sus plugins. La cola corría `ALTER TABLE jfast_jobs ADD COLUMN IF
+  NOT EXISTS trace` en cada arranque, y pgvector sus sentencias de upgrade: las
+  dos toman un lock ACCESS EXCLUSIVE antes de notar que no hay nada que hacer,
+  así que un proceso que arrancaba quedaba en fila detrás de cualquier lectura
+  abierta, y cada consulta -- incluido el `/ready` de otro proceso -- detrás de
+  él (el smoke de compose vio 200 y luego 503). El trabajo de esquema ahora
+  consulta primero el catálogo y solo ejecuta lo que falta, bajo un advisory
+  lock de transacción, lo que también arregla que `CREATE TABLE IF NOT EXISTS`
+  concurrente fallara en una base vacía cuando arrancan varios procesos a la
+  vez. `tests/test_startup_ddl.py`.
+- **Las escrituras del store de pgvector recorrían la tabla completa.**
+  Buscaban las filas de un documento con `tenant_id IS NOT DISTINCT FROM`, que
+  ningún btree sirve: borrar un documento tomaba 19.2 ms en vez de 0.03 ms con
+  300k fragmentos, y crecía con la tabla. Ahora usan `tenant_id = :tenant` (o
+  `IS NULL` en un store sin tenant); `tests/test_rag_scale.py` se lo pregunta
+  al planner.
+
+- **`/ready` del outbox decía `ok` con mensajes fallando.** Queda degradado
+  desde el primer intento fallido y cita la última razón de muerte; la línea
+  de log del relay trae la causa; una fila imposible de entregar muere en su
+  primer intento con su razón.
+- **Los contenedores del compose de workspace leían la dirección del host.**
+  Un servicio con Kafka, RabbitMQ o MinIO no recibía `client_env` en `jfast
+  workspace compose`, caía a su `.env` y marcaba a `localhost` -- a sí mismo.
+  Regenera el compose.
+- **`Job(task="alerta.x")` desde otro módulo pasaba `contracts check`** cuando
+  la task estaba registrada en un `worker.py` en la raíz (la forma de
+  0.1.0a10), porque ningún `@task` la declaraba. Ahora el prefijo de módulo
+  del nombre de la task nombra a su dueño. Encontrado al migrar Cuadra.
+- **`--multitenant-ready` reportaba SQL crudo cuyo filtro se interpola después
+  de `WHERE`/`AND`** -- un helper del repositorio que sí filtra por tenant.
+  Eso no se puede decidir desde el código, así que la regla se calla. Cuadra
+  tenía ocho hallazgos, todos falsos.
+- **La telemetría propia de FastAPI 0.142 corría junto al plugin.** Al ver
+  `OTEL_EXPORTER_OTLP_ENDPOINT` configuraba un segundo provider global
+  (`unknown_service`), duplicaba cada span de servidor y habría exportado logs
+  con mensajes de excepción y valores de entrada rechazados. `create_app` la
+  apaga siempre que FastAPI tenga el interruptor; los spans propios de FastAPI
+  no se registran, a propósito. Encontrado al trazar Cuadra hacia Jaeger.
+- **`jfast add` reinstalaba el release anterior encima del que corría.** Un
+  `requirements.txt` que seguía fijando 0.1.0a10 hacía que `jfast add
+  telemetry` corriera `pip install -r` y pusiera a10 -- que no trae ese extra
+  -- encima de a11. Ahora pip se omite, con el comando a correr, cuando el pin
+  difiere de la versión en ejecución o la instalación es editable. Encontrado
+  al migrar Cuadra.
+- **`listing(limit=1500)` del disco S3 regresaba 1.000.** Ahora sigue el
+  continuation token.
+- La documentación en español enlazaba tres anclas con acento que el sitio
+  quita; arreglado, junto con la de la nueva página de telemetría.
+
+### Rendimiento y escala, medidos
+
+Cada número de aquí está en `docs/scaling.md`, nueva, con la máquina donde se
+midió (una laptop Apple M5 con otras suites corriendo) y el script que lo
+produce.
+
+- **Un presupuesto de rendimiento.** `scripts/bench_overhead.py` maneja cada
+  app en proceso y mide el tiempo de CPU del proceso por petición como
+  proporción contra FastAPI solo en la misma corrida -- los defaults de JFast
+  2.48x, auth + tenancy + metrics 5.43x -- y `tests/test_performance_budget.py`
+  (`JFAST_PERF_BUDGET=1`) falla si una proporción crece más de 20 % sobre la
+  línea base. Una segunda prueba demuestra que muerde: un `BaseHTTPMiddleware`
+  de vuelta, la regresión de 0.1.0a10, lo tumba.
+- **`jfast bench <url>`**: una prueba de carga por escalones armada desde el
+  OpenAPI del servicio. Reporta req/s, p50/p95/p99 y errores por escalón,
+  dónde se rompe el servicio (`--max-p99-ms`, `--max-error-rate`) y dónde deja
+  de crecer el throughput, y cualquier check de `/ready` que se degradó;
+  `--k6` exporta el escenario, `--json` y `--fail-on-break` son para CI. Su
+  propio generador llega a 3.000-3.600 req/s; arriba de eso usa `ab` o k6.
+- **Las rutas del framework se prueban después de las de la aplicación.**
+  `/health`, `/ready`, `/info`, `/metrics` y la documentación pasan detrás de
+  las rutas de la app al arrancar, lo que ahorra 2-4 us de CPU por petición de
+  la app (medido; los "~8 us" del plan no). Una ruta de la app que reclamaría
+  uno de sus paths, completo o con un 405, sigue sin hacerlo: cada uno se
+  prueba y vuelve delante de ella. `app.routes` y `/openapi.json` listan
+  primero los paths de la aplicación.
+- **El disco S3 está verificado contra MinIO**
+  (`tests/test_storage_minio.py`): put, get, stat, listado, URLs firmadas
+  descargadas y luego vencidas, subidas prefirmadas, un stream multipart de
+  tres partes y su aborto, salud.
+- **Garantías con varias réplicas, demostradas.** Dos apps y dos workers
+  contra un PostgreSQL y un Redis (`tests/test_multi_replica.py`): 400
+  mensajes del outbox reenviados y consumidos una vez cada uno; los ticks del
+  scheduler encolados una vez en ambos stores; un tope LLM de $1.00 entre las
+  dos réplicas deja pasar exactamente 10 de 60 llamadas concurrentes de $0.10;
+  un logout en una réplica se rechaza en la otra, y una carrera de refresh
+  entre ellas rota una sola vez.
+- **`jfastframework.db.rollups.MonthlyRollup`**: totales mensuales por tenant
+  precalculados, refrescados un bucket a la vez desde sus filas, así que un
+  evento procesado dos veces no hace daño; serializado con un advisory lock.
+  Sobre 3M de filas, el panel de seis agregados de un tenant de 990k filas
+  pasó de 455 ms a 3.25 ms en p50.
+- **RAG con 300k fragmentos entre 1.000 tenants** (`scripts/bench_rag.py`):
+  búsqueda vectorial p50 2.54 ms, p99 6.92 ms; híbrida p50 2.96 ms. A ese
+  tamaño el planner sirve las consultas por tenant con el btree del tenant y
+  un orden exacto, así que el índice HNSW de 586 MB no sirve ninguna; con
+  cuatro tenants grandes sí, y el recall@10 es 0.918 con el `ef_search` por
+  defecto (0.950 con 200).
+
+### Sin hacer, y con nombre
+
+- **Sin correr de verdad:** el camino de Kafka contra un broker; eventos
+  locales sobre la cola de Redis o RabbitMQ (probados con una cola que
+  graba); los manifiestos de Kubernetes del worker (parseados, nunca
+  aplicados); `jfast dev` lanzando el worker (simulado); un simulacro de falla
+  de RabbitMQ; S3 o MinIO (solo dobles); SMTP (la separación 5xx/4xx se prueba
+  contra excepciones de `smtplib`); un backend de trazas hospedado o TLS hacia
+  el collector; las páginas de cuenta generadas en un navegador; `jfast init`
+  interactivo de punta a punta; `--not-null` aplicado contra PostgreSQL;
+  réplicas de lectura detrás de PgBouncer bajo carga.
+- **Límites:** un worker haciendo long-poll contra un Redis pausado espera en
+  el socket (BLMOVE y pub/sub no tienen deadline por comando); un proveedor de
+  identidad caído sin ninguna clave cacheada sigue respondiendo 401, no 503;
+  `TaskSession` siempre usa la base primaria, no las de cada tenant; el worker
+  no tiene endpoint de salud y no se recarga bajo `jfast dev`; RabbitMQ no
+  tiene `jfast jobs`; el callback de login social del frontend no maneja el
+  reto de MFA; no hay código QR para inscribir MFA; cambiar la contraseña no
+  termina las otras sesiones (un reset sí); el `tasks.py` generado es solo un
+  docstring.
+- **Diez detectores de `jfast upgrade --check` tienen bugs conocidos**, cada
+  uno fijado por un xfail estricto en `tests/test_upgrade_detectors.py` (por
+  ejemplo, `async-dependencies` marca cualquier llamada llamada
+  `current_tenant`, y `SKIP_DIRS` se compara contra rutas absolutas, así que
+  un proyecto dentro de una carpeta llamada `build` no se lee).
+- **El smoke de actualización falla hasta que `upgrades.py` nombre
+  `hexagonal-eager-create-payload`**, a propósito.
+- Los tiempos de los simulacros se midieron en una sola laptop cargada; un
+  runner de CI más lento no está probado. Los controles del generador solo se
+  corrieron con Python 3.12 en local.
+- **Escala, todavía sin medir:** RAG con 1M de fragmentos (todos los
+  embeddings fueron sintéticos); la tabla de `ab` en `docs/deploy.md` (no se
+  volvió a medir en una máquina cargada); una línea base de Linux para el
+  presupuesto, que CI mide contra la rama base en su lugar -- un paso que aún
+  no corre en CI; el plugin de telemetría como escenario del presupuesto;
+  `jfast bench` nombrando la dependencia saturada más allá de `/ready`, y un
+  escenario con modelo simulado.
+- **Encontrado, sin arreglar:** la respuesta problem+json de un 405 pierde el
+  header `Allow`.
+- **El job de MinIO en CI corre un fork de la comunidad** (`pgsty/minio`):
+  MinIO dejó de publicar imágenes, y la suite solo se verificó en local contra
+  la última oficial, `RELEASE.2025-09-07T16-13-09Z`.
+- Trabajo largo de IA por la cola por defecto, recetas probadas y las tablas
+  con RLS en `jfast ai context` no se empezaron.
+- **Go, sin verificar:** un servicio en Go detrás del gateway o en `jfast
+  workspace compose` con auth encendido (los valores le llegan solo por su
+  propio `.env`, igual que a uno de Python); ES256/ES384 contra tokens
+  emitidos por Python (solo emitidos por Go); tokens de un proveedor de
+  identidad real; un consumidor en Go de la tabla de la cola (solo
+  documentado); el envoltorio de Gin/Echo/Chi que muestran los docs (no se
+  compila aquí, porque el scaffold no tiene dependencias con qué probarlo). La
+  prueba entre lenguajes y el smoke extendido corrieron en local en
+  `golang:1.23`, todavía no en CI.
 
 ## [0.1.0a10] - 2026-09-29
 
@@ -485,6 +950,66 @@ el mismo lugar.
 
 Tracing distribuido, y, en `accounts`, verificación de email, recuperación de
 contraseña y MFA. Los dos en `PLAN-NEXT.md`.
+
+## [0.1.0a8] - 2026-09-03
+
+> Traducción parcial: de 0.1.0a6 a 0.1.0a8 solo esta parte está en español. El registro completo está en el [CHANGELOG en inglés](../../CHANGELOG.md).
+
+### Agregado
+
+Cinco comandos que llevan a la CLI más allá de los primeros diez minutos de un
+proyecto. Cada uno responde algo que el framework ya podía responder y no
+respondía.
+
+- **`jfast check`** — todos los checks que existen, una pantalla, un exit code.
+  Ya existían todos; lo que no existía era una sola cosa que correr, así que CI
+  corría tres y los dos que nadie cableó no corrían nunca. La precedencia de
+  exit codes va por **cuánto del reporte invalida el fallo**, no por severidad:
+  un `jfast.toml` que no parsea vuelve conjetura todo lo demás. `--json` lleva
+  el código de *cada* check que falló, porque un solo número nunca es la
+  respuesta completa. Bajo `--ci` un **skip falla** — en CI un skip significa
+  que al runner le faltaba algo, y una batería que reporta verde sobre lo que no
+  ejecutó es peor que no tenerla.
+
+- **`jfast migration check` / `plan`** — lee las revisiones antes de correrlas:
+  `NOT NULL` sobre tabla poblada, un rename renderizado como drop más add, un
+  índice construido reteniendo un lock de escritura, un cambio de tipo sin
+  `USING`. Verificado mirando fallar `alembic upgrade head` contra PostgreSQL
+  real y prediciéndolo. Los conteos de filas salen de `EXISTS ... LIMIT 1` y
+  `pg_class.reltuples`, nunca de un `count(*)`, y sin base de datos reporta
+  "desconocido, trátalo como poblado" en vez de asumir vacío.
+
+- **`jfast contracts explain`** — por qué existe una regla, dónde está
+  declarada, y qué hacer en su lugar. `contracts check` te dice que una regla se
+  rompió; a un agente con una violación sin remedio le sale más barato
+  satisfacer al checker que arreglar el diseño, borrando el import o apagando la
+  regla. La respuesta cita la línea de tu `contracts.toml` y el comentario que
+  escribió su autor, no prosa inventada. `contracts diff` compara la
+  arquitectura que el contrato permite contra los imports que el código tiene
+  — **no** es un diff de git, y la doc lo dice sin rodeos.
+
+- **`jfast ai context --json` y `jfast next`** — todo lo que un modelo necesita
+  de un proyecto en una llamada. El tamaño **depende del proyecto y no hay un
+  número único**: un servicio generado mide 8,3 KB con un módulo y 11,5 KB con
+  cinco, y un servicio de cinco módulos con hallazgos y violaciones de contrato
+  reales mide 14,8 KB (`--brief` va de 2,8 KB a 6,1 KB en ese mismo rango).
+  **`jfast ai context --size` imprime la cifra de tu proyecto** — esa es la que
+  hay que usar para planificar. Para escala: enviar `docs/` en su lugar habrían
+  sido 555.859 bytes. Lo que deja fuera a propósito queda listado en un campo
+  `omitted` con el comando que lo recupera, `jfast migration check` incluido.
+  `next` ordena los pasos por **dependencia,
+  no por severidad** — un módulo sin registrar va antes que sus tests faltantes,
+  porque testear un módulo no cableado no prueba nada — y en un proyecto limpio
+  dice qué revisó en vez de inventar trabajo.
+
+- **`jfast upgrade --check`** — qué rompe al pasar a una versión más nueva,
+  **filtrado a lo que aplica a este proyecto**: lee tus modelos, tu
+  `contracts.toml` y la configuración de tus plugins, y reporta solo los cambios
+  que pueden afectarte. Un aviso que no aplica es como la gente aprende a
+  saltarse la salida. El manifiesto son datos en el paquete y no un parseo del
+  changelog, que es prosa, no viaja en el wheel, y se rompe en silencio si
+  alguien reescribe un encabezado. `--apply` está rechazado, no stubbeado:
+  reescribir el proyecto de alguien necesita una vuelta atrás que esto no tiene.
 
 ## [0.1.0a5] - 2026-08-30
 

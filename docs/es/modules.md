@@ -336,25 +336,39 @@ viejo — no lo llaman de vuelta. `comprobante` publica un evento en la misma
 transacción que la escritura, por el outbox, y `asesor` se suscribe:
 
 ```python
-# en comprobante, junto a la escritura
-outbox = request.app.state.jfast.require("outbox")
+# modules/comprobante/services/comprobante_service.py -- junto a la escritura
+from jfastframework.events import Event
+
 await outbox.publish(
     session, "comprobantes", Event(type="comprobante.categorized", data={"id": c.id}, key=str(c.id))
 )
-
-# en asesor
-from jfastframework.plugins.builtin.events import Event, on
-
-@on("comprobantes")
-async def refrescar_consejo(event: Event) -> None:
-    if event.type == "comprobante.categorized":
-        ...
 ```
 
-El evento se confirma junto con las filas que lo causaron, y `comprobante` nunca
-se entera de que `asesor` existe — así que no hay arista de él hacia `asesor`, y
-no hay ciclo. Transportes, idempotencia y garantías de entrega están en
-[Colas y eventos](queues-and-events.md).
+```python
+# modules/asesor/tasks.py
+from jfastframework.events import Event, subscribe
+from jfastframework.tasks import TaskSession
+
+@subscribe("comprobante.categorized")
+async def refrescar_consejo(event: Event, session: TaskSession) -> None:
+    ...
+```
+
+```toml
+# contracts.toml
+[modules.comprobante]
+publishes = ["comprobante.categorized"]
+```
+
+`outbox.publish` encola un job por suscriptor en la misma transacción que la
+escritura, y `jfast worker` lo corre con el tenant que publicó. No hay broker
+de por medio: funciona en el stack por defecto con PostgreSQL. `comprobante`
+nunca se entera de que `asesor` existe y `asesor` no declara `depends_on` por
+esto — así que no hay arista en ningún sentido, y no hay ciclo. Un evento al que
+nadie se suscribe se rechaza en la request, y `contracts check` reporta una
+suscripción que nadie declara publicar. Las garantías de entrega están en
+[Colas y eventos](queues-and-events.md#eventos-entre-modulos); `@on(topic)`
+sobre Kafka es para *otros servicios*, no para módulos de este.
 
 ### La recompensa: extraer un módulo
 
@@ -488,6 +502,108 @@ que mantiene honesto en ambas superficies a un servicio mixto de API y web.
 
 ---
 
+## Campos: genera el módulo que querías
+
+Un módulo generado sin campos trae un ejemplo -- `name`, `description`,
+`is_active` -- que no sirve para ningún dominio real. El primer módulo hecho
+sobre 0.1.0a10 pasó de 654 líneas generadas a 276 conservadas. Di qué guarda el
+módulo y cada lugar donde estaba el ejemplo recibe los campos reales:
+
+```bash
+jfast new module presupuesto \
+  --fields "cartera_id:int, mes:str(7), gasto:money, leida:bool=false, nota:text?" \
+  --unique "cartera_id,mes"
+```
+
+Eso escribe la entidad (con su restricción única), los modelos de alta,
+edición y lectura con los mismos límites, un finder en el repositorio por cada
+llave única, la regla que convierte una llave ocupada en un 409 legible -- al
+crear y en la edición que toca la llave --, el DTO de `public.py` con los
+campos reales, y tests que los ejercitan todos. Sirve en los cuatro layouts.
+Para un módulo cuyos campos aún no se conocen, o que solo guarda relaciones:
+
+```bash
+jfast new module alerta --bare      # la estructura, sin campos ni ejemplo
+```
+
+### La gramática
+
+Un campo por coma; las comas dentro de paréntesis no separan.
+
+```
+campo := nombre ":" tipo ["?"] ["=" default]
+```
+
+| Tipo | Python | Columna | En la petición |
+| --- | --- | --- | --- |
+| `int` | `int` | `INTEGER` | |
+| `bigint` | `int` | `BIGINT` | |
+| `str(N)` | `str` | `VARCHAR(N)` | `max_length=N`; `min_length=1` salvo que sea nulable |
+| `str` | `str` | `VARCHAR(255)` | como `str(255)` |
+| `text` | `str` | `TEXT` | `min_length=1` salvo que sea nulable |
+| `bool` | `bool` | `BOOLEAN` | |
+| `float` | `float` | `FLOAT` | |
+| `decimal(P,S)` | `Decimal` | `NUMERIC(P,S)` | `max_digits=P, decimal_places=S` |
+| `money` | `int` | `BIGINT` | unidades menores enteras: 1050 es 10.50 |
+| `date` | `date` | `DATE` | |
+| `datetime` | `datetime` | `TIMESTAMPTZ` | `AwareDatetime`: una sin zona es un 422 |
+| `json` | `dict[str, Any]` | `JSONB` (`JSON` fuera de PostgreSQL) | |
+
+- `?` lo hace nulable, y opcional al crear.
+- `=valor` es el default, escrito en la sintaxis del tipo: `=0`, `=false`,
+  `=pendiente`, `="dos palabras"`, `=0.00`. `date`, `datetime` y `json` no
+  aceptan default: un "ahora" por defecto es una decisión de zona horaria y va
+  en el servicio.
+- `--unique "a,b"` hace el par único por tenant; repítelo para más llaves. Cada
+  restricción lleva nombre, porque dos restricciones que empiezan por
+  `tenant_id` en la misma tabla compartirían el del naming convention.
+- `money` es entero a propósito. Los floats no suman al centavo; `decimal(12,2)`
+  es la alternativa cuando el monto tiene de verdad una escala fija.
+
+Cada error se rechaza antes de escribir un archivo, con el arreglo en el
+mensaje: un tipo desconocido lista los que existen, `id` o `tenant_id` avisa que
+ya están en toda entidad, `str(0)` apunta a `text`, y un nombre que taparía algo
+que usa el código generado (`payload`, `json`, `model_...`) pide otro nombre.
+
+`tenant_id` está en toda entidad generada, sean cuales sean los campos -- ver
+[pasar a multitenant después](multitenancy.md#pasar-a-multitenant-despues):
+es lo que convierte "tenemos un segundo cliente" en un backfill en vez de una
+reescritura del esquema.
+
+`--ui htmx` se rechaza con `--fields` o `--bare`: las páginas que dibuja son
+para los campos de ejemplo. Genera el módulo de API y escribe las páginas para
+los tuyos.
+
+### Quién puede llamar a las rutas
+
+Las rutas generadas leen al que llama según cómo esté configurado el servicio,
+así que un módulo nunca queda más abierto que el servicio que lo contiene:
+
+| `jfast.toml` habilita | Rutas | Tenant |
+| --- | --- | --- |
+| `tenancy` | `tenant_id: str = Depends(current_tenant)` en la factory | el del que llama; 401 sin sesión, 403 sin tenant |
+| `auth` o `accounts` | `APIRouter(dependencies=[Depends(require_auth)])` | ninguno: un solo cliente |
+| ninguno | abiertas | lo que haya resuelto la petición -- nada |
+
+`--access open|auth|tenant` lo cambia para un módulo.
+
+### Cada módulo sale formateado y tipado
+
+Lo que escribe el generador pasa los controles del propio proyecto -- `ruff
+check .`, `ruff format --check .`, `mypy .` (estricto) y `pytest` -- en todos
+los layouts y todas las formas; los detalles están en [los controles del
+proyecto generado](migrations-and-tests.md#los-controles-del-proyecto-generado).
+Los archivos nuevos además pasan por el ruff del proyecto cuando está instalado
+(viene en `requirements-dev.txt`), porque un nombre de módulo largo produce
+líneas que ninguna plantilla puede partir de antemano. Sin ruff se escriben tal
+como se renderizan, y `ruff format .` termina el trabajo.
+
+Todo módulo trae además un `tasks.py` vacío: el lugar de sus `@task` y
+`@subscribe`, que la API y `jfast worker` encuentran al arrancar. Ver [colas y
+eventos](queues-and-events.md).
+
+---
+
 ## Nombres de tabla
 
 Los nombres de tabla se pluralizan: `order` → `orders`, `category` →
@@ -528,7 +644,8 @@ jfast new module ledger  --layout hexagonal
 Cada combinación se ejercita en CI. `scripts/smoke_layouts.sh` genera los
 cuatro layouts y verifica que cada uno renderiza, importa, monta sus rutas y
 pasa su propio contrato; `scripts/smoke_htmx.sh` envía el formulario real en
-cada uno.
+cada uno; y `scripts/smoke_generated_quality.sh` corre ruff, ruff format, mypy
+y pytest sobre cada layout con campos de ejemplo, con `--fields` y con `--bare`.
 
 ---
 

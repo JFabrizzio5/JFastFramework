@@ -1,0 +1,55 @@
+{
+  "darwin-arm64": {
+    "machine": {
+      "cpus": "10",
+      "fastapi": "0.142.1",
+      "platform": "macOS-26.6.2-arm64-arm-64bit",
+      "processor": "arm",
+      "python": "3.12.14",
+      "starlette": "1.7.0"
+    },
+    "method": {
+      "clock": "process CPU time",
+      "driver": "in-process ASGI, no server",
+      "requests_per_round": 5000,
+      "rounds": 9,
+      "slice": 200,
+      "statistic": "us: median of per-round mean; ratio: median of per-slice ratios",
+      "warmup": 1000
+    },
+    "scenarios": {
+      "fastapi": {
+        "overhead_us": 0.0,
+        "ratio_to_fastapi": 1.0,
+        "req_per_s_one_core": 48446,
+        "spread_us": 10.68,
+        "us_per_request": 20.64,
+        "wall_us_per_request": 20.73
+      },
+      "fastapi_jwt_by_hand": {
+        "overhead_us": 49.91,
+        "ratio_to_fastapi": 3.264,
+        "req_per_s_one_core": 14174,
+        "spread_us": 34.18,
+        "us_per_request": 70.55,
+        "wall_us_per_request": 72.04
+      },
+      "jfast_auth_tenancy_metrics": {
+        "overhead_us": 93.67,
+        "ratio_to_fastapi": 5.426,
+        "req_per_s_one_core": 8748,
+        "spread_us": 55.53,
+        "us_per_request": 114.31,
+        "wall_us_per_request": 115.74
+      },
+      "jfast_defaults": {
+        "overhead_us": 32.54,
+        "ratio_to_fastapi": 2.476,
+        "req_per_s_one_core": 18803,
+        "spread_us": 26.97,
+        "us_per_request": 53.18,
+        "wall_us_per_request": 54.61
+      }
+    }
+  }
+}

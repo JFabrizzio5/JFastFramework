@@ -12,6 +12,7 @@ k8s/
 ├── base/
 │   ├── namespace.yaml
 │   ├── billing.yaml                  Deployment, Service, ConfigMap, HPA, PDB
+│   │                                 (+ billing-worker Deployment with the queue plugin)
 │   ├── billing-secrets.example.yaml  placeholders, never real values
 │   ├── ingress.yaml
 │   └── kustomization.yaml
@@ -48,6 +49,24 @@ service and a Python one produce the same manifest shape.
 readiness fails, and if liveness shares that endpoint the orchestrator restarts
 every healthy pod at once. The restart storm then finishes off the database.
 Two endpoints exist precisely so that cannot happen.
+
+---
+
+## The worker
+
+A service whose `jfast.toml` enables the `queue` plugin also gets a
+`<service>-worker` Deployment in the same file: the API's image, environment
+and security context, running `jfast worker --grace=25`. It has no ports and
+**no HTTP probes** -- it serves nothing, so a `/health` liveness probe would
+restart it forever -- and its own selector, so the API's Service never routes
+to it. `terminationGracePeriodSeconds` is 30: on SIGTERM the worker stops
+claiming, lets running jobs finish for 25 s, and releases the rest to the queue
+without spending an attempt, five seconds before the kubelet's SIGKILL.
+
+No HorizontalPodAutoscaler is generated for it: CPU is the wrong signal for a
+queue consumer. Scale it on queue depth (KEDA's PostgreSQL or Redis scaler) or
+set the replicas by hand. See
+[Queues and events](queues-and-events.md#running-the-worker).
 
 ---
 

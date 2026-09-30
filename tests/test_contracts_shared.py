@@ -38,6 +38,8 @@ LAYER_FILES: dict[str, dict[str, str]] = {
         "schemas": "modules/order/schemas.py",
         # The facade: the one file another module may import.
         "public": "modules/order/public.py",
+        # @task and @subscribe: an entry point, found at boot by API and worker.
+        "tasks": "modules/order/tasks.py",
     },
     "modular": {
         "http": "modules/order/api/routes.py",
@@ -47,6 +49,8 @@ LAYER_FILES: dict[str, dict[str, str]] = {
         "schemas": "modules/order/models/order_models.py",
         # The facade: the one file another module may import.
         "public": "modules/order/public.py",
+        # @task and @subscribe: an entry point, found at boot by API and worker.
+        "tasks": "modules/order/tasks.py",
     },
     "screaming": {
         "domain": "modules/order/order.py",
@@ -55,6 +59,8 @@ LAYER_FILES: dict[str, dict[str, str]] = {
         "http": "modules/order/http.py",
         # The facade: the one file another module may import.
         "public": "modules/order/public.py",
+        # @task and @subscribe: an entry point, found at boot by API and worker.
+        "tasks": "modules/order/tasks.py",
     },
     "hexagonal": {
         "domain": "modules/order/domain/entities.py",
@@ -63,6 +69,8 @@ LAYER_FILES: dict[str, dict[str, str]] = {
         "adapters": "modules/order/adapters/http.py",
         # The facade: the one file another module may import.
         "public": "modules/order/public.py",
+        # @task and @subscribe: an entry point, found at boot by API and worker.
+        "tasks": "modules/order/tasks.py",
     },
 }
 

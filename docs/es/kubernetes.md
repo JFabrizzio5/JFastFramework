@@ -12,6 +12,7 @@ k8s/
 ├── base/
 │   ├── namespace.yaml
 │   ├── billing.yaml                  Deployment, Service, ConfigMap, HPA, PDB
+│   │                                 (+ Deployment billing-worker con el plugin queue)
 │   ├── billing-secrets.example.yaml  placeholders, never real values
 │   ├── ingress.yaml
 │   └── kustomization.yaml
@@ -49,6 +50,25 @@ servicio en Go y uno en Python producen la misma forma de manifiesto.
 readiness falla, y si liveness comparte ese endpoint el orquestador reinicia
 todos los pods sanos de golpe. La tormenta de reinicios termina de matar la base
 de datos. Los dos endpoints existen precisamente para que eso no pueda pasar.
+
+---
+
+## El worker
+
+Un servicio cuyo `jfast.toml` activa el plugin `queue` también recibe un
+Deployment `<servicio>-worker` en el mismo archivo: la imagen, el entorno y el
+contexto de seguridad de la API, corriendo `jfast worker --grace=25`. No tiene
+puertos ni **probes HTTP** -- no sirve nada, así que una liveness sobre
+`/health` lo reiniciaría para siempre -- y tiene su propio selector, así que el
+Service de la API nunca le enruta tráfico. `terminationGracePeriodSeconds` es
+30: con SIGTERM el worker deja de reclamar, deja terminar los jobs en curso
+durante 25 s y libera el resto a la cola sin gastar un intento, cinco segundos
+antes del SIGKILL del kubelet.
+
+No se genera HorizontalPodAutoscaler para él: la CPU es la señal equivocada para
+un consumidor de cola. Escálalo por profundidad de cola (el scaler de
+PostgreSQL o Redis de KEDA) o fija las réplicas a mano. Ver
+[Colas y eventos](queues-and-events.md#correr-el-worker).
 
 ---
 

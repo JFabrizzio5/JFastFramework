@@ -97,9 +97,13 @@ plain 401. Telling an attacker *which* check failed is free reconnaissance.
 
 ## Tenancy stops being forgeable
 
-Before this plugin, `tenant_id` comes from the `X-Tenant-ID` header —
-convenient in development, and settable by anyone with curl. With auth enabled
-it comes from a **signed claim**, and the header is ignored.
+With auth enabled the tenant comes from a **signed claim**, and the
+`X-Tenant-ID` header is ignored -- for anonymous requests too. Until 0.1.0a11
+the observability middleware copied that header into `request.state.tenant_id`
+when nothing else had set it, so with `auth` on and `tenancy` off an anonymous
+request was served as whichever tenant it named. The header is now only a log
+field, `tenant_claimed`; to trust it behind a gateway, list `header` in
+`[plugin.tenancy] sources`.
 
 That is the main security reason to turn this on, more than the login form.
 
@@ -158,6 +162,21 @@ in-memory token store: revocation does not survive a restart or reach other repl
 
 Non-critical — the service still authenticates — but visible, rather than
 discovered from a support ticket.
+
+When Redis stops answering, the revocation lookup fails **open** by default:
+the token is accepted without the check, a warning is logged (at most every ten
+seconds) and `/ready` reports auth degraded. It is the trade the rate limiter
+makes, bounded by the access-token lifetime. Where a logout that takes a few
+minutes to bite is worse than an outage, close it:
+
+```toml
+[plugin.auth]
+revocation_fail_open = false   # every authenticated request answers 503 until Redis is back
+```
+
+Either way the lookup is bounded: the cache client gives each command one
+second and stops calling a Redis that is not answering (see
+[Resilience](resilience.md)).
 
 ---
 
@@ -279,7 +298,27 @@ key on the first token carrying an unknown `kid`.
 Keep the old key published until every token signed with it has expired.
 
 If the JWKS endpoint is unreachable, cached keys keep working — a JWKS outage
-must not take every service down — and `/ready` reports the staleness.
+must not take every service down — and `/ready` reports the staleness as
+*degraded*, not unavailable: every replica still verifies what it verified a
+minute ago. With no key fetched at all it is critical, because nothing can be
+verified.
+
+Reaching the cached keys must not cost a timeout first, so the fetch has a
+deadline, one retry for what looks transient, and a breaker:
+
+```toml
+[plugin.auth]
+jwks_timeout = 5.0             # seconds for one fetch, the whole of it
+jwks_attempts = 2              # the first try included; only 429/5xx/network errors retry
+jwks_breaker_failures = 3      # failed refreshes in a row that stop calling the issuer...
+jwks_breaker_cool_down = 30.0  # ...for this long, while cached keys are served
+```
+
+Measured with an issuer that hangs: the first three requests after the cache
+expires wait about a second each (two tries of 0.5 s in the drill), and every
+request after that answers in under a millisecond until the issuer is back.
+Callers that queue behind a fetch that failed take its failure instead of
+asking again, so an outage costs the issuer one request, not one per caller.
 
 ---
 

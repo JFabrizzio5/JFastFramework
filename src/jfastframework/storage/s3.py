@@ -16,16 +16,27 @@ rather than clever: an async S3 client would add a dependency and a second code
 path for a workload that is almost always a handful of uploads per request. If
 you are streaming gigabytes, reach for a dedicated client and say why.
 
+Every call has a deadline, a retry policy and a circuit breaker, by default:
+``connect_timeout`` and ``read_timeout`` bound one HTTP exchange, botocore's
+``standard`` retry mode makes up to ``max_attempts`` of them with backoff for
+throttling and 5xx, and after ``breaker_failures`` calls in a row fail that way
+the disk stops calling S3 for ``breaker_cool_down`` seconds -- uploads answer
+503 at once instead of each holding a worker thread through three timeouts.
+A 404 is an answer, not a failure: it never opens the breaker. Presigning is
+local arithmetic and is not behind the breaker.
+
 Requires: ``pip install jfastframework[s3]``
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable
+import logging
+from collections.abc import AsyncIterable, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar
 
+from jfastframework.http.resilience import BreakerPolicy, CircuitBreaker
 from jfastframework.storage.base import (
     FileNotFound,
     StorageError,
@@ -34,6 +45,29 @@ from jfastframework.storage.base import (
     normalise_key,
 )
 from jfastframework.storage.pipeline import StreamCheck, Upload, UploadPipeline, guard_stream
+
+logger = logging.getLogger("jfast.storage")
+
+T = TypeVar("T")
+
+# S3 error codes that mean "not now" rather than "no": worth a breaker count.
+_OUTAGE_CODES = frozenset({"SlowDown", "ServiceUnavailable", "RequestTimeout", "InternalError"})
+
+
+def is_outage(exc: BaseException) -> bool:
+    """Whether a boto call failed because S3 (or MinIO) was not there to answer."""
+    try:
+        from botocore.exceptions import ClientError, HTTPClientError
+        from botocore.exceptions import ConnectionError as BotoConnectionError
+    except ImportError:  # pragma: no cover - the s3 extra is what imports this module
+        return False
+    if isinstance(exc, BotoConnectionError | HTTPClientError | TimeoutError | OSError):
+        return True
+    if isinstance(exc, ClientError):
+        error = exc.response.get("Error", {})
+        status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0)
+        return status >= 500 or error.get("Code") in _OUTAGE_CODES
+    return False
 
 
 class S3Storage:
@@ -53,6 +87,11 @@ class S3Storage:
         force_path_style: bool = False,
         public_base_url: str = "",
         pipeline: UploadPipeline | None = None,
+        connect_timeout: float = 5.0,
+        read_timeout: float = 30.0,
+        max_attempts: int = 3,
+        breaker_failures: int = 5,
+        breaker_cool_down: float = 15.0,
     ) -> None:
         self.name = name
         self.visibility = visibility
@@ -64,9 +103,19 @@ class S3Storage:
         self._force_path_style = force_path_style
         self._access_key = access_key
         self._secret_key = secret_key
+        self._connect_timeout = connect_timeout
+        self._read_timeout = read_timeout
+        self._max_attempts = max_attempts
         self._client: Any = None
+        self._probe_client: Any = None
+        self.breaker: CircuitBreaker | None = None
+        if breaker_failures > 0:
+            self.breaker = CircuitBreaker(
+                f"s3 {bucket}",
+                BreakerPolicy(failure_threshold=breaker_failures, cool_down=breaker_cool_down),
+            )
 
-    def _build_client(self) -> Any:
+    def _build_client(self, *, probe: bool = False) -> Any:
         import boto3
         from botocore.config import Config
 
@@ -75,10 +124,12 @@ class S3Storage:
             signature_version="s3v4",
             s3={"addressing_style": "path" if self._force_path_style else "auto"},
             # Bound the damage of a slow bucket: without these a hung S3 call
-            # holds a worker thread until the process restarts.
-            connect_timeout=5,
-            read_timeout=30,
-            retries={"max_attempts": 3, "mode": "standard"},
+            # holds a worker thread until the process restarts. The health
+            # probe gets one short try, because /ready answers in two seconds
+            # and a probe that retries reports "timeout" instead of the cause.
+            connect_timeout=1.0 if probe else self._connect_timeout,
+            read_timeout=1.0 if probe else self._read_timeout,
+            retries={"max_attempts": 1 if probe else self._max_attempts, "mode": "standard"},
         )
         credentials: dict[str, Any] = {}
         if self._access_key and self._secret_key:
@@ -101,6 +152,24 @@ class S3Storage:
         if self._client is None:
             self._client = self._build_client()
         return self._client
+
+    async def _call(self, fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
+        """Run one blocking boto call in a thread, behind the breaker."""
+        breaker = self.breaker
+        permit = breaker.acquire() if breaker is not None else None
+        try:
+            result = await asyncio.to_thread(fn, *args, **kwargs)
+        except asyncio.CancelledError:
+            if breaker is not None and permit is not None:
+                breaker.release(permit)
+            raise
+        except Exception as exc:
+            if breaker is not None and permit is not None:
+                breaker.record(permit, failed=is_outage(exc))
+            raise
+        if breaker is not None and permit is not None:
+            breaker.record(permit, failed=False)
+        return result
 
     # -- reads and writes ----------------------------------------------
 
@@ -148,7 +217,7 @@ class S3Storage:
                 Metadata=metadata or {},
             )
 
-        response = await asyncio.to_thread(_put)
+        response = await self._call(_put)
         return StoredFile(
             key=safe,
             size=len(data),
@@ -188,7 +257,7 @@ class S3Storage:
             if not buffer and not final:
                 return
             if upload_id is None:
-                created = await asyncio.to_thread(
+                created = await self._call(
                     self.client.create_multipart_upload,
                     Bucket=self._bucket,
                     Key=safe,
@@ -197,7 +266,7 @@ class S3Storage:
                 )
                 upload_id = str(created["UploadId"])
             number = len(parts) + 1
-            response = await asyncio.to_thread(
+            response = await self._call(
                 self.client.upload_part,
                 Bucket=self._bucket,
                 Key=safe,
@@ -219,7 +288,7 @@ class S3Storage:
                 )
             if buffer:
                 await flush(final=True)
-            response = await asyncio.to_thread(
+            response = await self._call(
                 self.client.complete_multipart_upload,
                 Bucket=self._bucket,
                 Key=safe,
@@ -228,12 +297,23 @@ class S3Storage:
             )
         except BaseException:
             if upload_id is not None:
-                await asyncio.to_thread(
-                    self.client.abort_multipart_upload,
-                    Bucket=self._bucket,
-                    Key=safe,
-                    UploadId=upload_id,
-                )
+                # Not behind the breaker, and never raising: the error that
+                # got here is the one the caller needs, and an abort that fails
+                # too leaves parts for the bucket's lifecycle rule to expire.
+                try:
+                    await asyncio.to_thread(
+                        self.client.abort_multipart_upload,
+                        Bucket=self._bucket,
+                        Key=safe,
+                        UploadId=upload_id,
+                    )
+                except Exception as abort_error:  # noqa: BLE001
+                    logger.warning(
+                        "could not abort multipart upload %s of %s: %s",
+                        upload_id,
+                        safe,
+                        abort_error,
+                    )
             raise
         return StoredFile(
             key=safe,
@@ -255,7 +335,7 @@ class S3Storage:
             body: bytes = response["Body"].read()
             return body
 
-        return await asyncio.to_thread(_get)
+        return await self._call(_get)
 
     async def exists(self, key: str) -> bool:
         safe = normalise_key(key)
@@ -271,7 +351,7 @@ class S3Storage:
                     return False
                 raise
 
-        return await asyncio.to_thread(_head)
+        return await self._call(_head)
 
     async def delete(self, key: str) -> bool:
         safe = normalise_key(key)
@@ -282,7 +362,7 @@ class S3Storage:
             # there, so the caller's contract needs the head above.
             self.client.delete_object(Bucket=self._bucket, Key=safe)
 
-        await asyncio.to_thread(_delete)
+        await self._call(_delete)
         return existed
 
     async def stat(self, key: str) -> StoredFile:
@@ -306,27 +386,38 @@ class S3Storage:
                 metadata=dict(response.get("Metadata", {})),
             )
 
-        return await asyncio.to_thread(_head)
+        return await self._call(_head)
 
     async def listing(self, prefix: str = "", *, limit: int = 1000) -> list[StoredFile]:
         safe_prefix = normalise_key(prefix) if prefix else ""
 
         def _list() -> list[StoredFile]:
-            response = self.client.list_objects_v2(
-                Bucket=self._bucket, Prefix=safe_prefix, MaxKeys=limit
-            )
-            return [
-                StoredFile(
-                    key=item["Key"],
-                    size=int(item.get("Size", 0)),
-                    content_type=guess_content_type(item["Key"]),
-                    modified_at=item.get("LastModified"),
-                    etag=(item.get("ETag") or "").strip('"') or None,
+            # S3 returns at most 1,000 keys per request whatever MaxKeys
+            # asks for, so a larger limit has to follow the continuation
+            # token; one request silently cut every listing at 1,000.
+            files: list[StoredFile] = []
+            kwargs: dict[str, Any] = {"Bucket": self._bucket, "Prefix": safe_prefix}
+            while len(files) < limit:
+                response = self.client.list_objects_v2(
+                    **kwargs, MaxKeys=min(limit - len(files), 1000)
                 )
-                for item in response.get("Contents", [])
-            ]
+                files.extend(
+                    StoredFile(
+                        key=item["Key"],
+                        size=int(item.get("Size", 0)),
+                        content_type=guess_content_type(item["Key"]),
+                        modified_at=item.get("LastModified"),
+                        etag=(item.get("ETag") or "").strip('"') or None,
+                    )
+                    for item in response.get("Contents", [])
+                )
+                token = response.get("NextContinuationToken")
+                if not response.get("IsTruncated") or not token:
+                    break
+                kwargs["ContinuationToken"] = token
+            return files[:limit]
 
-        return await asyncio.to_thread(_list)
+        return await self._call(_list)
 
     # -- URLs ----------------------------------------------------------
 
@@ -396,17 +487,24 @@ class S3Storage:
                     kwargs["CreateBucketConfiguration"] = {"LocationConstraint": self._region}
                 self.client.create_bucket(**kwargs)
 
-        await asyncio.to_thread(_ensure)
+        await self._call(_ensure)
 
     async def health(self) -> tuple[bool, str]:
-        def _head() -> tuple[bool, str]:
+        if self.breaker is not None and self.breaker.state.value == "open":
+            # Not probed: the breaker already knows, and a probe from /ready
+            # every few seconds would be the traffic it exists to hold back.
+            return False, f"bucket {self._bucket!r}: breaker open after repeated failures"
+
+        def _probe() -> tuple[bool, str]:
+            if self._probe_client is None:
+                self._probe_client = self._build_client(probe=True)
             try:
-                self.client.head_bucket(Bucket=self._bucket)
+                self._probe_client.head_bucket(Bucket=self._bucket)
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 return False, f"bucket {self._bucket!r} unreachable: {exc}"
             return True, f"bucket {self._bucket!r} reachable"
 
-        return await asyncio.to_thread(_head)
+        return await asyncio.to_thread(_probe)
 
     def __repr__(self) -> str:
         return f"<S3Storage {self.name!r} bucket={self._bucket!r} visibility={self.visibility!r}>"

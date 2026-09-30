@@ -66,6 +66,16 @@ paths = ["modules/*/public.py"]
 # module calls it is not a layer question: [modules.*] governs that edge.
 may_import = ["service", "storage", "schemas", "shared"]
 
+[layers.tasks]
+description = "Background work and event subscribers the module owns: @task and @subscribe."
+paths = ["modules/*/tasks.py", "modules/*/tasks/*.py"]
+# An entry point like a route, so it reaches as far as a route does and no
+# further: it calls the service, so a rule holds for a job exactly as it does for
+# a request. The worker imports these files at boot, API or not; a task that
+# builds a query or a response has taken a layer's job.
+may_import = ["service", "schemas", "storage", "shared"]
+forbid_packages = ["fastapi", "starlette", "sqlalchemy"]
+
 # ---------------------------------------------------------------------------
 # Rules
 # ---------------------------------------------------------------------------
@@ -201,8 +211,16 @@ rules = [
 # The blocks together are the module graph. `jfast contracts check` rejects a
 # call to a facade that is not listed here (undeclared-dependency) and any
 # cycle (module-cycle): two modules that call each other cannot be extracted
-# apart. Break a cycle by turning one direction into an event.
+# apart. Break a cycle by turning one direction into an event: the upstream
+# module lists the event under publishes, the downstream one reacts with
+# @subscribe("<type>") in its tasks.py and declares no depends_on for it.
+# A subscription nobody declares publishing (orphan-subscription), an event a
+# module builds without declaring it (undeclared-event) and a depends_on
+# entry nothing uses (unused-dependency) are reported too.
 #
 #     [modules.advisor]
 #     depends_on = ["receipt", "wallet"]
+#
+#     [modules.receipt]
+#     publishes = ["receipt.registered"]
 # ---------------------------------------------------------------------------

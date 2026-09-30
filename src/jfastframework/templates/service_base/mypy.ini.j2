@@ -1,0 +1,14 @@
+# Type-checking rules for {{ service_title }}.
+#
+# Strict, because the value of a type checker in a generated project is what it
+# catches in the code written next -- often by an agent -- and a lenient default
+# lets exactly that code through. Everything the generator writes passes this
+# file; loosen a rule for one module with a [mypy-...] section rather than here.
+[mypy]
+strict = True
+warn_unused_ignores = True
+# Modules are named by their path from this directory -- `modules.order.api` --
+# which is how the app and pytest import them.
+explicit_package_bases = True
+# Revisions are written by Alembic and reviewed as migrations, not typed as code.
+exclude = ^(migrations/versions/|\.venv/)

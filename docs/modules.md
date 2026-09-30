@@ -329,25 +329,39 @@ does not get called back. `comprobante` publishes an event in the same
 transaction as the write, through the outbox, and `asesor` subscribes:
 
 ```python
-# in comprobante, next to the write
-outbox = request.app.state.jfast.require("outbox")
+# modules/comprobante/services/comprobante_service.py -- next to the write
+from jfastframework.events import Event
+
 await outbox.publish(
     session, "comprobantes", Event(type="comprobante.categorized", data={"id": c.id}, key=str(c.id))
 )
-
-# in asesor
-from jfastframework.plugins.builtin.events import Event, on
-
-@on("comprobantes")
-async def refresh_advice(event: Event) -> None:
-    if event.type == "comprobante.categorized":
-        ...
 ```
 
-The event commits with the rows that caused it, and `comprobante` never learns
-that `asesor` exists — so there is no edge from it to `asesor`, and no cycle.
-Transports, idempotency and delivery guarantees are in
-[Queues and events](queues-and-events.md).
+```python
+# modules/asesor/tasks.py
+from jfastframework.events import Event, subscribe
+from jfastframework.tasks import TaskSession
+
+@subscribe("comprobante.categorized")
+async def refresh_advice(event: Event, session: TaskSession) -> None:
+    ...
+```
+
+```toml
+# contracts.toml
+[modules.comprobante]
+publishes = ["comprobante.categorized"]
+```
+
+`outbox.publish` queues one job per subscriber in the same transaction as the
+write, and `jfast worker` runs it as the tenant that published. No broker is
+involved: this works on the default PostgreSQL stack. `comprobante` never
+learns that `asesor` exists and `asesor` declares no `depends_on` for it — so
+there is no edge either way, and no cycle. An event nobody subscribes to is
+refused in the request, and `contracts check` reports a subscription nobody
+declares publishing. Delivery guarantees are in
+[Queues and events](queues-and-events.md#events-between-modules); `@on(topic)`
+over Kafka is for *other services*, not for modules of this one.
 
 ### The payoff: extracting a module
 
@@ -479,6 +493,106 @@ both surfaces.
 
 ---
 
+## Fields: generate the module you meant
+
+A module generated with no fields carries an example -- `name`,
+`description`, `is_active` -- that fits no real domain. The first module built
+on 0.1.0a10 went from 654 generated lines to 276 kept. Say what the module
+holds instead, and every place the example used to be gets the real fields:
+
+```bash
+jfast new module presupuesto \
+  --fields "cartera_id:int, mes:str(7), gasto:money, leida:bool=false, nota:text?" \
+  --unique "cartera_id,mes"
+```
+
+That writes the entity (with its unique constraint), the create, update and
+read models with matching limits, a repository finder per unique key, the rule
+that turns a taken key into a readable 409 -- on create and on the update that
+touches the key -- the `public.py` DTO with the real fields, and tests that
+exercise every one of them. It works for all four layouts. For a module whose
+fields are not known yet, or that holds nothing but relations:
+
+```bash
+jfast new module alerta --bare      # the structure, no fields, no example
+```
+
+### The grammar
+
+One field per comma; commas inside parentheses do not split.
+
+```
+field := name ":" type ["?"] ["=" default]
+```
+
+| Type | Python | Column | On the wire |
+| --- | --- | --- | --- |
+| `int` | `int` | `INTEGER` | |
+| `bigint` | `int` | `BIGINT` | |
+| `str(N)` | `str` | `VARCHAR(N)` | `max_length=N`; `min_length=1` unless nullable |
+| `str` | `str` | `VARCHAR(255)` | as `str(255)` |
+| `text` | `str` | `TEXT` | `min_length=1` unless nullable |
+| `bool` | `bool` | `BOOLEAN` | |
+| `float` | `float` | `FLOAT` | |
+| `decimal(P,S)` | `Decimal` | `NUMERIC(P,S)` | `max_digits=P, decimal_places=S` |
+| `money` | `int` | `BIGINT` | integer minor units: 1050 is 10.50 |
+| `date` | `date` | `DATE` | |
+| `datetime` | `datetime` | `TIMESTAMPTZ` | `AwareDatetime`: a naive one is a 422 |
+| `json` | `dict[str, Any]` | `JSONB` (`JSON` off PostgreSQL) | |
+
+- `?` makes it nullable, and optional in a create.
+- `=value` is the default, written in the type's own syntax: `=0`, `=false`,
+  `=pending`, `="two words"`, `=0.00`. `date`, `datetime` and `json` take none:
+  a default "now" is a decision about a zone, and belongs in the service.
+- `--unique "a,b"` makes the pair unique per tenant; repeat it for more keys.
+  Every constraint is named, because two tenant-first constraints on one table
+  would otherwise share a name.
+- `money` is integers on purpose. Floats do not add up to the cent; a
+  `decimal(12,2)` is the alternative when the amount really has a fixed scale.
+
+Every mistake is refused before a file is written, with the fix in the
+message: an unknown type lists the ones there are, `id` or `tenant_id` says
+they are already on every entity, `str(0)` points at `text`, and a name that
+would shadow something the generated code uses (`payload`, `json`,
+`model_...`) asks for another name.
+
+`tenant_id` is on every generated entity whatever the fields -- see
+[going multitenant later](multitenancy.md#going-multitenant-later): it
+is what turns "we have a second customer" into a backfill instead of a schema
+rewrite.
+
+`--ui htmx` is refused with `--fields` or `--bare`: the pages it draws are for
+the example fields. Generate the API module and write the pages for yours.
+
+### Who may call the routes
+
+The generated routes read the caller the way the service is configured, so a
+module is never more open than the service around it:
+
+| `jfast.toml` enables | Routes | Tenant |
+| --- | --- | --- |
+| `tenancy` | `tenant_id: str = Depends(current_tenant)` in the factory | the caller's; 401 without a session, 403 without a tenant |
+| `auth` or `accounts` | `APIRouter(dependencies=[Depends(require_auth)])` | none: one customer |
+| neither | open | whatever the request resolved to -- nothing |
+
+`--access open|auth|tenant` overrides it for one module.
+
+### Every module is formatted and typed
+
+What the generator writes passes the project's own gates -- `ruff check .`,
+`ruff format --check .`, `mypy .` (strict) and `pytest` -- in every layout and
+every form; [the generated project's gates](migrations-and-tests.md#the-generated-projects-gates)
+has the details. New files are also run through the project's ruff when it is
+installed (it is in `requirements-dev.txt`), because a long module name makes
+lines no template can wrap in advance. Without ruff the files are written as
+rendered, and `ruff format .` finishes the job.
+
+Every module also gets an empty `tasks.py`: the place its `@task` and
+`@subscribe` declarations go, found at boot by the API and by `jfast worker`
+alike. See [queues and events](queues-and-events.md).
+
+---
+
 ## Table names
 
 Table names are pluralised: `order` → `orders`, `category` → `categories`.
@@ -517,7 +631,9 @@ jfast new module ledger  --layout hexagonal
 
 Every combination is exercised in CI. `scripts/smoke_layouts.sh` generates all
 four layouts and asserts each renders, imports, mounts its routes and passes
-its own contract; `scripts/smoke_htmx.sh` submits the actual form on each.
+its own contract; `scripts/smoke_htmx.sh` submits the actual form on each; and
+`scripts/smoke_generated_quality.sh` runs ruff, ruff format, mypy and pytest on
+every layout with example fields, `--fields` and `--bare`.
 
 ---
 

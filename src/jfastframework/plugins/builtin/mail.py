@@ -22,18 +22,34 @@ the SMTP conversation, and the queue's retry and dead-lettering apply to it.
 ``mail.send_now()`` is the synchronous escape hatch and reads like one at the
 call site.
 
+A failed queued send is retried only when retrying can help. A timeout, a
+dropped connection or a 4xx reply ("try again later", greylisting) goes back to
+the queue with backoff; a 5xx reply (no such mailbox, relaying denied, bad
+credentials), an attachment over the limit or a malformed header goes straight
+to the dead letters, where an operator can replay it once the cause is fixed.
+Retrying those only delays the dead letter and, for a rejected recipient, can
+get the sending domain flagged.
+
 Requires: ``pip install jfastframework[mail]``
 """
 
 from __future__ import annotations
 
+import logging
+import smtplib
 from typing import TYPE_CHECKING, Any
 
 from pydantic import SecretStr
 from pydantic_settings import SettingsConfigDict
 
+from jfastframework.errors import PluginError
 from jfastframework.mail.backends import ConsoleMailer, MailBackend, MemoryMailer, SMTPMailer
-from jfastframework.mail.message import DEFAULT_MAX_ATTACHMENT_BYTES, Attachment, EmailMessage
+from jfastframework.mail.message import (
+    DEFAULT_MAX_ATTACHMENT_BYTES,
+    Attachment,
+    EmailMessage,
+    MailError,
+)
 from jfastframework.mail.templates import TemplateRenderer
 from jfastframework.plugins.base import HealthReport, Plugin, PluginMeta, PluginSettings
 
@@ -41,6 +57,52 @@ if TYPE_CHECKING:
     from jfastframework.context import AppContext
 
 SEND_TASK = "jfast.mail.send"
+
+logger = logging.getLogger("jfast.mail")
+
+BACKENDS = ("console", "smtp", "memory")
+
+
+def is_permanent(exc: BaseException) -> bool:
+    """Whether sending again, unchanged, can only fail the same way.
+
+    SMTP says so itself: a 5xx reply is permanent and a 4xx one is transient
+    (RFC 5321 4.2.1). Anything that never reached a reply -- a timeout, a
+    refused or dropped connection -- is transient.
+    """
+    if isinstance(exc, MailError | ValueError | smtplib.SMTPNotSupportedError):
+        # Over the size limit, a header that cannot be encoded, a server that
+        # does not speak STARTTLS: the message or the configuration is wrong.
+        return True
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        codes = [code for code, _ in exc.recipients.values()]
+        return bool(codes) and all(500 <= int(code) < 600 for code in codes)
+    if isinstance(exc, smtplib.SMTPResponseException):
+        return 500 <= int(exc.smtp_code) < 600
+    return False
+
+
+def _dead_letter_now(exc: BaseException) -> None:
+    """Make the worker dead-letter the running job instead of retrying it.
+
+    The worker retries every failure until ``max_attempts``, and the queue's
+    backends dead-letter a job that has used them up. Spending the remaining
+    attempts on the job it is holding is how a handler says "permanent"
+    without a worker API for it.
+    """
+    from jfastframework.queues.base import current_job
+
+    try:
+        job = current_job()
+    except RuntimeError:
+        return
+    logger.error(
+        "mail rejected permanently; dead-lettering instead of retrying: %s: %s",
+        type(exc).__name__,
+        exc,
+        extra={"job_id": job.id},
+    )
+    job.max_attempts = min(job.max_attempts, max(job.attempts, 1))
 
 
 class MailSettings(PluginSettings):
@@ -55,6 +117,10 @@ class MailSettings(PluginSettings):
     from_email: str = ""
     use_starttls: bool = True
     use_ssl: bool = False
+    # Seconds for each blocking socket operation of the SMTP conversation
+    # (smtplib has one timeout for connect and reads alike). Thirty covers a
+    # provider that greylists or runs its content scan before answering DATA;
+    # the queue's retries, not a longer wait, handle a server that is down.
     timeout: float = 30.0
     max_attachment_bytes: int = DEFAULT_MAX_ATTACHMENT_BYTES
 
@@ -108,6 +174,15 @@ class Mailer:
             from_email=extra.pop("from_email", "") or self._default_from,
             **extra,
         )
+
+    def has_template(self, name: str) -> bool:
+        """Whether the project's templates directory has ``<name>.html``.
+
+        For code with a built-in message of its own -- the accounts emails --
+        that lets a project override it by dropping a file in, without the
+        built-in failing on a project that has no templates at all.
+        """
+        return self._templates is not None and self._templates.exists(name)
 
     # -- sending -------------------------------------------------------
 
@@ -190,6 +265,7 @@ class MailPlugin(Plugin):
 
     def register(self, ctx: AppContext) -> None:
         settings: MailSettings = self.settings
+        self._validate(production=ctx.settings.is_production)
 
         missing_credentials = not settings.username or not settings.password.get_secret_value()
         if settings.backend == "smtp" and ctx.settings.is_production and missing_credentials:
@@ -242,9 +318,53 @@ class MailPlugin(Plugin):
         if tasks is not None:
 
             async def handle(payload: dict[str, Any]) -> None:
-                await backend.send(EmailMessage.from_json(payload["message"]))
+                try:
+                    await backend.send(EmailMessage.from_json(payload["message"]))
+                except Exception as exc:
+                    if is_permanent(exc):
+                        _dead_letter_now(exc)
+                    raise
 
             tasks.register(SEND_TASK, handle)
+
+    def _validate(self, *, production: bool) -> None:
+        """Values SMTP would only reject on the first send, refused at boot."""
+        settings: MailSettings = self.settings
+        if settings.backend not in BACKENDS:
+            raise PluginError(
+                f"[plugin.mail] backend = {settings.backend!r}; choose one of "
+                f"{', '.join(BACKENDS)}."
+            )
+        if settings.max_attachment_bytes < 1:
+            raise PluginError("[plugin.mail] max_attachment_bytes must be positive.")
+        if settings.from_email and "@" not in settings.from_email:
+            raise PluginError(
+                f"[plugin.mail] from_email = {settings.from_email!r} is not an address."
+            )
+        if settings.backend != "smtp":
+            return
+        if not settings.host:
+            raise PluginError("[plugin.mail] backend is smtp but host is empty.")
+        if not 0 < settings.port < 65536:
+            raise PluginError(f"[plugin.mail] port {settings.port} is not a TCP port.")
+        if settings.timeout <= 0:
+            raise PluginError(
+                "[plugin.mail] timeout must be positive; without one a mail server "
+                "that stops answering holds the worker's thread forever."
+            )
+        if settings.use_ssl and settings.use_starttls:
+            raise PluginError(
+                "[plugin.mail] use_ssl and use_starttls are mutually exclusive: SSL wraps "
+                "the connection from the start (usually port 465), STARTTLS upgrades a "
+                "plain one (usually 587). Set the one your server speaks."
+            )
+        if production and "@" not in (settings.from_email or settings.username):
+            raise PluginError(
+                "[plugin.mail] has no sender address: from_email is empty and the "
+                "username is not an address, so every message would go out with an "
+                "invalid From and be rejected by the first server it reaches. Set "
+                "JFAST_MAIL_FROM_EMAIL."
+            )
 
     async def health(self, ctx: AppContext) -> HealthReport:
         if self._mailer is None:
@@ -265,4 +385,12 @@ class MailPlugin(Plugin):
         return described
 
 
-__all__ = ["SEND_TASK", "Attachment", "EmailMessage", "MailPlugin", "MailSettings", "Mailer"]
+__all__ = [
+    "SEND_TASK",
+    "Attachment",
+    "EmailMessage",
+    "MailPlugin",
+    "MailSettings",
+    "Mailer",
+    "is_permanent",
+]

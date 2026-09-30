@@ -1,0 +1,80 @@
+{#
+  The tests every layout's service or use cases get, from the declared fields.
+
+  The including file sets:
+    subject         the fixture name: "service" or "use_cases"
+    Subject         its type
+    dict_payloads   true where the use cases take a mapping (screaming,
+                    hexagonal), false where they take the Pydantic models
+    item            what a create returns is called: "item", "row", "entity"
+    stored          how a stored object's id is read, as a format string:
+                    "{}.id", or "stored_id({})" where the id is Optional
+  and renders `first()` and `second()` above this include: two valid creates
+  that differ in every field.
+
+  Every multi-value literal goes through fit(), so the file is already in the
+  shape `ruff format` gives it however many fields were declared.
+#}
+{% macro sid(name) -%}{{ stored.format(name) }}{%- endmacro %}
+{% macro sig(test) -%}
+{{ fit("async def " ~ test ~ "(", [subject ~ ": " ~ Subject], ") -> None:") }}
+{%- endmacro %}
+{% macro changes(names, index) -%}
+{% if dict_payloads %}{{ fit("changes = {", spec.sample_items(index, only=names, mapping=true), "}", indent=4) }}{% else %}{{ fit("changes = " ~ Module ~ "Update(", spec.sample_items(index, only=names), ")", indent=4) }}{% endif %}
+{%- endmacro %}
+
+
+{{ sig("test_create_returns_the_stored_" ~ module) }}
+    {{ item }} = await {{ subject }}.create(first())
+    assert {{ item }}.id == 1
+{% for f in fields %}
+    assert {{ f.check(item ~ "." ~ f.name, 0) }}
+{% endfor %}
+{% for unique in uniques %}
+
+
+{{ sig("test_create_rejects_a_taken_" ~ unique.suffix) }}
+    await {{ subject }}.create(first())
+    with pytest.raises(ConflictError):
+        await {{ subject }}.create(first())
+{% endfor %}
+
+
+{{ sig("test_get_missing_raises_not_found") }}
+    with pytest.raises(NotFoundError):
+        await {{ subject }}.get(404)
+{% if fields %}
+
+
+{{ sig("test_update_changes_only_the_fields_sent") }}
+    {{ item }} = await {{ subject }}.create(first())
+    {{ changes([fields[0].name], 1) }}
+    updated = await {{ subject }}.update({{ sid(item) }}, changes)
+    assert {{ fields[0].check("updated." ~ fields[0].name, 1) }}
+{% for f in fields[1:] %}
+    assert {{ f.check("updated." ~ f.name, 0) }}
+{% endfor %}
+{% endif %}
+{% for unique in uniques %}
+
+
+{{ sig("test_updating_to_a_taken_" ~ unique.suffix ~ "_is_a_conflict") }}
+    await {{ subject }}.create(first())
+    mine = await {{ subject }}.create(second())
+    {{ changes(unique.names, 0) }}
+    with pytest.raises(ConflictError):
+        await {{ subject }}.update({{ sid("mine") }}, changes)
+
+
+{{ sig("test_keeping_its_own_" ~ unique.suffix ~ "_is_not_a_conflict") }}
+    mine = await {{ subject }}.create(first())
+    {{ changes(unique.names, 0) }}
+    await {{ subject }}.update({{ sid("mine") }}, changes)
+{% endfor %}
+
+
+{{ sig("test_delete_removes_the_" ~ module) }}
+    {{ item }} = await {{ subject }}.create(first())
+    await {{ subject }}.delete({{ sid(item) }})
+    with pytest.raises(NotFoundError):
+        await {{ subject }}.get({{ sid(item) }})

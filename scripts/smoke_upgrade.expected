@@ -1,0 +1,14 @@
+# Change codes `jfast upgrade --check --json` must report for the project
+# scripts/smoke_upgrade.sh generates with the previous release. One per line;
+# `#` starts a comment. The set must match exactly: a code missing means a
+# detector stopped seeing its case, a code extra means one started seeing a
+# case that is not there.
+#
+# The project: jfast new service shop --with database,auth,tenancy,metrics,rag,queue
+# and one module per layout (modular, screaming, hexagonal, layered).
+#
+# 0.1.0a10 -> 0.1.0a11. The a10-generated hexagonal module's own test fails
+# (its package init imports FastAPI through CreatePayload); 0.1.0a11's
+# template defers the import. upgrades.py needs an entry for it -- proposed
+# code below -- or this smoke fails at the expected-codes step, on purpose.
+hexagonal-eager-create-payload

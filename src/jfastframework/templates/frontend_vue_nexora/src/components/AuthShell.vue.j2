@@ -1,0 +1,48 @@
+<template>
+  <div class="nx-auth">
+    <div class="nx-auth-corner flex items-center gap-2">
+      <AccentPicker />
+      <ThemeToggle />
+    </div>
+
+    <section class="nx-auth-hero">
+      <span class="nx-logo">{{ appName }}</span>
+      <h1>
+        <span class="nx-display">{{ hero || title }}</span><br />
+        <span v-if="heroFaded" class="nx-display-faded">{{ heroFaded }}</span>
+      </h1>
+      <p v-if="heroText">{{ heroText }}</p>
+    </section>
+
+    <div class="liquid-panel nx-auth-card">
+      <span class="nx-eyebrow">{{ eyebrow || 'Your account' }}</span>
+      <h2 class="mt-2">{{ title }}</h2>
+      <p v-if="lead" class="mt-2 text-sm text-ink-soft">{{ lead }}</p>
+      <div class="nx-auth-form">
+        <slot />
+      </div>
+      <div v-if="$slots.footer" class="mt-6 flex flex-col gap-2 text-sm text-ink-soft">
+        <slot name="footer" />
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import AccentPicker from '@/components/AccentPicker.vue'
+import ThemeToggle from '@/components/ThemeToggle.vue'
+import { APP_NAME as appName } from '@/nexora/brand.js'
+
+// Every signed-out page -- sign in, sign up, the email links, the second step
+// -- is drawn inside this one frame, so the Nexora look lives in one file and
+// the pages are shared with the classic look, which has its own AuthShell.vue
+// with the same props.
+defineProps({
+  title: { type: String, required: true },
+  lead: { type: String, default: '' },
+  eyebrow: { type: String, default: '' },
+  hero: { type: String, default: '' },
+  heroFaded: { type: String, default: '' },
+  heroText: { type: String, default: '' },
+})
+</script>

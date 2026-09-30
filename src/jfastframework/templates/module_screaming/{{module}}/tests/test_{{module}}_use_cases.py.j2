@@ -9,13 +9,25 @@ Run from the project root so that ``modules`` is importable::
     pytest modules/{{ module }}/tests
 """
 
+{% set subject = "use_cases" %}
+{% set Subject = Module ~ "UseCases" %}
+{% set dict_payloads = true %}
+{% set item = "row" %}
+{% set stored = "{}.id" %}
+{% set entity_class = Module ~ "Row" %}
+{% set violations = fields|selectattr("too_long")|list %}
 from __future__ import annotations
+
+{% for line in import_lines(spec.sample_stdlib() + ["typing.Any"]) %}
+{{ line }}
+{% endfor %}
 
 import pytest
 
-from jfastframework.errors import ConflictError, NotFoundError, ValidationError
+from jfastframework.db import Page
+from jfastframework.errors import {{ (["NotFoundError", "ValidationError"] + (["ConflictError"] if uniques else []))|sort|join(", ") }}
 
-from modules.{{ module }}.{{ module }} import {{ Module }}
+from modules.{{ module }}.storage import {{ Module }}Row
 from modules.{{ module }}.use_cases import {{ Module }}UseCases
 
 # Explicit rather than relying on `asyncio_mode = auto`, so these pass in a
@@ -23,64 +35,7 @@ from modules.{{ module }}.use_cases import {{ Module }}UseCases
 pytestmark = pytest.mark.asyncio
 
 
-class FakeRow:
-    """Stand-in for the SQLAlchemy row, with the one method use cases call."""
-
-    def __init__(self, item_id: int, **values: object) -> None:
-        self.id = item_id
-        self.tenant_id = None
-        self.created_at = None
-        self.updated_at = None
-        for key, value in values.items():
-            setattr(self, key, value)
-
-    def to_domain(self) -> {{ Module }}:
-        return {{ Module }}(
-            id=self.id,
-            name=self.name,  # type: ignore[attr-defined]
-            description=getattr(self, "description", None),
-            is_active=getattr(self, "is_active", True),
-        )
-
-
-class FakeRepository:
-    def __init__(self) -> None:
-        self.rows: dict[int, FakeRow] = {}
-        self._next_id = 1
-
-    async def paginate(self, *, limit: int = 50, offset: int = 0, **_: object):
-        from jfastframework.db import Page
-
-        values = list(self.rows.values())
-        return Page(
-            items=values[offset : offset + limit],
-            total=len(values),
-            limit=limit,
-            offset=offset,
-        )
-
-    async def get_or_raise(self, item_id: int) -> FakeRow:
-        try:
-            return self.rows[item_id]
-        except KeyError:
-            raise NotFoundError(f"{{ Module }} {item_id!r} not found") from None
-
-    async def by_name(self, name: str) -> FakeRow | None:
-        return next((r for r in self.rows.values() if r.name == name), None)
-
-    async def create(self, **values: object) -> FakeRow:
-        row = FakeRow(self._next_id, **values)
-        self.rows[self._next_id] = row
-        self._next_id += 1
-        return row
-
-    async def update(self, row: FakeRow, **values: object) -> FakeRow:
-        for key, value in values.items():
-            setattr(row, key, value)
-        return row
-
-    async def delete(self, row: FakeRow) -> None:
-        self.rows.pop(row.id, None)
+{% include "_module_shared/fake_repository.j2" %}
 
 
 @pytest.fixture
@@ -88,50 +43,37 @@ def use_cases() -> {{ Module }}UseCases:
     return {{ Module }}UseCases(FakeRepository())
 
 
-async def test_create_persists_a_valid_payload(use_cases: {{ Module }}UseCases) -> None:
-    row = await use_cases.create({"name": "first"})
-    assert row.id == 1
-    assert row.name == "first"
+def first() -> dict[str, Any]:
+    {{ fit("return {", spec.sample_items(0, mapping=true), "}", indent=4) }}
 
 
-async def test_create_rejects_a_duplicate_name(use_cases: {{ Module }}UseCases) -> None:
-    await use_cases.create({"name": "dup"})
-    with pytest.raises(ConflictError):
-        await use_cases.create({"name": "dup"})
+def second() -> dict[str, Any]:
+    {{ fit("return {", spec.sample_items(1, mapping=true), "}", indent=4) }}
+{% include "_module_shared/service_tests.j2" %}
+
+
+async def test_create_rejects_a_field_the_entity_does_not_have(
+    use_cases: {{ Module }}UseCases,
+) -> None:
+    with pytest.raises(ValidationError):
+        await use_cases.create(first() | {"no_such_field": 1})
+{% if violations %}
 
 
 async def test_create_surfaces_domain_rules_as_validation_errors(
     use_cases: {{ Module }}UseCases,
 ) -> None:
     with pytest.raises(ValidationError):
-        await use_cases.create({"name": ""})
-
-
-async def test_get_missing_raises_not_found(use_cases: {{ Module }}UseCases) -> None:
-    with pytest.raises(NotFoundError):
-        await use_cases.get(404)
-
-
-async def test_update_applies_only_the_fields_given(use_cases: {{ Module }}UseCases) -> None:
-    row = await use_cases.create({"name": "before", "description": "keep"})
-    updated = await use_cases.update(row.id, {"name": "after"})
-    assert updated.name == "after"
-    assert updated.description == "keep"
+        await use_cases.create(first() | {"{{ violations[0].name }}": {{ violations[0].too_long }}})
 
 
 async def test_update_revalidates_the_merged_entity(use_cases: {{ Module }}UseCases) -> None:
-    row = await use_cases.create({"name": "valid"})
+    row = await use_cases.create(first())
     with pytest.raises(ValidationError):
-        await use_cases.update(row.id, {"name": ""})
+        await use_cases.update(row.id, {"{{ violations[0].name }}": {{ violations[0].too_long }}})
+{% endif %}
 
 
 async def test_list_caps_the_page_size(use_cases: {{ Module }}UseCases) -> None:
     page = await use_cases.list(limit=10_000)
     assert page.limit == 200
-
-
-async def test_delete_removes_the_row(use_cases: {{ Module }}UseCases) -> None:
-    row = await use_cases.create({"name": "gone"})
-    await use_cases.delete(row.id)
-    with pytest.raises(NotFoundError):
-        await use_cases.get(row.id)

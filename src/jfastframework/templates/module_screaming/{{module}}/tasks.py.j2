@@ -1,0 +1,18 @@
+"""Background work the {{ module_title }} module owns.
+
+Found at boot by the API and by `jfast worker` alike: a `@task` or `@subscribe`
+declared here runs, and one declared anywhere else runs only if something
+happens to import it first. Empty until the module has work that does not
+belong in a request -- a model call, a PDF, an email::
+
+    from jfastframework.tasks import TaskSession, task
+
+    @task("{{ module }}.recalculate", idempotent_on=lambda payload: payload["id"])
+    async def recalculate(payload: dict[str, Any], session: TaskSession) -> None:
+        ...  # committed when this returns, rolled back if it raises
+
+Queue it through the request's session, so the job exists only if the request
+commits: ``outbox.enqueue(session, Job(task="{{ module }}.recalculate", ...))``.
+To react to what another module did, ``@subscribe("<module>.<event>")`` here
+instead of letting that module call in. docs/queues-and-events.md has both.
+"""

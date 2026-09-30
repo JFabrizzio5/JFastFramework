@@ -1,0 +1,21 @@
+"""Rules that need storage to answer, shared by the use cases that write.
+
+"This key is already taken" cannot live in the domain: answering it means
+asking the repository, and the domain imports nothing that could. Create and
+update both call these, so a rename cannot walk past a rule a create obeys.
+"""
+
+from __future__ import annotations
+{% if uniques %}
+
+{% for line in import_lines(spec.key_stdlib() + ["typing.Any"]) %}
+{{ line }}
+{% endfor %}
+
+from jfastframework.errors import ConflictError
+{% include "_module_shared/unique_rules.j2" %}
+{% else %}
+
+# None yet. A rule that reads other rows goes here, raising ConflictError or
+# ValidationError from jfastframework.errors, and is called by the use cases.
+{% endif %}

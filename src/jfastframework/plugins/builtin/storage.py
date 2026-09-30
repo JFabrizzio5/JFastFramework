@@ -28,6 +28,7 @@ Requires: ``pip install jfastframework[storage]`` (add ``[s3]`` for S3/MinIO).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -67,6 +68,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("jfast.storage")
 
 DRIVERS = ("local", "s3")
+VISIBILITIES = ("public", "private")
+
+# The shortest signing key accepted in production. The key signs every
+# temporary URL; a short one is brute-forced offline from any one link.
+MIN_SIGNING_KEY_BYTES = 32
 
 
 class StorageSettings(PluginSettings):
@@ -299,7 +305,50 @@ class StoragePlugin(Plugin):
                 f"storage disk {name!r} uses driver {driver!r}, which has no setting {key!r}.{hint}"
             )
 
-        return DiskConfig(name=name, pipeline=step_names, pipeline_config=step_config, **raw)
+        config = DiskConfig(name=name, pipeline=step_names, pipeline_config=step_config, **raw)
+        self._validate_disk(config)
+        return config
+
+    @staticmethod
+    def _validate_disk(config: DiskConfig) -> None:
+        """Values the driver would only reject on the first read or write."""
+        where = f"[plugin.storage.disks.{config.name}]"
+        if config.visibility not in VISIBILITIES:
+            # Anything but "public" is served as private, so a typo silently
+            # made a public disk refuse every unsigned download.
+            raise PluginError(
+                f"{where} visibility = {config.visibility!r}; choose public or private."
+            )
+        if config.public_base_url and not config.public_base_url.startswith(
+            ("http://", "https://")
+        ):
+            raise PluginError(
+                f"{where} public_base_url must be an absolute http(s) URL, "
+                f"not {config.public_base_url!r}."
+            )
+        if config.driver != "s3":
+            return
+        if config.endpoint_url and not config.endpoint_url.startswith(("http://", "https://")):
+            raise PluginError(
+                f"{where} endpoint_url must start with http:// or https://, "
+                f"not {config.endpoint_url!r}."
+            )
+        if bool(config.access_key) != bool(config.secret_key):
+            # One without the other falls back to the credential chain for
+            # both, which is a different identity from the one configured.
+            raise PluginError(
+                f"{where} sets one of access_key and secret_key but not the other. Set "
+                f"both, or neither to use the standard AWS credential chain."
+            )
+        if config.connect_timeout <= 0 or config.read_timeout <= 0:
+            raise PluginError(f"{where} connect_timeout and read_timeout must be positive.")
+        if config.max_attempts < 1:
+            raise PluginError(f"{where} max_attempts counts the first try; at least 1.")
+        if config.breaker_failures < 0 or config.breaker_cool_down <= 0:
+            raise PluginError(
+                f"{where} breaker_failures cannot be negative (0 turns it off) and "
+                f"breaker_cool_down must be positive."
+            )
 
     def _build_disk(self, name: str, raw: dict[str, Any]) -> StorageBackend:
         settings: StorageSettings = self.settings
@@ -341,6 +390,11 @@ class StoragePlugin(Plugin):
             force_path_style=config.force_path_style,
             public_base_url=config.public_base_url,
             pipeline=pipeline,
+            connect_timeout=config.connect_timeout,
+            read_timeout=config.read_timeout,
+            max_attempts=config.max_attempts,
+            breaker_failures=config.breaker_failures,
+            breaker_cool_down=config.breaker_cool_down,
         )
 
     def register(self, ctx: AppContext) -> None:
@@ -354,16 +408,35 @@ class StoragePlugin(Plugin):
                 f"Configured: {', '.join(sorted(disks)) or '<none>'}"
             )
 
+        if not settings.prefix.startswith("/"):
+            raise PluginError(
+                f"[plugin.storage] prefix must start with '/', not {settings.prefix!r}."
+            )
         private_locals = [
             name for name, disk in self._locals.items() if disk.visibility != "public"
         ]
-        if private_locals and settings.signing_key is None:
-            # Without a key, temporary_url() raises at call time -- which is
-            # discovered by a user hitting a download link, not by a deploy.
+        if private_locals and settings.signing_key is None and ctx.settings.is_production:
+            # Production only. Without a key, temporary_url() raises at call
+            # time -- a user hitting a download link finds out, not a deploy --
+            # and in production that is worth a line on every start. In
+            # development it was a line on every start of every service with
+            # the default disks, most of which never sign a URL, and a warning
+            # that is always there is a warning nobody reads. The call itself
+            # still fails with the fix in the message.
             ctx.logger.warning(
                 "storage: no signing key, so temporary URLs are unavailable for %s. "
                 "Set JFAST_STORAGE_SIGNING_KEY.",
                 ", ".join(private_locals),
+            )
+        if (
+            settings.signing_key is not None
+            and ctx.settings.is_production
+            and len(settings.signing_key.get_secret_value().encode("utf-8")) < MIN_SIGNING_KEY_BYTES
+        ):
+            raise PluginError(
+                f"JFAST_STORAGE_SIGNING_KEY is shorter than {MIN_SIGNING_KEY_BYTES} bytes; "
+                f"a short key is brute-forced offline from one signed link. Generate one "
+                f'with `python -c "import secrets; print(secrets.token_urlsafe(48))"`.'
             )
 
         signing_key = settings.signing_key.get_secret_value() if settings.signing_key else ""
@@ -491,15 +564,39 @@ class StoragePlugin(Plugin):
         if self._registry is None:
             return HealthReport.fail("storage not initialised")
 
-        problems: list[str] = []
-        for name in self._registry.names:
-            healthy, detail = await self._registry.disk(name).health()
-            if not healthy:
-                problems.append(f"{name}: {detail}")
+        # Each disk answers inside the readiness budget or is reported as not
+        # answering: a boto call cannot be cancelled, and a probe that runs
+        # past /ready's timeout loses the name of the disk that hung.
+        budget = max(ctx.settings.readiness_timeout * 0.8, 0.1)
+
+        async def probe(name: str) -> tuple[str, bool, str]:
+            try:
+                healthy, detail = await asyncio.wait_for(
+                    self._registry.disk(name).health(),  # type: ignore[union-attr]
+                    timeout=budget,
+                )
+            except TimeoutError:
+                return name, False, f"no answer within {budget:.1f}s"
+            return name, healthy, detail
+
+        results = await asyncio.gather(*(probe(name) for name in self._registry.names))
+        # A local disk that is missing or read-only is this replica's problem:
+        # take it out of rotation. An object store is shared by every replica,
+        # so failing readiness over it removes them all and fixes nothing --
+        # the service is degraded, and says so.
+        critical: list[str] = []
+        degraded: list[str] = []
+        for name, healthy, detail in results:
+            if healthy:
+                continue
+            local = name in self._locals
+            (critical if local else degraded).append(f"{name}: {detail}")
 
         meta = self._registry.describe()
-        if problems:
-            return HealthReport.fail("; ".join(problems), **meta)
+        if critical or degraded:
+            return HealthReport.fail(
+                "; ".join(critical + degraded), critical=bool(critical), **meta
+            )
         return HealthReport.ok(f"{len(self._registry.names)} disk(s)", **meta)
 
     def infra(self, ctx: AppContext | None = None) -> list[InfraService]:

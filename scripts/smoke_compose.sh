@@ -79,10 +79,15 @@ up_built() {
 inside() {
   local project="$1" service="$2" port="$3" path="$4"
   docker compose -p "${project}" exec -T "${service}" python - "${port}" "${path}" <<'PY'
-import sys, urllib.request
+import sys, urllib.error, urllib.request
 port, path = sys.argv[1], sys.argv[2]
-with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=10) as response:
-    sys.stdout.write(response.read().decode())
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=10) as response:
+        sys.stdout.write(response.read().decode())
+except urllib.error.HTTPError as error:
+    # The body says which check failed; a bare "HTTP Error 503" says nothing.
+    sys.stdout.write(error.read().decode())
+    sys.exit(1)
 PY
 }
 
@@ -119,8 +124,12 @@ up_built "${WORKSPACE_PROJECT}" demo demo \
 wait_for_ready "${WORKSPACE_PROJECT}" demo "${BASE_PORT}"
 
 step "the datastores are reachable from inside the network"
-inside "${WORKSPACE_PROJECT}" demo "${BASE_PORT}" /ready | grep -q '"status":"ok"' \
-  || fail "/ready is not ok: the api container cannot reach a datastore it depends on"
+READY="$(inside "${WORKSPACE_PROJECT}" demo "${BASE_PORT}" /ready || true)"
+echo "${READY}" | grep -q '"status":"ok"' || {
+  echo "${READY}"
+  docker compose -p "${WORKSPACE_PROJECT}" logs --tail 60 demo || true
+  fail "/ready is not ok: the api container cannot reach a datastore it depends on"
+}
 
 step "the module jfast start generated is actually served"
 # The failure this catches is silent: the module exists, its tests pass, and

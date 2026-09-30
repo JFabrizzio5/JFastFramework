@@ -1,22 +1,173 @@
 import api from '@/services/api.js'
+import { useAuthStore } from '@/stores/auth.store.js'
 
 /**
- * The session endpoints, in `Services/` like every other request.
+ * The session endpoints, in `Services/` like every other request. They are
+ * the `accounts` plugin's (docs/accounts.md).
  *
- * The auth plugin mounts /auth/refresh and /auth/logout but deliberately not
- * /auth/login -- it has no user store. The path below is the one your backend
- * defines. Change it here, not in every caller.
+ * A sign-in returns tokens only, so every path that ends in a session fetches
+ * the user from `GET /auth/account` afterwards. A sign-in can also stop short
+ * of a session -- a second factor owed, or a role that requires one and has
+ * none -- and `login()` says which, so the view can ask for the next step.
  *
  * /auth/refresh is not here: it lives in services/api.js, on the instance with
  * no interceptors, because the 401 handler is what calls it.
  */
-export async function login(credentials) {
-  const { data } = await api.post('/auth/login', credentials)
-  return {
-    token: data.access_token,
-    refreshToken: data.refresh_token ?? null,
-    user: data.user ?? null,
+
+// Requests whose 401 is an answer ("wrong password"), not an expired session.
+// See the interceptor in services/api.js.
+const SIGN_IN = { skipAuthRefresh: true }
+
+// The backend's machine-readable reason (`email_not_verified`,
+// `mfa_code_invalid`, `token_invalid`...) on the error, next to the message the
+// interceptor already copied from `detail`. Views branch on the code, never on
+// the wording.
+function withCode(error) {
+  error.code = error.response?.data?.code ?? error.code
+  throw error
+}
+
+// Where to go after signing in. The router guard and the 401 handler both
+// send people to the sign-in page with ?next, so they come back to the page
+// they asked for.
+//
+// Only a path, never an absolute URL: `next` comes from the address bar, and
+// following one that starts with a host is an open redirect.
+export function safeNext(next) {
+  return typeof next === 'string' && next.startsWith('/') && !next.startsWith('//') ? next : '/'
+}
+
+let features = null
+
+// What the backend has turned on (GET /auth/features): which links a page
+// offers is its call, so a link never leads to a 404. Read once per load.
+export async function loadFeatures() {
+  if (!features) {
+    features = api
+      .get('/auth/features', SIGN_IN)
+      .then(({ data }) => data)
+      .catch(() => ({
+        // An older backend, or one without accounts: offer only what always
+        // exists. Nothing breaks for want of a link.
+        registration: false,
+        email_verification: 'off',
+        password_reset: false,
+        mfa: false,
+      }))
   }
+  return features
+}
+
+export async function fetchAccount() {
+  const { data } = await api.get('/auth/account')
+  useAuthStore.getState().setUser(data)
+  return data
+}
+
+// Tokens first, then who they belong to: /auth/login returns no user.
+async function startSession(pair) {
+  useAuthStore.getState().login({ token: pair.access_token, refreshToken: pair.refresh_token })
+  await fetchAccount()
+}
+
+async function afterFirstStep(data) {
+  if (data.mfa_required) return { status: 'mfa', mfaToken: data.mfa_token }
+  if (data.mfa_enrollment_required) return { status: 'enrol', mfaToken: data.mfa_token }
+  await startSession(data)
+  return { status: 'signed-in' }
+}
+
+/**
+ * Resolves to what happened, because a correct password is not always a
+ * session:
+ *
+ * - `{ status: 'signed-in' }`
+ * - `{ status: 'mfa', mfaToken }` -- send a code to `completeMfa`
+ * - `{ status: 'enrol', mfaToken }` -- a role requires MFA: set it up first
+ *
+ * A wrong password rejects, with the backend's message on `error.message`. An
+ * unconfirmed address rejects with `error.code === 'email_not_verified'`.
+ */
+export async function login(credentials) {
+  const { data } = await api.post('/auth/login', credentials, SIGN_IN).catch(withCode)
+  return afterFirstStep(data)
+}
+
+export async function completeMfa(mfaToken, code) {
+  const { data } = await api
+    .post('/auth/login/mfa', { mfa_token: mfaToken, code }, SIGN_IN)
+    .catch(withCode)
+  await startSession(data)
+}
+
+/**
+ * `{ status: 'check-email' }` when the backend requires a confirmed address
+ * (202, no session yet -- and the same answer whether or not the address
+ * already had an account), otherwise the same results as `login()`.
+ */
+export async function register(body) {
+  const response = await api.post('/auth/register', body, SIGN_IN).catch(withCode)
+  if (response.status === 202) return { status: 'check-email' }
+  return afterFirstStep(response.data)
+}
+
+export async function verifyEmail(token) {
+  await api.post('/auth/verify', { token }, SIGN_IN).catch(withCode)
+  const user = useAuthStore.getState().user
+  if (user) useAuthStore.getState().setUser({ ...user, email_verified: true })
+}
+
+// Both answer 202 whatever the address: the page says "if it has an account,
+// an email is on its way" and nothing more.
+export async function resendVerification(email) {
+  await api.post('/auth/verify/resend', { email }, SIGN_IN).catch(withCode)
+}
+
+export async function forgotPassword(email) {
+  await api.post('/auth/password/forgot', { email }, SIGN_IN).catch(withCode)
+}
+
+// Every session of the account ends on the server, this one included.
+export async function resetPassword(token, newPassword) {
+  await api
+    .post('/auth/password/reset', { token, new_password: newPassword }, SIGN_IN)
+    .catch(withCode)
+  useAuthStore.getState().logout()
+}
+
+// Signed in: `{ password }`. At sign-in, for a role that requires MFA:
+// `{ mfaToken }`. Resolves to `{ secret, otpauth_uri }`.
+export async function mfaSetup({ password = null, mfaToken = null } = {}) {
+  const { data } = await api
+    .post('/auth/mfa/setup', { password, mfa_token: mfaToken }, SIGN_IN)
+    .catch(withCode)
+  return data
+}
+
+// Resolves to the recovery codes, shown once. Enrolling at sign-in also
+// starts the session.
+export async function mfaConfirm(code, mfaToken = null) {
+  const { data } = await api
+    .post('/auth/mfa/confirm', { code, mfa_token: mfaToken }, SIGN_IN)
+    .catch(withCode)
+  if (data.session) {
+    await startSession(data.session)
+  } else {
+    await fetchAccount()
+  }
+  return data.recovery_codes
+}
+
+export async function mfaDisable(password, code) {
+  await api.post('/auth/mfa/disable', { password, code }, SIGN_IN).catch(withCode)
+  await fetchAccount()
+}
+
+export async function newRecoveryCodes(password, code) {
+  const { data } = await api
+    .post('/auth/mfa/recovery-codes', { password, code }, SIGN_IN)
+    .catch(withCode)
+  return data.recovery_codes
 }
 
 // Revoked server-side first, while the header is still set: /auth/logout is
@@ -28,5 +179,14 @@ export async function logout() {
   } catch {
     // Already expired, or the backend is unreachable. Neither is usefully
     // retryable from here.
+  }
+}
+
+// Every session this account has, on every device. Clears the store too.
+export async function logoutEverywhere() {
+  try {
+    await api.post('/auth/logout/all')
+  } finally {
+    useAuthStore.getState().logout()
   }
 }

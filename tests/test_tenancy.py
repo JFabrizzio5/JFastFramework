@@ -382,3 +382,63 @@ async def test_current_tenant_is_a_403_for_a_user_without_a_tenant() -> None:
     )
     async with client_for(app) as client:  # type: ignore[arg-type]
         assert (await client.get("/mine", headers=bearer_for("u-7"))).status_code == 403
+
+
+# -- a bare X-Tenant-ID header is never a tenant ------------------------
+
+
+def auth_only_app() -> object:
+    """`auth` without `tenancy`: the tenant can only come from the token."""
+    from fastapi import Depends
+
+    from jfastframework.plugins.builtin.auth import AuthPlugin
+    from jfastframework.plugins.builtin.observability import current_tenant_id
+    from jfastframework.plugins.builtin.tenancy import current_tenant
+
+    router = APIRouter()
+
+    @router.get("/mine")
+    async def mine(tenant: str = Depends(current_tenant)) -> dict[str, str | None]:
+        return {"tenant": tenant, "context": current_tenant_id()}
+
+    return build_test_app(
+        plugins=["observability", "auth"],
+        extra_plugins=[AuthPlugin],
+        routers=[router],
+        raw={
+            "plugin": {
+                "auth": {
+                    "mode": "secret",
+                    "secret": AUTH_SECRET,
+                    "algorithms": ["HS256"],
+                    "issuer": "https://id.example.com/",
+                    "audience": "billing",
+                    "mount_router": False,
+                }
+            }
+        },
+    )
+
+
+async def test_an_anonymous_x_tenant_id_is_not_a_tenant() -> None:
+    # Found while mirroring this in the Go scaffold: observability copied the
+    # header into request.state.tenant_id, so with auth on and tenancy off an
+    # anonymous request was served as whichever tenant it named.
+    app = auth_only_app()
+    async with client_for(app) as client:  # type: ignore[arg-type]
+        response = await client.get("/mine", headers={"X-Tenant-ID": "victim"})
+    assert response.status_code == 401
+
+
+async def test_a_signed_in_user_cannot_name_another_tenant_by_header() -> None:
+    app = auth_only_app()
+    async with client_for(app) as client:  # type: ignore[arg-type]
+        response = await client.get("/mine", headers={"X-Tenant-ID": "victim", **bearer("acme")})
+    assert response.json() == {"tenant": "acme", "context": "acme"}
+
+
+async def test_the_header_is_a_tenant_only_as_a_declared_tenancy_source() -> None:
+    app = tenancy_and_auth_app(sources=["header"], base_domain="")
+    async with client_for(app) as client:  # type: ignore[arg-type]
+        response = await client.get("/whoami", headers={"X-Tenant-ID": "acme"})
+    assert response.json() == {"tenant": "acme", "source": "header"}

@@ -7,6 +7,9 @@ Modular layout: one package per concern, each re-exporting its public names.
 <!-- One paragraph: what this module owns. If you cannot write it in one
      paragraph, the module is doing two jobs. -->
 
+
+{% include "_module_shared/readme_fields.j2" %}
+
 ## Structure
 
 | Path | Role | May import |
@@ -29,18 +32,26 @@ The import direction points inward. `api` knows `services`, `services` knows
 ## Validations
 
 `validations/` holds the rules Pydantic cannot state, because they need
-something beyond the payload:
+something beyond the payload -- the rest of the table, or the current state of
+the row. Shape stays in `models/`: lengths, types, what may be omitted. If a
+check only reads the payload, it is a `Field` constraint, not a rule.
 
+{% if uniques or example %}
 | Rule | Needs | Raises |
 | --- | --- | --- |
-| `ensure_name_is_available` | the rest of the table | `ConflictError` (409) |
+{% for unique in uniques %}
+| `{{ unique.rule }}` | the rest of the table | `ConflictError` (409) |
+{% endfor %}
+{% if example %}
 | `ensure_can_deactivate` | the current state of the row | `ValidationError` (422) |
+{% endif %}
 
-Shape stays in `models/`: lengths, types, what may be omitted. If a check only
-reads the payload, it is a `Field` constraint, not a rule.
-
-A rule nothing calls is worse than no rule at all -- the service calls both of
-these, and the tests call `ensure_name_is_available` directly.
+A rule nothing calls is worse than no rule at all: the service calls each of
+these on create and on the update that touches its key, and the tests call
+them directly.
+{% else %}
+None yet.
+{% endif %}
 
 ## Endpoints
 
@@ -69,8 +80,11 @@ alembic revision --autogenerate -m "add {{ table }}"
 alembic upgrade head
 ```
 
-Add the unique index on `(tenant_id, name)` by hand. `ensure_name_is_available`
-returns the readable 409; only the index stops two concurrent writers.
+{% if uniques %}
+The unique constraints are on the entity, so autogenerate writes them. The rule
+in `validations/` returns the readable 409; only the constraint stops two
+concurrent writers.
+{% endif %}
 
 ## Invariants
 

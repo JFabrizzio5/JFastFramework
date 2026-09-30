@@ -12,17 +12,18 @@ Two rules that are worth following even though nothing checks them:
 JSON and read by a frontend, so it is chosen once and never edited. Renaming a
 member is free; changing its value is a data migration.
 
-**`str, Enum` rather than `Enum`.** A plain Enum serialises as
-`DocumentStatus.APPROVED` in some paths and `"APPROVED"` in others; inheriting
-from `str` makes it a string everywhere, including in JSON and in SQL.
+**`StrEnum` rather than `Enum`.** A plain Enum serialises as
+`DocumentStatus.APPROVED` in some paths and `"APPROVED"` in others; a
+`StrEnum` member is its value everywhere, including in JSON, in SQL and in an
+f-string.
 """
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class Environment(str, Enum):
+class Environment(StrEnum):
     """Example. Replace it -- it is here to show the shape, not to be used."""
 
     LOCAL = "local"

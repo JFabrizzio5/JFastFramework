@@ -33,7 +33,7 @@ Against `doctor`
 
 Against `workspace validate`
     That one reads a single file, the workspace resource graph, and is scoped
-    to a workspace rather than to a service. `check` runs it as one of six.
+    to a workspace rather than to a service. `check` runs it as part of `deploy`.
 
 Nothing here starts a container, opens a socket or talks to a database. Every
 check is static, so the command runs in a pre-commit hook and gives the same
@@ -84,7 +84,15 @@ SCHEMA_VERSION = "1"
 #: below `config` is meaningless if `config` did not load, and the name of each
 #: one is the name of the command that already ran it -- there is no second
 #: vocabulary to learn.
-CHECKS: tuple[str, ...] = ("config", "plugins", "analyze", "contracts", "migrations", "deploy")
+CHECKS: tuple[str, ...] = (
+    "config",
+    "plugins",
+    "analyze",
+    "tenancy",
+    "contracts",
+    "migrations",
+    "deploy",
+)
 
 #: What a failure of each check means to a script. One code per check, so the
 #: number is decidable from the name and never from the wording of a message.
@@ -92,6 +100,7 @@ CODE_FOR: dict[str, Code] = {
     "config": Code.CONFIG,
     "plugins": Code.ENVIRONMENT,
     "analyze": Code.VALIDATION,
+    "tenancy": Code.VALIDATION,
     "contracts": Code.CONTRACT,
     "migrations": Code.MIGRATION,
     "deploy": Code.VALIDATION,
@@ -649,6 +658,42 @@ def _analyze_check(root: Path, state: _State) -> CheckResult:
     )
 
 
+def _tenancy_check(root: Path, state: _State) -> CheckResult:
+    """Tenant settings that contradict each other or the code.
+
+    Reads the built plugins' settings when the graph resolved, so an
+    environment override is what is judged; falls back to jfast.toml alone
+    when it did not, because a contradiction in the file is still one.
+    """
+    started = time.perf_counter()
+    if state.config is None:
+        return skipped(
+            "tenancy",
+            state.blocked or "the configuration did not load",
+            blocked_by=state.blocked_code or Code.CONFIG,
+        )
+    from jfastframework.multitenant.consistency import consistency_findings
+
+    built = {
+        plugin.meta.name: plugin.settings
+        for plugin in state.instances or ()
+        if getattr(plugin, "settings", None) is not None
+    }
+    enabled = [
+        name
+        for name in state.config.settings.plugins
+        if name not in set(state.config.settings.disabled_plugins)
+    ]
+    findings = consistency_findings(root, config=state.config.raw, enabled=enabled, built=built)
+    source = "tenancy on" if "tenancy" in enabled else "tenancy off"
+    return CheckResult(
+        name="tenancy",
+        findings=tuple(findings),
+        detail=source,
+        duration_ms=_timed(started),
+    )
+
+
 def _contracts_check(root: Path) -> CheckResult:
     started = time.perf_counter()
     source = root / contracts_api.CONTRACTS_FILE
@@ -858,8 +903,8 @@ def run(
     # against the installed set. Dropping discovery to make `--only analyze`
     # faster would silently drop that finding, which is the one thing this
     # command exists not to do.
-    needs_config = bool(selected & {"config", "plugins", "analyze", "deploy"})
-    needs_plugins = bool(selected & {"plugins", "analyze", "deploy"})
+    needs_config = bool(selected & {"config", "plugins", "analyze", "tenancy", "deploy"})
+    needs_plugins = bool(selected & {"plugins", "analyze", "tenancy", "deploy"})
 
     if needs_config:
         result = _config_check(root, config_path, state)
@@ -871,6 +916,8 @@ def run(
             results.append(result)
     if "analyze" in selected:
         results.append(_analyze_check(root, state))
+    if "tenancy" in selected:
+        results.append(_tenancy_check(root, state))
     if "contracts" in selected:
         results.append(_contracts_check(root))
     if "migrations" in selected:
@@ -1036,6 +1083,13 @@ def _check(
         str | None,
         typer.Option("--only", help=f"Comma-separated subset of: {', '.join(CHECKS)}."),
     ] = None,
+    multitenant_ready: Annotated[
+        bool,
+        typer.Option(
+            "--multitenant-ready",
+            help="Instead of the battery: what a switch to several customers would break.",
+        ),
+    ] = False,
 ) -> None:
     """Every static check this framework has, in one command and one exit code.
 
@@ -1064,7 +1118,20 @@ def _check(
         jfast check --json
         jfast check --ci
         jfast check --only contracts,analyze
+        jfast check --multitenant-ready
+
+    `--multitenant-ready` replaces the battery with one report: every place a
+    single-tenant service assumes one customer, with file and line. Its
+    findings are about a hypothetical, so they never join the battery -- a
+    correct single-tenant service would fail it forever. Exit 1 while anything
+    is left to fix.
     """
+    if multitenant_ready:
+        from jfastframework.cli.tenancy import run_readiness
+
+        run_readiness(path, json_out=json_out)
+        return
+
     if fail_on not in FAIL_ON_LEVELS:
         raise typer.BadParameter(
             f"choose from: {', '.join(FAIL_ON_LEVELS)}", param_hint="--fail-on"

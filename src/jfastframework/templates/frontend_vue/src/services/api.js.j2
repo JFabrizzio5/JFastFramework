@@ -2,10 +2,14 @@ import axios from 'axios'
 
 import { LOGIN_ROUTE, useAuthStore } from '@/stores/auth.store.js'
 
+// Sixty seconds by default, from VITE_API_TIMEOUT. A request that asks a
+// language model for something routinely takes twenty, and a timeout shorter
+// than the slowest endpoint turns a slow answer into an error the user retries
+// -- which runs the expensive call a second time.
 const config = {
   baseURL: import.meta.env.VITE_API_URL,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 30000,
+  timeout: Number(import.meta.env.VITE_API_TIMEOUT) || 60000,
 }
 
 /**
@@ -65,7 +69,11 @@ api.interceptors.response.use(
   async (error) => {
     const original = error.config
 
-    if (error.response?.status === 401 && original && !original.retried) {
+    // `skipAuthRefresh` marks the sign-in calls themselves: their 401 means
+    // "wrong password" or "wrong code", not "your session expired", and
+    // answering it with a refresh would sign the person out of a form they
+    // are still filling in.
+    if (error.response?.status === 401 && original && !original.retried && !original.skipAuthRefresh) {
       original.retried = true
 
       let token
