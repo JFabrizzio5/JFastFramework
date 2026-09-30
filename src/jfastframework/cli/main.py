@@ -16,6 +16,7 @@ from jfastframework.cli import check as check_cli
 from jfastframework.cli import dev as devtools
 from jfastframework.cli import explain as explain_cli
 from jfastframework.cli import migrations as migrations_cli
+from jfastframework.cli import tenancy as tenancy_cli
 from jfastframework.cli import upgrade as upgrade_cli
 from jfastframework.cli.commands import add as add_cli
 from jfastframework.cli.commands import bench as bench_cli
@@ -26,6 +27,7 @@ from jfastframework.cli.commands import install as install_cli
 from jfastframework.cli.commands import new as new_cli
 from jfastframework.cli.commands import project as project_cli
 from jfastframework.cli.commands import run as run_cli
+from jfastframework.cli.commands import worker as worker_cli
 from jfastframework.cli.commands import workspace as workspace_cli
 from jfastframework.cli.generate import (
     _write_dockerignore,
@@ -65,6 +67,7 @@ describe_cli.register(app)
 deploy_cli.register(app)
 add_cli.register(app)
 run_cli.register(app)
+worker_cli.register(app)
 workspace_cli.register(app)
 contracts_cli.register(app)
 install_cli.register(app)
@@ -82,6 +85,7 @@ project_cli.register(app)
 # ---------------------------------------------------------------------------
 migrations_cli.register(app)
 check_cli.register(app)
+tenancy_cli.register(app)
 ai_cli.register(app)
 upgrade_cli.register(app)
 bench_cli.register(app)

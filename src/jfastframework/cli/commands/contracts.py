@@ -148,7 +148,14 @@ def contracts_show(
     `--json` is what an agent should read before writing a line here: scope,
     layer boundaries, forbidden calls, interfaces and invariants.
     """
-    contract, _ = _require_contract(path)
+    from jfastframework.contracts.wiring import graph, scan
+
+    contract, root = _require_contract(path)
+    described = contract.describe()
+    # Read from the code: who subscribes to what, and which tasks each module
+    # owns. The contract declares publishing; the rest is where it is written.
+    described.update(graph(contract.module_publishes, scan(root)))
+    events = described["events"]
     human = "\n".join(
         [
             f"project      : {contract.project}",
@@ -165,10 +172,20 @@ def contracts_show(
                 )
                 or "-"
             ),
+            "events       : "
+            + (
+                "; ".join(
+                    f"{name} <- {', '.join(entry['published_by']) or 'nobody'} -> "
+                    f"{', '.join(s['module'] for s in entry['subscribers']) or 'nobody'}"
+                    for name, entry in events.items()
+                )
+                or "-"
+            ),
+            f"tasks        : {', '.join(described['tasks']) or '-'}",
             f"invariants   : {len(contract.invariants)}",
         ]
     )
-    _echo(contract.describe(), json_out, human)
+    _echo(described, json_out, human)
 
 
 @contracts_app.command("render")
@@ -178,8 +195,8 @@ def contracts_render(
     stdout: bool = typer.Option(False, "--stdout"),
 ) -> None:
     """Write CONTRACTS.md from contracts.toml."""
-    contract, _ = _require_contract(path)
-    rendered = render(contract)
+    contract, root = _require_contract(path)
+    rendered = render(contract, root)
     if stdout:
         typer.echo(rendered)
         return

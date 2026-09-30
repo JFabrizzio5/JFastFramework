@@ -35,6 +35,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from jfastframework import tracing
 from jfastframework.vectors.base import Chunk, SearchHit, VectorStore, content_hash
 
 logger = logging.getLogger("jfast.rag")
@@ -272,6 +273,34 @@ class RagService:
         Idempotent: ingesting the same text twice embeds nothing the second
         time. An empty text removes the document.
         """
+        # Counts only: the text, its chunks and the metadata values stay out of
+        # the trace, the same as the llm ledger keeps prompts out.
+        with tracing.span(
+            "rag.ingest",
+            **{
+                "rag.document_id": document_id,
+                "jfast.tenant_id": tenant_id,
+                "rag.store": type(self.store).__name__,
+            },
+        ):
+            result = await self._ingest(document_id, text, tenant_id=tenant_id, metadata=metadata)
+            tracing.annotate(
+                **{
+                    "rag.chunks": result.chunks,
+                    "rag.embedded": result.embedded,
+                    "rag.reused": result.reused,
+                }
+            )
+            return result
+
+    async def _ingest(
+        self,
+        document_id: str,
+        text: str,
+        *,
+        tenant_id: str | None,
+        metadata: dict[str, Any] | None,
+    ) -> IngestResult:
         pieces = chunk_text(
             text, size=self.chunk_size, overlap=self.chunk_overlap, strategy=self.chunk_strategy
         )
@@ -320,16 +349,29 @@ class RagService:
                     "rag: %s has no hybrid search; using vector search", type(self.store).__name__
                 )
             use_hybrid = False
-        vector = (await self._embed([query], tenant_id))[0]
-        return await self.store.search(
-            vector,
-            tenant_id=tenant_id,
-            limit=limit or self.top_k,
-            document_ids=document_ids,
-            where=where,
-            min_score=self.min_score if min_score is None else min_score,
-            text=query if use_hybrid else None,
-        )
+        # Never the query: it is a user's question, often with their data in it.
+        with tracing.span(
+            "rag.search",
+            **{
+                "jfast.tenant_id": tenant_id,
+                "rag.limit": limit or self.top_k,
+                "rag.hybrid": use_hybrid,
+                "rag.filtered": bool(where or document_ids),
+                "rag.store": type(self.store).__name__,
+            },
+        ):
+            vector = (await self._embed([query], tenant_id))[0]
+            hits = await self.store.search(
+                vector,
+                tenant_id=tenant_id,
+                limit=limit or self.top_k,
+                document_ids=document_ids,
+                where=where,
+                min_score=self.min_score if min_score is None else min_score,
+                text=query if use_hybrid else None,
+            )
+            tracing.annotate(**{"rag.hits": len(hits)})
+            return hits
 
     async def delete(self, document_id: str, *, tenant_id: str | None) -> None:
         await self.store.delete_document(document_id, tenant_id=tenant_id)

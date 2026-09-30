@@ -3,6 +3,50 @@ import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '@/views/HomeView.vue'
 import LoginView from '@/views/LoginView.vue'
 import { LOGIN_ROUTE, useAuthStore } from '@/stores/auth.store.js'
+{% if frontend_accounts | default(true) %}
+
+// The account pages the backend's `accounts` plugin answers for. Loaded on
+// demand: most visits never open them. The paths of the two email links must
+// match [plugin.accounts] verify_email_path and reset_password_path.
+const accountRoutes = [
+  {
+    meta: { title: 'Create an account', public: true },
+    path: '/register',
+    name: 'register',
+    component: () => import('@/views/RegisterView.vue'),
+  },
+  {
+    meta: { title: 'Confirm your email', public: true },
+    path: '/verify-email',
+    name: 'verify-email',
+    component: () => import('@/views/VerifyEmailView.vue'),
+  },
+  {
+    meta: { title: 'Reset your password', public: true },
+    path: '/forgot-password',
+    name: 'forgot-password',
+    component: () => import('@/views/ForgotPasswordView.vue'),
+  },
+  {
+    meta: { title: 'Choose a new password', public: true },
+    path: '/reset-password',
+    name: 'reset-password',
+    component: () => import('@/views/ResetPasswordView.vue'),
+  },
+  {
+    meta: { title: 'Set up two-step verification', public: true },
+    path: '/mfa/enrol',
+    name: 'mfa-enrol',
+    component: () => import('@/views/MfaEnrolView.vue'),
+  },
+  {
+    meta: { title: 'Security' },
+    path: '/account/security',
+    name: 'security',
+    component: () => import('@/views/SecurityView.vue'),
+  },
+]
+{% endif %}
 
 // Generated module routes are spliced in at the marker below by
 // `jfast new view`. Keep the marker: removing it makes the generator fail
@@ -17,6 +61,9 @@ const routes = [
     name: 'login',
     component: LoginView,
   },
+{% if frontend_accounts | default(true) %}
+  ...accountRoutes,
+{% endif %}
   {
     meta: { title: 'Home' },
     path: '/',
@@ -32,15 +79,23 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 })
 
+{% if frontend_accounts | default(true) %}
+// Private unless a route says `meta: { public: true }`, and this is the one
+// line to change. The backend signs people in with the `accounts` plugin, so
+// every page -- including the ones `jfast new view` adds later -- sits behind
+// the sign-in page, and a page meant for everyone opts out on its own.
+const PUBLIC_BY_DEFAULT = false
+{% else %}
 // Public until a route says otherwise, and this is the one line to change.
 //
-// The scaffold ships it open because the generated backend's auth plugin does
-// not mount /auth/login -- it has no user store -- so gating the home page
-// would put a sign-in form in front of everyone that nothing can satisfy. Set
-// this to false the day yours has one, and every route is covered including
-// the ones `jfast new view` adds later; until then opt routes in one at a time
-// with `meta: { requiresAuth: true }`.
+// This frontend was generated for a backend without the `accounts` plugin,
+// which is what mounts /auth/login -- so gating the home page would put a
+// sign-in form in front of everyone that nothing can satisfy. Set this to
+// false the day yours signs people in, and every route is covered including
+// the ones `jfast new view` adds later; until then opt routes in one at a
+// time with `meta: { requiresAuth: true }`.
 const PUBLIC_BY_DEFAULT = true
+{% endif %}
 
 function isPublic(to) {
   return to.meta?.public ?? (PUBLIC_BY_DEFAULT && !to.meta?.requiresAuth)

@@ -1,0 +1,113 @@
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+
+import AuthShell from '@/components/AuthShell.jsx'
+import BaseButton from '@/components/BaseButton.jsx'
+import BaseInput from '@/components/BaseInput.jsx'
+import { loadFeatures, register, resendVerification, safeNext } from '@/services/auth.service.js'
+import { LOGIN_ROUTE } from '@/stores/auth.store.js'
+
+export default function RegisterView() {
+  const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const [displayName, setDisplayName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+  const [checkEmail, setCheckEmail] = useState(false)
+  const [resent, setResent] = useState(false)
+  const [minLength, setMinLength] = useState(10)
+
+  useEffect(() => {
+    loadFeatures().then((features) => setMinLength(features.min_password_length ?? 10))
+  }, [])
+
+  async function submit(event) {
+    event.preventDefault()
+    setError('')
+    setPending(true)
+    try {
+      const result = await register({ email, password, display_name: displayName || null })
+      if (result.status === 'check-email') {
+        setCheckEmail(true)
+      } else if (result.status === 'enrol') {
+        navigate(`/mfa/enrol?${params}`, { state: { mfaToken: result.mfaToken } })
+      } else {
+        navigate(safeNext(params.get('next')), { replace: true })
+      }
+    } catch (failure) {
+      setError(failure.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function resend() {
+    await resendVerification(email)
+    setResent(true)
+  }
+
+  const back = (
+    <Link to={LOGIN_ROUTE} className="hover:text-ink">
+      {checkEmail ? 'Back to sign in' : 'Already have an account? Sign in'}
+    </Link>
+  )
+
+  if (checkEmail) {
+    return (
+      <AuthShell
+        title="Check your email"
+        eyebrow="Almost there"
+        hero="Check your email."
+        lead={`We sent a link to ${email}. Open it to confirm the address, then sign in.`}
+        footer={back}
+      >
+        <BaseButton variant="outline" className="w-full" disabled={resent} onClick={resend}>
+          {resent ? 'Sent again' : 'Send the link again'}
+        </BaseButton>
+      </AuthShell>
+    )
+  }
+
+  return (
+    <AuthShell
+      title="Create an account"
+      eyebrow="New account"
+      hero="Get started."
+      heroFaded="It takes a minute."
+      heroText="Your email address is your sign-in."
+      footer={back}
+    >
+      <form noValidate className="flex flex-col gap-4" onSubmit={submit}>
+        <BaseInput
+          label="Name"
+          autoComplete="name"
+          value={displayName}
+          onChange={(event) => setDisplayName(event.target.value)}
+        />
+        <BaseInput
+          label="Email"
+          type="email"
+          autoComplete="email"
+          required
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+        <BaseInput
+          label="Password"
+          type="password"
+          autoComplete="new-password"
+          required
+          hint={`At least ${minLength} characters.`}
+          error={error}
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        <BaseButton type="submit" className="mt-2 w-full" loading={pending}>
+          Create account
+        </BaseButton>
+      </form>
+    </AuthShell>
+  )
+}

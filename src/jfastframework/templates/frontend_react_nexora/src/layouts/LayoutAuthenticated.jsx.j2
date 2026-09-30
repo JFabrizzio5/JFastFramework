@@ -32,9 +32,9 @@ export default function LayoutAuthenticated({ children }) {
   const authenticated = useIsAuthenticated()
   const user = useAuthStore((state) => state.user)
   const clearSession = useAuthStore((state) => state.logout)
-  // Whatever the backend put on the session. Nothing is assumed about its
-  // shape beyond these two common fields.
-  const userName = user?.name ?? user?.email ?? 'Guest'
+  // What GET /auth/account returns (`display_name`, `email`), with `name` for
+  // a backend of your own that calls it that.
+  const userName = user?.display_name || user?.name || user?.email || 'Guest'
 
   async function signOut() {
     await logout()

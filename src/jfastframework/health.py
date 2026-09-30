@@ -12,6 +12,12 @@ seconds. Without a timeout, a dependency that hangs at the TCP level -- not
 refused, hung -- holds the probe open until the socket gives up, which reads to
 Kubernetes as a slow service rather than a broken dependency.
 
+Criticality has one rule: a failure fails readiness (503, ``unavailable``)
+only when the plugin is declared ``health_critical`` *and* the report says
+critical. Everything else that is unhealthy is ``degraded`` and answers 200, so
+an orchestrator keeps the replica in rotation while a cache, a mail server or a
+rate-limit backend is down. docs/resilience.md lists which plugin is which.
+
 A check that times out is reported as ``timeout``, distinct from ``fail``: one
 means the dependency answered "no", the other means it did not answer at all,
 and whoever is reading this at three in the morning needs to tell them apart.
@@ -53,14 +59,22 @@ async def _probe(plugin: Plugin, ctx: AppContext, timeout: float) -> dict[str, A
             "healthy": False,
             "status": "error",
             "detail": f"health check raised: {exc}",
-            "critical": True,
+            # A bug in a cache's health check is still the cache's problem:
+            # it used to be reported critical and took every replica out of
+            # rotation over a dependency the service promises to live without.
+            "critical": plugin.meta.health_critical,
         }
 
     entry: dict[str, Any] = {
         "healthy": report.healthy,
         "status": "ok" if report.healthy else "fail",
         "detail": report.detail,
-        "critical": report.critical,
+        # A plugin declared non-critical cannot fail readiness, whatever one
+        # of its reports says. `HealthReport.fail()` defaults to critical, so
+        # a forgotten `critical=False` on one branch of a cache's check was
+        # enough to turn "degraded" into "unavailable". A critical plugin may
+        # still report a failure as non-critical (auth's token store).
+        "critical": report.critical and plugin.meta.health_critical,
     }
     if report.meta:
         entry["meta"] = report.meta

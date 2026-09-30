@@ -1,0 +1,47 @@
+import AccentPicker from '@/components/AccentPicker.jsx'
+import ThemeToggle from '@/components/ThemeToggle.jsx'
+import { APP_NAME as appName } from '@/nexora/brand.js'
+
+/**
+ * Every signed-out page -- sign in, sign up, the email links, the second step
+ * -- is drawn inside this one frame, so the Nexora look lives in one file and
+ * the pages are shared with the classic look, which has its own AuthShell.jsx
+ * with the same props.
+ */
+export default function AuthShell({
+  title,
+  lead = '',
+  eyebrow = '',
+  hero = '',
+  heroFaded = '',
+  heroText = '',
+  footer = null,
+  children,
+}) {
+  return (
+    <div className="nx-auth">
+      <div className="nx-auth-corner flex items-center gap-2">
+        <AccentPicker />
+        <ThemeToggle />
+      </div>
+
+      <section className="nx-auth-hero">
+        <span className="nx-logo">{appName}</span>
+        <h1>
+          <span className="nx-display">{hero || title}</span>
+          <br />
+          {heroFaded && <span className="nx-display-faded">{heroFaded}</span>}
+        </h1>
+        {heroText && <p>{heroText}</p>}
+      </section>
+
+      <div className="liquid-panel nx-auth-card">
+        <span className="nx-eyebrow">{eyebrow || 'Your account'}</span>
+        <h2 className="mt-2">{title}</h2>
+        {lead && <p className="mt-2 text-sm text-ink-soft">{lead}</p>}
+        <div className="nx-auth-form">{children}</div>
+        {footer && <div className="mt-6 flex flex-col gap-2 text-sm text-ink-soft">{footer}</div>}
+      </div>
+    </div>
+  )
+}

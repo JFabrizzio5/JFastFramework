@@ -138,16 +138,16 @@ service, so it scales with your service. Measured on generated services —
 
 | modules | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 8,909 | 2,910 |
-| 3 | 10,613 | 4,196 |
-| 5 | 12,333 | 5,494 |
+| 1 | 9,078 | 3,001 |
+| 3 | 11,108 | 4,563 |
+| 5 | 13,156 | 6,139 |
 
 A generated service is the floor, because nothing is wrong with it yet. The
 same five-module service after some work in it — two modules `main.py` never
 picked up, a file outside any module, two contract violations — measures
 about **3.3 KB more than the floor above in full, and 0.8 KB more with
-`--brief`** (measured on 0.1.0a9, when the floors were 11.5 KB and 5.4 KB). Roughly +800
-bytes per module, and the rest is `next` and `checks` growing with what is
+`--brief`** (measured on 0.1.0a9, when the floors were 11.5 KB and 5.4 KB). Roughly +1,000
+bytes per module (0.1.0a11 added each module's facade, events and tasks), and the rest is `next` and `checks` growing with what is
 actually outstanding.
 
 Where the full payload goes on that five-module service, in bytes:

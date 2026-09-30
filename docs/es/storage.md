@@ -111,8 +111,12 @@ Configura la clave o las URLs temporales no funcionan:
 JFAST_STORAGE_SIGNING_KEY=$(openssl rand -hex 32)
 ```
 
-El plugin avisa al arrancar cuando un disco local privado no tiene clave, en vez
-de dejar que lo descubra el primer usuario que haga clic en un link de descarga.
+En producción el plugin avisa al arrancar cuando un disco local privado no tiene
+clave, en vez de dejar que lo descubra el primer usuario que haga clic en un
+link de descarga; ahí una clave de menos de 32 bytes no arranca. Fuera de
+producción se queda callado —la mayoría de los servicios nunca firma una URL, y
+un aviso en cada arranque de cada uno es un aviso que nadie lee— y
+`temporary_url()` falla por sí sola diciendo qué variable configurar.
 
 Un link expirado y uno falsificado devuelven el mismo 403 con el mismo mensaje.
 Respuestas distintas le dirían a un atacante si la clave existe.
@@ -156,6 +160,23 @@ minio_include_infra = true
 
 `jfast deploy compose` emite entonces MinIO en el puerto base de tu servicio
 `+6`, como el contenedor de cualquier otro plugin.
+
+Cada llamada a S3 tiene deadline, política de reintentos y circuit breaker, por
+disco:
+
+```toml
+[plugin.storage.disks.uploads]
+connect_timeout = 5.0      # segundos para conectar
+read_timeout = 30.0        # segundos de silencio al leer
+max_attempts = 3           # reintentos "standard" de botocore, contando el primero
+breaker_failures = 5       # llamadas fallidas seguidas que dejan de llamar a S3...
+breaker_cool_down = 15.0   # ...durante este tiempo; luego una prueba
+```
+
+Con el breaker abierto un upload falla al instante con 503, en vez de ocupar un
+hilo del worker durante tres timeouts. Un 404 es una respuesta y nunca cuenta.
+Prefirmar es local y no pasa por el breaker. Las razones de cada número están
+en [Resiliencia](resilience.md).
 
 ## Las claves no son rutas
 
@@ -530,9 +551,18 @@ resuelve la clave.
 ## Salud
 
 `/ready` reporta cada disco: un disco local que falta o es de solo lectura, un
-bucket de S3 que no se puede alcanzar. Que el almacenamiento falle no vuelve al
-servicio unhealthy por sí solo —una API que todavía puede responder consultas
-debería seguir en el load balancer— así que se reporta como degradado.
+bucket de S3 que no se puede alcanzar. No son la misma falla:
+
+- **Un disco local** es de esta réplica. Si falta o es de solo lectura, falla
+  el readiness, y el orquestador deja de mandarle tráfico a la única réplica con
+  el volumen roto.
+- **Un object store** lo comparten todas las réplicas. Fallar el readiness por
+  él las sacaría a todas de rotación sin arreglar nada, así que se reporta
+  *degradado*: `/ready` responde 200 y nombra el bucket.
+
+Cada disco responde dentro del presupuesto del readiness. La prueba de S3 hace
+un solo intento corto, y mientras el breaker del disco está abierto ni se
+prueba.
 
 ## Lo que esto no hace
 

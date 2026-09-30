@@ -1,0 +1,56 @@
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+
+import AuthShell from '@/components/AuthShell.jsx'
+import BaseButton from '@/components/BaseButton.jsx'
+import { verifyEmail } from '@/services/auth.service.js'
+import { LOGIN_ROUTE, useIsAuthenticated } from '@/stores/auth.store.js'
+
+const TITLES = { working: 'Confirming…', done: 'Email confirmed', failed: 'Link not valid' }
+
+/**
+ * Where the link in the verification email lands: /verify-email?token=...
+ * ([plugin.accounts] verify_email_path). The token is posted once and then
+ * taken out of the address bar, so it is not left in the history.
+ */
+export default function VerifyEmailView() {
+  const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const authenticated = useIsAuthenticated()
+  const [state, setState] = useState('working')
+  const [failure, setFailure] = useState('')
+  // StrictMode runs effects twice in development; the token works once.
+  const sent = useRef(false)
+
+  useEffect(() => {
+    if (sent.current) return
+    sent.current = true
+    const token = params.get('token') ?? ''
+    navigate('/verify-email', { replace: true })
+    verifyEmail(token)
+      .then(() => setState('done'))
+      .catch((error) => {
+        setFailure(error.message)
+        setState('failed')
+      })
+  }, [navigate, params])
+
+  const lead =
+    state === 'done'
+      ? 'Thank you. Your address is confirmed.'
+      : state === 'failed'
+        ? `${failure} Sign in and ask for a new one.`
+        : 'One moment.'
+
+  return (
+    <AuthShell title={TITLES[state]} eyebrow="Email" hero={TITLES[state]} lead={lead}>
+      <BaseButton
+        className="w-full"
+        loading={state === 'working'}
+        onClick={() => navigate(authenticated ? '/' : LOGIN_ROUTE, { replace: true })}
+      >
+        {authenticated ? 'Continue' : 'Sign in'}
+      </BaseButton>
+    </AuthShell>
+  )
+}

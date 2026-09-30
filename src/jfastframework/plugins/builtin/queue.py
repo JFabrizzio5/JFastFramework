@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import re
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -56,6 +57,10 @@ if TYPE_CHECKING:
 
 BACKENDS = ("postgres", "redis", "rabbitmq")
 
+# The postgres backend puts `name` into its SQL as the table name.
+_TABLE_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+DEFAULT_RABBITMQ_URL = "amqp://guest:guest@localhost:5672/"
+
 
 class QueueSettings(PluginSettings):
     model_config = SettingsConfigDict(env_prefix="JFAST_QUEUE_", env_file=".env", extra="ignore")
@@ -69,7 +74,7 @@ class QueueSettings(PluginSettings):
     max_attempts: int = 3
     prefetch: int = 10
 
-    rabbitmq_url: SecretStr = SecretStr("amqp://guest:guest@localhost:5672/")
+    rabbitmq_url: SecretStr = SecretStr(DEFAULT_RABBITMQ_URL)
     rabbitmq_include_infra: bool = True
     rabbitmq_port_offset: int = 6
 
@@ -87,6 +92,41 @@ class QueueSettings(PluginSettings):
     # Claims older than this are pruned, keeping each schedule's latest --
     # which is what catch-up reads after a restart.
     scheduler_retention_days: int = 7
+
+    def validate_for_boot(self, *, production: bool) -> None:
+        """Values the backend would only reject on the first enqueue, refused now."""
+        for field, value in (
+            ("visibility_timeout", self.visibility_timeout),
+            ("max_attempts", self.max_attempts),
+            ("prefetch", self.prefetch),
+            ("scheduler_retention_days", self.scheduler_retention_days),
+        ):
+            if value < 1:
+                raise PluginError(f"[plugin.queue] {field} must be at least 1, not {value}.")
+        if not self.name:
+            raise PluginError("[plugin.queue] name cannot be empty.")
+        if self.backend == "postgres" and not _TABLE_NAME.match(self.name):
+            # It becomes a table name inside the backend's SQL, unquoted.
+            raise PluginError(
+                f"[plugin.queue] name = {self.name!r} is not a valid table name for the "
+                f"postgres backend: lowercase letters, digits and underscores, starting "
+                f"with a letter or underscore, at most 63 characters."
+            )
+        if self.backend == "rabbitmq":
+            url = self.rabbitmq_url.get_secret_value()
+            if url.partition("://")[0].lower() not in ("amqp", "amqps"):
+                raise PluginError(
+                    "[plugin.queue] rabbitmq_url must start with amqp:// or amqps://. "
+                    "Set JFAST_QUEUE_RABBITMQ_URL."
+                )
+            if production and url == DEFAULT_RABBITMQ_URL:
+                # RabbitMQ only lets `guest` in from localhost, so this fails
+                # on the first connect from any container -- and it would be a
+                # default password if it did not.
+                raise PluginError(
+                    "[plugin.queue] rabbitmq_url is the development default "
+                    "(guest@localhost) in production. Set JFAST_QUEUE_RABBITMQ_URL."
+                )
 
 
 class QueuePlugin(Plugin):
@@ -112,6 +152,7 @@ class QueuePlugin(Plugin):
         self._scheduler: Scheduler | None = None
         self._scheduler_task: asyncio.Task[None] | None = None
         self._scheduler_stop = asyncio.Event()
+        self._needs_inbox = False
 
     def _build_backend(self, ctx: AppContext) -> QueueBackend:
         settings: QueueSettings = self.settings
@@ -214,9 +255,19 @@ class QueuePlugin(Plugin):
         return MemoryTickStore()
 
     def register(self, ctx: AppContext) -> None:
+        self.settings.validate_for_boot(production=ctx.settings.is_production)
         self._backend = self._build_backend(ctx)
         ctx.provide("queue", self._backend)
         ctx.provide("tasks", self._registry)
+
+        # Every module's `tasks.py`: its @task and @subscribe declarations are
+        # bound here, in the API and in `jfast worker` alike. A handler that
+        # needs a database the service does not have fails now, not on its
+        # first job.
+        from jfastframework.tasks import bind, discover
+
+        discover(ctx)
+        self._needs_inbox = bind(self._registry, ctx)
 
         if self.settings.scheduler:
             from jfastframework.queues.scheduler import Scheduler
@@ -260,6 +311,18 @@ class QueuePlugin(Plugin):
                 )
             if self._backend is not None:
                 await self._backend.setup()
+            # A second pass for a tasks.py imported after register -- a router
+            # imported lazily. Bound names are skipped.
+            from jfastframework.tasks import bind
+
+            self._needs_inbox |= bind(self._registry, ctx)
+            if self._needs_inbox and ctx.has("db.engine"):
+                # idempotent_on and session subscribers claim in the inbox; it
+                # is the outbox's table, and this service may not run the outbox.
+                from jfastframework.db.framework import ensure_tables
+                from jfastframework.outbox import INBOX_TABLE
+
+                await ensure_tables(ctx.require("db.engine"), INBOX_TABLE)
         except Exception as exc:  # noqa: BLE001 - reported through /ready
             self._setup_error = str(exc)
             ctx.logger.error(

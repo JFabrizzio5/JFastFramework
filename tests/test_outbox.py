@@ -98,10 +98,10 @@ async def test_a_committed_job_is_relayed_with_its_own_id(engine) -> None:  # ty
 
 async def test_an_event_is_relayed_to_its_topic_with_its_key(engine) -> None:  # type: ignore[no-untyped-def]
     event = Event(type="order.placed", data={"id": 3}, key="order-3")
-    async with AsyncSession(engine) as session, session.begin():
-        await Outbox().publish(session, "orders", event)
-
     bus = RecordingBus()
+    async with AsyncSession(engine) as session, session.begin():
+        await Outbox(events=bus).publish(session, "orders", event)
+
     await OutboxRelay(engine, events=bus).relay_once()
     [(topic, sent)] = bus.sent
     assert topic == "orders"

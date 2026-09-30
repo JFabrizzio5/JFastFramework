@@ -329,25 +329,39 @@ does not get called back. `comprobante` publishes an event in the same
 transaction as the write, through the outbox, and `asesor` subscribes:
 
 ```python
-# in comprobante, next to the write
-outbox = request.app.state.jfast.require("outbox")
+# modules/comprobante/services/comprobante_service.py -- next to the write
+from jfastframework.events import Event
+
 await outbox.publish(
     session, "comprobantes", Event(type="comprobante.categorized", data={"id": c.id}, key=str(c.id))
 )
-
-# in asesor
-from jfastframework.plugins.builtin.events import Event, on
-
-@on("comprobantes")
-async def refresh_advice(event: Event) -> None:
-    if event.type == "comprobante.categorized":
-        ...
 ```
 
-The event commits with the rows that caused it, and `comprobante` never learns
-that `asesor` exists — so there is no edge from it to `asesor`, and no cycle.
-Transports, idempotency and delivery guarantees are in
-[Queues and events](queues-and-events.md).
+```python
+# modules/asesor/tasks.py
+from jfastframework.events import Event, subscribe
+from jfastframework.tasks import TaskSession
+
+@subscribe("comprobante.categorized")
+async def refresh_advice(event: Event, session: TaskSession) -> None:
+    ...
+```
+
+```toml
+# contracts.toml
+[modules.comprobante]
+publishes = ["comprobante.categorized"]
+```
+
+`outbox.publish` queues one job per subscriber in the same transaction as the
+write, and `jfast worker` runs it as the tenant that published. No broker is
+involved: this works on the default PostgreSQL stack. `comprobante` never
+learns that `asesor` exists and `asesor` declares no `depends_on` for it — so
+there is no edge either way, and no cycle. An event nobody subscribes to is
+refused in the request, and `contracts check` reports a subscription nobody
+declares publishing. Delivery guarantees are in
+[Queues and events](queues-and-events.md#events-between-modules); `@on(topic)`
+over Kafka is for *other services*, not for modules of this one.
 
 ### The payoff: extracting a module
 
