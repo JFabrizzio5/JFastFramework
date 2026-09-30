@@ -1,4 +1,8 @@
+{% if frontend_accounts | default(true) %}
+import { mdiHomeOutline, mdiShieldLockOutline } from '@mdi/js'
+{% else %}
 import { mdiHomeOutline } from '@mdi/js'
+{% endif %}
 
 // Sidebar entries. `jfast new view` inserts generated modules at the marker
 // below and adds any icon import it needs.
@@ -11,5 +15,12 @@ export default [
     icon: mdiHomeOutline,
     label: 'Home',
   },
+{% if frontend_accounts | default(true) %}
+  {
+    to: '/account/security',
+    icon: mdiShieldLockOutline,
+    label: 'Security',
+  },
+{% endif %}
   /*nuevoModulo*/
 ]

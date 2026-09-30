@@ -41,6 +41,10 @@
         <span class="font-semibold md:hidden">{{ appName }}</span>
         <div class="flex-1" />
         <ThemeToggle />
+        <template v-if="auth.isAuthenticated">
+          <span class="hidden max-w-48 truncate text-sm text-ink-soft sm:inline">{{ userName }}</span>
+          <BaseButton variant="ghost" size="sm" @click="signOut">Sign out</BaseButton>
+        </template>
       </header>
 
       <main class="min-w-0 flex-1">
@@ -51,12 +55,24 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 
+import BaseButton from '@/components/BaseButton.vue'
 import BaseIcon from '@/components/BaseIcon.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import menu from '@/menuAside.js'
+import { LOGIN_ROUTE, useAuthStore } from '@/stores/auth.store.js'
+
+const auth = useAuthStore()
+const router = useRouter()
+// `display_name` and `email` are what GET /auth/account returns.
+const userName = computed(() => auth.user?.display_name || auth.user?.email || '')
+
+async function signOut() {
+  await auth.logout()
+  await router.replace(LOGIN_ROUTE)
+}
 
 const appName = import.meta.env.VITE_APP_NAME
 
