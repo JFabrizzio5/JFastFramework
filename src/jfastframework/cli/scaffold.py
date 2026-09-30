@@ -80,6 +80,12 @@ class PluginSpec:
     # Pre-checked when the service serves several customers: a tenant has to
     # come from somebody signed in.
     multitenant: bool = False
+    # Plugins this one cannot start without -- its PluginMeta.requires, kept
+    # here so `jfast add` can enable them without importing the plugin (and
+    # its optional dependencies). A test holds the two equal.
+    requires: tuple[str, ...] = ()
+    # What `jfast add` prints after enabling it: the variables it reads.
+    env: tuple[str, ...] = ()
 
 
 # The menu the installer shows, and the source of the extras a generated
@@ -109,31 +115,65 @@ PLUGIN_CATALOG: dict[str, PluginSpec] = {
         "telemetry",
         "Traces (OpenTelemetry), exported once an OTLP endpoint is set",
         recommended=True,
+        env=("OTEL_EXPORTER_OTLP_ENDPOINT (optional: nothing is exported until it is set)",),
     ),
-    "database": PluginSpec("db", "PostgreSQL + pgvector (SQLAlchemy, Alembic)", True),
-    "cache": PluginSpec("cache", "Redis cache, pub/sub and queue", True),
-    "mongo": PluginSpec("mongo", "MongoDB for document-shaped data", True),
-    "qdrant": PluginSpec("qdrant", "Qdrant vector database", True),
+    "database": PluginSpec(
+        "db", "PostgreSQL + pgvector (SQLAlchemy, Alembic)", True, env=("JFAST_DB_DSN",)
+    ),
+    "cache": PluginSpec("cache", "Redis cache, pub/sub and queue", True, env=("JFAST_CACHE_URL",)),
+    "mongo": PluginSpec(
+        "mongo", "MongoDB for document-shaped data", True, env=("JFAST_MONGO_DSN",)
+    ),
+    "qdrant": PluginSpec("qdrant", "Qdrant vector database", True, env=("JFAST_QDRANT_URL",)),
     "rag": PluginSpec("rag", "Tenant-scoped semantic and hybrid search over pgvector or Qdrant"),
-    "llm": PluginSpec("llm", "Chat, vision and embeddings with a spending cap (OpenAI-compatible)"),
+    "llm": PluginSpec(
+        "llm",
+        "Chat, vision and embeddings with a spending cap (OpenAI-compatible)",
+        env=("JFAST_LLM_API_KEY",),
+    ),
     "queue": PluginSpec(
         "queue", "Background jobs on PostgreSQL, Redis or RabbitMQ", recommended=True
     ),
-    "outbox": PluginSpec("db", "Jobs and events that commit with the request's rows"),
-    "idempotency": PluginSpec("db", "Idempotency-Key: a retried POST gets the first answer"),
-    "auth": PluginSpec("auth", "JWT verification, scopes, rotation, revocation", multitenant=True),
-    "accounts": PluginSpec(
-        "accounts", "Users, password login, roles and permissions", multitenant=True
+    "outbox": PluginSpec(
+        "db", "Jobs and events that commit with the request's rows", requires=("database",)
     ),
-    "ratelimit": PluginSpec("cache", "Per-tenant and per-subject rate limits (Redis-backed)"),
+    "idempotency": PluginSpec(
+        "db", "Idempotency-Key: a retried POST gets the first answer", requires=("database",)
+    ),
+    "auth": PluginSpec(
+        "auth",
+        "JWT verification, scopes, rotation, revocation",
+        multitenant=True,
+        env=("JFAST_AUTH_JWKS_URL (mode jwks) or JFAST_AUTH_SECRET (mode secret)",),
+    ),
+    "accounts": PluginSpec(
+        "accounts",
+        "Users, password login, roles and permissions",
+        multitenant=True,
+        requires=("database", "auth"),
+        env=("JFAST_AUTH_SECRET", "JFAST_ACCOUNTS_BOOTSTRAP_ADMIN_PASSWORD"),
+    ),
+    "ratelimit": PluginSpec(
+        "cache", "Per-tenant and per-subject rate limits (Redis-backed)", requires=("cache",)
+    ),
     "channels": PluginSpec("", "Declared pub/sub channels over memory, Redis or Kafka"),
-    "websocket": PluginSpec("server", "Authenticated WebSocket connections, Redis fan-out"),
+    "websocket": PluginSpec(
+        "server",
+        "Authenticated WebSocket connections, Redis fan-out",
+        requires=("auth", "cache"),
+    ),
     "events": PluginSpec("kafka", "Kafka event streaming between services"),
     "web": PluginSpec("web", "Jinja2 templates + HTMX (server-rendered pages)"),
-    "sentry": PluginSpec("sentry", "Sentry error and performance reporting"),
+    "sentry": PluginSpec(
+        "sentry", "Sentry error and performance reporting", env=("JFAST_SENTRY_DSN",)
+    ),
     "gateway": PluginSpec("gateway", "Prefix-based reverse proxy"),
     "http": PluginSpec("http", "Calls to sibling services: deadlines, retries, breakers"),
-    "storage": PluginSpec("storage", "File storage on local disks, S3 or MinIO"),
+    "storage": PluginSpec(
+        "storage",
+        "File storage on local disks, S3 or MinIO",
+        env=("JFAST_STORAGE_SIGNING_KEY (for private disks)",),
+    ),
     "tenancy": PluginSpec("", "Multi-tenancy by token claim, signed-in user, subdomain or path"),
     "notifications": PluginSpec("fcm", "Push notifications via Firebase (FCM)"),
     "mail": PluginSpec("mail", "Email with templates, queued by default"),
