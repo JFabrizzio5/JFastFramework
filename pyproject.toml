@@ -129,8 +129,11 @@ accounts = ["argon2-cffi>=23.1", "pyjwt[crypto]>=2.10", "httpx>=0.28"]
 encryption = ["cryptography>=43"]
 queue = []
 rabbitmq = ["aio-pika>=9.5"]
-# Local disks need nothing: the standard library can write a file.
-storage = []
+# Local disks need nothing but the standard library to write a file -- but a
+# file arrives as an upload, and FastAPI refuses to even import a route with
+# UploadFile/Form without python-multipart. Before 0.1.0a12 this was empty:
+# dev worked (the dev extra pulls it) and the production image did not boot.
+storage = ["python-multipart>=0.0.20"]
 # The storage pipeline's optimise-image step, and nothing else. Same Pillow
 # the exports and vision extras already pull, so a service carrying either
 # adds no wheel by asking for this one.
