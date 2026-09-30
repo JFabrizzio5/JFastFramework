@@ -21,7 +21,10 @@ from pydantic import BaseModel, ConfigDict
 from typer.testing import CliRunner
 
 from jfastframework.cli.commands.bench import (
+    StepResult,
     Target,
+    _broken,
+    _saturation,
     bench,
     k6_script,
     targets_from_openapi,
@@ -153,27 +156,54 @@ def test_the_k6_export_carries_the_steps_and_never_the_token() -> None:
 # -- the load -------------------------------------------------------------
 
 
-async def test_it_finds_where_the_service_breaks_and_saturates(service: str) -> None:
+async def test_it_finds_where_the_service_breaks(service: str) -> None:
     report = await bench(
         service,
         [Target("GET", "/slow")],
-        steps=[1, 4, 16],
+        steps=[1, 4, 32],
         duration=1.5,
-        max_p99_ms=150,
+        max_p99_ms=300,
     )
-    one, four, sixteen = report.steps
-    assert one.errors == four.errors == sixteen.errors == 0
+    one, four, many = report.steps
+    assert one.errors == four.errors == many.errors == 0
     # Two slots of 20 ms: ~45 req/s with one client (each also waits for its
-    # own round trip), ~95 with four, when both slots are always busy, and no
-    # more with sixteen -- they queue, eight deep, and the queue is the p99.
-    assert 30 < one.rps < 60, one
-    assert 75 < four.rps < 110, four
-    assert sixteen.rps < four.rps * 1.10, (four, sixteen)
-    assert sixteen.p50_ms > 120 and sixteen.p99_ms > 150 > four.p99_ms, (four, sixteen)
-    assert report.breaks_at == 16 and "p99" in (report.break_reason or "")
-    assert report.saturates_at == 4
+    # own round trip), ~95 with four, when both slots are always busy, and
+    # never more than the slots allow with thirty-two -- they queue sixteen
+    # deep, ~320 ms, and the queue is the p99. The bounds only go the way a
+    # stall on a busy CI machine cannot push them past.
+    assert one.p50_ms < 40, one
+    assert many.rps < 115, many
+    assert many.p50_ms > 250 and many.p99_ms > 300, many
+    assert report.breaks_at == 32 and "p99" in (report.break_reason or "")
     # /ready was read after each step, and the strained dependency named.
-    assert sixteen.degraded == {"strained": "fail"}
+    assert many.degraded == {"strained": "fail"}
+
+
+def _step(concurrency: int, rps: float, *, p99: float = 10.0, errors: int = 0) -> StepResult:
+    return StepResult(
+        concurrency=concurrency,
+        seconds=1.0,
+        requests=1000,
+        errors=errors,
+        non_2xx=errors,
+        rps=rps,
+        p50_ms=p99 / 2,
+        p95_ms=p99,
+        p99_ms=p99,
+        max_ms=p99,
+    )
+
+
+def test_saturation_is_where_more_clients_stop_buying_throughput() -> None:
+    steps = [_step(1, 45), _step(4, 95), _step(16, 99), _step(64, 100)]
+    assert _saturation(steps) == 4
+    assert _saturation([_step(1, 45), _step(4, 170), _step(16, 600)]) is None
+
+
+def test_breaking_is_the_first_threshold_crossed() -> None:
+    assert _broken(_step(8, 90, p99=40), 500, 0.01) is None
+    assert "p99" in (_broken(_step(8, 90, p99=600), 500, 0.01) or "")
+    assert "error rate" in (_broken(_step(8, 90, errors=20), 500, 0.01) or "")
 
 
 async def test_server_errors_break_the_first_step(service: str) -> None:
