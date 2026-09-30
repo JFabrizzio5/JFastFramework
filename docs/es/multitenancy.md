@@ -478,7 +478,7 @@ upgrade --check` lista lo que rompe una actualización:
 | `storage-key-without-tenant` | high | `storage.put(f"invoices/{id}.pdf", ...)`: una llave armada sin el tenant |
 | `cache-key-without-tenant` | high | `cache.get(f"report:{month}")`: una llave armada sin el tenant |
 | `rag-unscoped` | high | `[plugin.rag] tenant_scoped = false` |
-| `scheduled-job-without-tenant` | medium | una tarea programada con `every=`/`cron=` (o `tasks.schedule`) que arma un `Job` sin `tenant_id`: un tick corre sin tenant |
+| `scheduled-job-without-tenant` | medium | una tarea programada con `every=`/`cron=` (o `tasks.schedule`) que arma un `Job` o un `Event` sin `tenant_id`, o recibe un `TaskSession`: un tick corre sin tenant, así que su sesión ve todas las filas hoy y ninguna con RLS |
 | `llm-call-without-tenant` | medium | `llm.chat(...)` sin `tenant_id`: no aplica ningún presupuesto por tenant |
 
 **Son heurísticas**, leídas del código sin importarlo, y están hechas para

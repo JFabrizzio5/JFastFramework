@@ -674,3 +674,27 @@ def test_subdomain_needs_a_base_domain(tmp_path: Path) -> None:
         plan_switch(root, tenant="acme", sources=["subdomain"])
     plan = plan_switch(root, tenant="acme", sources=["subdomain"], base_domain="app.example.com")
     assert tomllib.loads(plan.config_after)["plugin"]["tenancy"]["base_domain"] == "app.example.com"
+
+
+def test_a_scheduled_module_task_with_a_task_session(tmp_path: Path) -> None:
+    """`@task(..., every=...)` from jfastframework.tasks: its TaskSession has no tenant."""
+    _write(
+        tmp_path,
+        {
+            **CLEAN,
+            "modules/invoice/tasks.py": """
+                from datetime import timedelta
+                from jfastframework.events import Event
+                from jfastframework.tasks import TaskSession, task
+
+                @task("invoice.remind", every=timedelta(hours=1))
+                async def remind(payload: dict, session: TaskSession) -> None:
+                    await publish(session, Event(type="invoice.reminded"))
+
+                @task("invoice.one")
+                async def one(payload: dict, session: TaskSession) -> None: ...
+            """,
+        },
+    )
+    found = [f for f in readiness(tmp_path).open if f.code == "scheduled-job-without-tenant"]
+    assert sorted(f.line for f in found) == [6, 7]  # the session, and the Event; not `one`

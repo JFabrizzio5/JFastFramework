@@ -469,7 +469,7 @@ nothing marks. This lists them with file and line, the way `jfast upgrade
 | `storage-key-without-tenant` | high | `storage.put(f"invoices/{id}.pdf", ...)`: a key built without the tenant |
 | `cache-key-without-tenant` | high | `cache.get(f"report:{month}")`: a key built without the tenant |
 | `rag-unscoped` | high | `[plugin.rag] tenant_scoped = false` |
-| `scheduled-job-without-tenant` | medium | a task scheduled with `every=`/`cron=` (or `tasks.schedule`) that builds a `Job` with no `tenant_id` -- a tick runs as no tenant |
+| `scheduled-job-without-tenant` | medium | a task scheduled with `every=`/`cron=` (or `tasks.schedule`) that builds a `Job` or `Event` with no `tenant_id`, or takes a `TaskSession` -- a tick runs as no tenant, so its session sees every row today and none under RLS |
 | `llm-call-without-tenant` | medium | `llm.chat(...)` with no `tenant_id`: no per-tenant budget applies |
 
 **These are heuristics**, read from the source without importing it, and they

@@ -81,7 +81,8 @@ RULES: dict[str, tuple[str, str]] = {
     "rag-unscoped": ("high", "`[plugin.rag] tenant_scoped = false`"),
     "scheduled-job-without-tenant": (
         "medium",
-        "a scheduled task that enqueues a job with no `tenant_id`",
+        "a scheduled task that enqueues a `Job` or builds an `Event` with no `tenant_id`, "
+        "or opens a `TaskSession` -- a tick runs as no tenant",
     ),
     "llm-call-without-tenant": (
         "medium",
@@ -648,10 +649,11 @@ def _llm_calls(source: SourceFile, report: _Reporter) -> None:
 
 
 def _scheduled(files: Sequence[SourceFile], report: _Reporter) -> None:
-    """Jobs enqueued by a scheduled task, which runs as no tenant.
+    """Work a scheduled task starts, which runs as no tenant.
 
-    A tick is not a request: it has no tenant, so a ``Job`` built inside the
-    handler inherits none. Scheduled handlers are found two ways -- a task
+    A tick is not a request: it has no tenant, so a ``Job`` or ``Event`` built
+    inside the handler inherits none, and a ``TaskSession`` it receives is
+    scoped to nobody. Scheduled handlers are found two ways -- a task
     decorator carrying ``every=`` or ``cron=``, and ``tasks.schedule("name",
     ...)`` resolved to the ``@tasks.task("name")`` handler by its name.
     """
@@ -687,15 +689,37 @@ def _scheduled(files: Sequence[SourceFile], report: _Reporter) -> None:
         scheduled.extend(handlers.get(name, []))
 
     for source, function in scheduled:
-        for node in ast.walk(function):
-            if (
-                isinstance(node, ast.Call)
-                and _called(node.func) == "Job"
-                and not any(k.arg in ("tenant_id", None) for k in node.keywords)
+        arguments = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
+        for argument in arguments:
+            if argument.annotation is not None and "TaskSession" in _text(
+                source, argument.annotation
             ):
                 report.add(
                     "scheduled-job-without-tenant",
-                    f"scheduled task {function.name}() enqueues a Job with no tenant_id",
+                    (
+                        f"scheduled task {function.name}() opens a TaskSession, and a tick "
+                        "has no tenant"
+                    ),
+                    (
+                        "The session is scoped to the job's tenant, and a scheduled tick has "
+                        "none: today it reads every tenant's rows, and under row-level "
+                        "security it reads none. Make the tick a fan-out -- list the tenants "
+                        "and enqueue one job each with `tenant_id=` -- and do the work there."
+                    ),
+                    source=source,
+                    line=argument.lineno,
+                    span=[function.lineno, argument.lineno],
+                )
+        for node in ast.walk(function):
+            if (
+                isinstance(node, ast.Call)
+                and _called(node.func) in ("Job", "Event")
+                and not any(k.arg in ("tenant_id", None) for k in node.keywords)
+            ):
+                kind = _called(node.func)
+                report.add(
+                    "scheduled-job-without-tenant",
+                    f"scheduled task {function.name}() builds a {kind} with no tenant_id",
                     (
                         "A scheduled tick runs as no tenant, so this job does too: its "
                         "repositories are unfiltered today and see no rows under row-level "
