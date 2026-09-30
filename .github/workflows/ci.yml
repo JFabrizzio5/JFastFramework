@@ -158,6 +158,7 @@ jobs:
             tests/test_dead_letters.py \
             tests/test_telemetry.py \
             tests/test_tenancy_enable_pg.py \
+            tests/test_startup_ddl.py \
             | tee /tmp/server-tests.log
           if grep -qE '^SKIPPED|no tests ran' /tmp/server-tests.log; then
             echo '::error::a test needing a real server skipped; a service container is not reachable'

@@ -374,6 +374,17 @@ sit next to Python ones -- still standard library only, all of it plain
 
 ### Fixed
 
+- **Every process's startup took exclusive locks, and `/ready` flapped.** The
+  generated image runs one uvicorn process per CPU, each running its plugins'
+  startup. The queue ran `ALTER TABLE jfast_jobs ADD COLUMN IF NOT EXISTS
+  trace` at every boot, and pgvector its upgrade statements: both take an
+  ACCESS EXCLUSIVE lock before noticing there is nothing to do, so a booting
+  process queued behind any open read and every query -- another process's
+  `/ready` included -- queued behind it (the compose smoke saw 200, then 503).
+  Schema work now asks the catalogue first and runs only what is missing, under
+  a transaction-scoped advisory lock, which also fixes concurrent `CREATE TABLE
+  IF NOT EXISTS` failing on an empty database when several processes boot at
+  once. `tests/test_startup_ddl.py`.
 - **pgvector store writes went through a sequential scan.** They matched a
   document's rows with `tenant_id IS NOT DISTINCT FROM`, which no btree
   serves: one document's delete took 19.2 ms instead of 0.03 ms at 300k

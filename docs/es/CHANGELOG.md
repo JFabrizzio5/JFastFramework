@@ -394,6 +394,18 @@ de Gin, Echo o Chi.
 
 ### Corregido
 
+- **El arranque de cada proceso tomaba locks exclusivos y `/ready` oscilaba.**
+  La imagen generada corre un proceso de uvicorn por CPU, y cada uno ejecuta el
+  arranque de sus plugins. La cola corría `ALTER TABLE jfast_jobs ADD COLUMN IF
+  NOT EXISTS trace` en cada arranque, y pgvector sus sentencias de upgrade: las
+  dos toman un lock ACCESS EXCLUSIVE antes de notar que no hay nada que hacer,
+  así que un proceso que arrancaba quedaba en fila detrás de cualquier lectura
+  abierta, y cada consulta -- incluido el `/ready` de otro proceso -- detrás de
+  él (el smoke de compose vio 200 y luego 503). El trabajo de esquema ahora
+  consulta primero el catálogo y solo ejecuta lo que falta, bajo un advisory
+  lock de transacción, lo que también arregla que `CREATE TABLE IF NOT EXISTS`
+  concurrente fallara en una base vacía cuando arrancan varios procesos a la
+  vez. `tests/test_startup_ddl.py`.
 - **Las escrituras del store de pgvector recorrían la tabla completa.**
   Buscaban las filas de un documento con `tenant_id IS NOT DISTINCT FROM`, que
   ningún btree sirve: borrar un documento tomaba 19.2 ms en vez de 0.03 ms con

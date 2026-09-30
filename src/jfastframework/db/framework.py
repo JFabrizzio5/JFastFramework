@@ -57,7 +57,54 @@ async def ensure_tables(engine: Any, *names: str) -> None:
     """Create these framework tables if they do not exist yet. Idempotent."""
     tables = [framework_metadata.tables[name] for name in names]
     async with engine.begin() as conn:
+        # checkfirst reads, then creates: two processes booting on an empty
+        # database both read "absent" without this, and one fails.
+        await serialize_setup(conn, "jfast:setup:framework-tables")
         await conn.run_sync(framework_metadata.create_all, tables=tables, checkfirst=True)
+
+
+async def serialize_setup(conn: Any, key: str) -> None:
+    """Hold a transaction-scoped advisory lock on *key* (PostgreSQL only).
+
+    Every uvicorn worker process and every replica runs its plugins' startup
+    at once. Two ``CREATE TABLE IF NOT EXISTS`` for one new table race and one
+    fails on ``pg_type``; two ``ALTER TABLE`` queue for an exclusive lock that
+    every read of the table then queues behind. Holding this for the rest of
+    the setup transaction makes the second starter wait, then find the work
+    done. Readers never take it, so serving is not blocked.
+    """
+    from sqlalchemy import text
+
+    if conn.dialect.name != "postgresql":
+        return
+    await conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": key})
+
+
+async def relation_exists(conn: Any, name: str) -> bool:
+    """Whether a table or index exists, read from the catalogue without locking it."""
+    from sqlalchemy import text
+
+    found = await conn.execute(text("SELECT to_regclass(:name) IS NOT NULL"), {"name": name})
+    return bool(found.scalar())
+
+
+async def column_exists(conn: Any, table: str, column: str) -> bool:
+    """Whether *table* has *column*, from the catalogue: no ``ALTER``, no lock.
+
+    ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` takes an ACCESS EXCLUSIVE
+    lock before it finds the column already there, so running it at every
+    startup queues every query on the table behind each booting process.
+    """
+    from sqlalchemy import text
+
+    found = await conn.execute(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass(:table) "
+            "AND attname = :column AND NOT attisdropped)"
+        ),
+        {"table": table, "column": column},
+    )
+    return bool(found.scalar())
 
 
 async def ensure_columns(engine: Any, name: str) -> list[str]:
@@ -88,6 +135,7 @@ async def ensure_columns(engine: Any, name: str) -> list[str]:
 
     added: list[str] = []
     async with engine.begin() as conn:
+        await serialize_setup(conn, f"jfast:setup:{name}")
         missing = await conn.run_sync(_missing)
         for column in missing:
             if not column.nullable or column.server_default is not None:

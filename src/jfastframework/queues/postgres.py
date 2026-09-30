@@ -74,7 +74,11 @@ class PostgresQueue:
     async def setup(self) -> None:
         from sqlalchemy import text
 
+        from jfastframework.db.framework import column_exists, relation_exists, serialize_setup
+
         async with self._engine.begin() as conn:
+            # Every worker process and replica boots at once; see serialize_setup.
+            await serialize_setup(conn, f"jfast:setup:{self._table}")
             await conn.execute(
                 text(
                     f"""
@@ -99,18 +103,22 @@ class PostgresQueue:
             # Added in 0.1.0a11, for tables created before it. Nullable with no
             # default, so PostgreSQL records it in the catalogue without
             # rewriting a single row: safe on a queue with millions in it.
-            await conn.execute(
-                text(f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS trace JSONB")
-            )
+            # Asked of the catalogue first: the ALTER, even as IF NOT EXISTS,
+            # takes an exclusive lock that every claim and /ready then waits on.
+            if not await column_exists(conn, self._table, "trace"):
+                await conn.execute(
+                    text(f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS trace JSONB")
+                )
             # Partial index on exactly the claim predicate. Without it every
             # dequeue scans the dead-letter rows too, and the queue slows down
             # as failures accumulate -- the worst possible time.
-            await conn.execute(
-                text(
-                    f"CREATE INDEX IF NOT EXISTS {self._table}_claim_idx "
-                    f"ON {self._table} (available_at) WHERE status = 'pending'"
+            if not await relation_exists(conn, f"{self._table}_claim_idx"):
+                await conn.execute(
+                    text(
+                        f"CREATE INDEX IF NOT EXISTS {self._table}_claim_idx "
+                        f"ON {self._table} (available_at) WHERE status = 'pending'"
+                    )
                 )
-            )
 
     @property
     def engine(self) -> Any:

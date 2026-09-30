@@ -193,9 +193,22 @@ class PgVectorStore:
     async def ensure_schema(self) -> None:
         from sqlalchemy import text
 
+        from jfastframework.db.framework import column_exists, relation_exists, serialize_setup
+
         async with self._engine.begin() as conn:
-            for statement in self._schema:
-                await conn.execute(text(statement))
+            # Every worker process boots at once; the upgrade statements below
+            # take exclusive locks even when there is nothing to upgrade, so a
+            # table already at this version is left alone.
+            await serialize_setup(conn, f"jfast:setup:{self._table}")
+            current = (
+                await column_exists(conn, self._table, "search_text")
+                and await relation_exists(conn, _name(self._table, "embedding_hnsw"))
+                and await relation_exists(conn, _name(self._table, "tenant_document"))
+                and not await relation_exists(conn, _name(self._table, "embedding_idx"))
+            )
+            if not current:
+                for statement in self._schema:
+                    await conn.execute(text(statement))
         await self._detect_version()
 
     async def _detect_version(self) -> None:
