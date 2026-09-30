@@ -90,7 +90,7 @@ Una sola traza cubre cada salto porque el `traceparent` de W3C viaja con el trab
 - **El cliente `http`** manda el `traceparent` y el `tracestate` del span actual en
   cada llamada, dentro de un span de cliente propio, así que el span de servidor
   del siguiente servicio es hijo de esa llamada. Ver
-  [http-client.md](http-client.md#qué-viaja-con-la-llamada).
+  [http-client.md](http-client.md#que-viaja-con-la-llamada).
 - **El gateway** reemplaza el `traceparent` del cliente por el de su propio span,
   un salto más adentro de la misma traza. Con telemetry apagado reenvía intacto el
   del cliente, así que el upstream todavía puede continuar esa traza.
@@ -199,6 +199,20 @@ lanza o un collector que rechaza se cuenta para `/ready` y lo registra el propio
 exportador; el request nunca lo ve. `tests/test_telemetry.py` reemplaza el tracer
 y el backend por objetos que fallan en cada atributo y comprueba que el request se
 atiende igual.
+
+## La telemetría propia de FastAPI está apagada
+
+FastAPI 0.142 trae OpenTelemetry propio, y lee el mismo
+`OTEL_EXPORTER_OTLP_ENDPOINT`. Encendido, configuraba un segundo provider
+global sin nombre de servicio (`unknown_service`), exportaba un duplicado de
+cada span de servidor y habría exportado logs con mensajes de excepción y los
+valores de entrada rechazados -- contenido que este plugin nunca exporta.
+`create_app` lo apaga (`auto_configure`, trazas, métricas, logs y spans de
+operación) siempre que el FastAPI instalado tenga el interruptor, así que sus
+spans -- `fastapi.dependencies`, `fastapi.endpoint`, la serialización -- no se
+registran, a propósito. Las trazas salen solo del plugin `telemetry`.
+Encontrado al trazar un servicio real hacia Jaeger; `tests/test_telemetry.py`
+comprueba un solo span de servidor por petición y el provider global intacto.
 
 ## Probar tus propios spans
 
