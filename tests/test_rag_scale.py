@@ -31,10 +31,6 @@ def _walk(node: dict[str, Any]) -> list[dict[str, Any]]:
     return [node, *(n for child in node.get("Plans", []) for n in _walk(child))]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="PgVectorStore filters tenant_id with IS NOT DISTINCT FROM, which no index serves",
-)
 async def test_a_document_write_finds_its_rows_through_the_tenant_index() -> None:
     from jfastframework.vectors.base import Chunk
     from jfastframework.vectors.pgvector import PgVectorStore
