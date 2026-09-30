@@ -27,6 +27,11 @@ binds them when it registers, before the consumer joins its group::
     @on("orders")
     async def handle(event: Event) -> None: ...
 
+``@on`` listens to a *topic* and is how another service hears this one. Two
+modules of the same service do not need a broker at all: they use
+``jfastframework.events.subscribe``, delivered through the queue, and keep
+working unchanged when this plugin is turned on.
+
 Requires: ``pip install jfastframework[kafka]``
 
 Verified: written against aiokafka's documented API, **not** run against a
@@ -37,16 +42,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
-import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic_settings import SettingsConfigDict
 
+from jfastframework import tracing
+
+# Re-exported: this is where `Event` lived before local events existed, and
+# every consumer written against Kafka imports it from here.
+from jfastframework.events import Event
 from jfastframework.plugins.base import (
     HealthReport,
     InfraService,
@@ -60,60 +66,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("jfast.events")
 
-EventHandler = Callable[["Event"], Awaitable[None]]
+__all__ = ["Event", "EventBus", "EventsPlugin", "clear_pending", "on", "pending_handlers"]
+
+EventHandler = Callable[[Event], Awaitable[None]]
 
 # Mirrors ``JFastSettings.port``. Only used to derive the advertised external
 # address when ``infra()`` is called without a context, which is what
 # ``deploy.compose.collect_infra`` does.
 _DEFAULT_BASE_PORT = 8000
-
-
-@dataclass
-class Event:
-    """Something that happened. Past tense, always."""
-
-    type: str
-    data: dict[str, Any] = field(default_factory=dict)
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    source: str = ""
-    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    # Carried so a consumer's logs correlate with the request that caused it.
-    request_id: str | None = None
-    tenant_id: str | None = None
-    # Kafka partitions by key: same key, same partition, order preserved.
-    # Use the aggregate id, or events about one order can be processed out of
-    # order by two consumers.
-    key: str | None = None
-
-    def to_json(self) -> str:
-        return json.dumps(
-            {
-                "id": self.id,
-                "type": self.type,
-                "source": self.source,
-                "occurred_at": self.occurred_at.isoformat(),
-                "request_id": self.request_id,
-                "tenant_id": self.tenant_id,
-                "data": self.data,
-            },
-            default=str,
-        )
-
-    @classmethod
-    def from_json(cls, raw: str | bytes, *, key: str | None = None) -> Event:
-        payload = json.loads(raw)
-        return cls(
-            id=payload.get("id", uuid.uuid4().hex),
-            type=payload["type"],
-            source=payload.get("source", ""),
-            occurred_at=datetime.fromisoformat(payload["occurred_at"])
-            if payload.get("occurred_at")
-            else datetime.now(UTC),
-            request_id=payload.get("request_id"),
-            tenant_id=payload.get("tenant_id"),
-            data=payload.get("data", {}),
-            key=key,
-        )
 
 
 class EventBus:
@@ -169,8 +129,23 @@ class EventBus:
         return tuple(sorted(self._handlers))
 
     async def dispatch(self, topic: str, event: Event) -> None:
-        for handler in self._handlers.get(topic, []):
-            await handler(event)
+        # The handlers run as the request that published the event: its
+        # tenant, its request id, its trace. A consumer in another service
+        # otherwise reads every tenant's rows and logs lines nobody can trace.
+        from jfastframework.plugins.builtin.observability import request_id_var, tenant_id_var
+
+        request_token = request_id_var.set(event.request_id)
+        tenant_token = tenant_id_var.set(event.tenant_id)
+        try:
+            with (
+                tracing.attach(event.trace),
+                tracing.span(f"event {event.type}", topic=topic, event_id=event.id),
+            ):
+                for handler in self._handlers.get(topic, []):
+                    await handler(event)
+        finally:
+            tenant_id_var.reset(tenant_token)
+            request_id_var.reset(request_token)
 
 
 # Handlers declared by decorator before the bus exists. The plugin drains this

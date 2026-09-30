@@ -14,6 +14,14 @@ messages to the broker. When the queue is the PostgreSQL one in the same
 database, there is nothing to relay: the job goes straight into ``jfast_jobs``
 through the same session.
 
+An event is delivered twice over, to two audiences. Each module of this
+service that subscribes to its type (``@subscribe``) gets a job of its own, written the
+same way as ``enqueue`` -- so a modular monolith needs no broker to have
+modules react to each other. When an event bus (Kafka) is configured the event
+also goes to its topic, for other services. With neither, there is nobody to
+deliver it to, and ``publish`` says so instead of writing a row that can only
+die: see :class:`~jfastframework.events.UndeliverableEvent`.
+
 Delivery stays at-least-once -- the relay can publish and die before marking
 the row -- so consumers deduplicate on the message id with :func:`claim_once`,
 inside their own transaction.
@@ -23,7 +31,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -53,13 +60,14 @@ from jfastframework.db.framework import (
 from jfastframework.queues.base import Job
 
 if TYPE_CHECKING:
-    from jfastframework.plugins.builtin.events import Event
+    from jfastframework.events import Event
 
 __all__ = [
     "INBOX_TABLE",
     "OUTBOX_TABLE",
     "Outbox",
     "OutboxRelay",
+    "Undeliverable",
     "claim_once",
     "inbox",
     "outbox",
@@ -112,16 +120,28 @@ inbox = Table(
 )
 
 
+class Undeliverable(RuntimeError):
+    """A row that no retry can deliver with this configuration.
+
+    Marked dead on the first attempt, with the reason, instead of retried
+    twenty times with backoff: the answer will not change until someone
+    changes the configuration, and hours of retries only hide that.
+    """
+
+
 class Outbox:
     """Write messages in the caller's transaction; the relay sends them.
 
     ``queue`` is the queue backend, when there is one. If it is the
     PostgreSQL queue on the same database as the session, a job is inserted
-    into it directly and needs no relay.
+    into it directly and needs no relay. ``events`` is the event bus, or
+    anything truthy standing for one that a relay elsewhere holds; without it
+    an event reaches only this service's own subscribers.
     """
 
-    def __init__(self, *, queue: Any = None) -> None:
+    def __init__(self, *, queue: Any = None, events: Any = None) -> None:
         self._queue = queue
+        self._events = events
 
     async def enqueue(self, session: Any, job: Job) -> str:
         """Queue ``job`` so that it exists if and only if this transaction commits."""
@@ -134,7 +154,11 @@ class Outbox:
             id=job.id,
             kind="job",
             destination=job.task,
-            payload={"payload": job.payload, "max_attempts": job.max_attempts},
+            payload={
+                "payload": job.payload,
+                "max_attempts": job.max_attempts,
+                "trace": dict(job.trace),
+            },
             request_id=job.request_id,
             tenant_id=job.tenant_id,
             available_at=job.available_at,
@@ -142,17 +166,57 @@ class Outbox:
         return job.id
 
     async def publish(self, session: Any, topic: str, event: Event) -> str:
-        """Publish ``event`` on ``topic`` if and only if this transaction commits."""
-        await self._write(
-            session,
-            id=event.id,
-            kind="event",
-            destination=topic,
-            payload=json.loads(event.to_json()),
-            message_key=event.key,
-            request_id=event.request_id,
-            tenant_id=event.tenant_id,
-        )
+        """Publish ``event`` if and only if this transaction commits.
+
+        One job per local subscriber of ``event.type``, and the event itself on
+        ``topic`` when there is a bus. Raises ``UndeliverableEvent`` when there
+        is neither: nothing would ever receive it.
+        """
+        from jfastframework.events import UndeliverableEvent, subscribers_for
+
+        local = subscribers_for(event.type)
+        if local and self._queue is None:
+            names = ", ".join(s.name for s in local)
+            raise UndeliverableEvent(
+                f"event {event.type!r} has subscribers in this service ({names}) but no "
+                f"queue to run them on. Add \"queue\" to [plugins].enabled in jfast.toml "
+                f"(the PostgreSQL backend needs nothing else)."
+            )
+        if not local and self._events is None:
+            raise UndeliverableEvent(
+                f"event {event.type!r} was published but nothing can receive it: no module "
+                f"in this service subscribes to it and no event bus is configured. Add "
+                f'@subscribe("{event.type}") in the module that reacts (in its tasks.py), '
+                f'or enable the "events" plugin (Kafka) if another service consumes it.'
+            )
+
+        for subscriber in local:
+            await self.enqueue(
+                session,
+                Job(
+                    id=subscriber.job_id(event.id),
+                    task=subscriber.task,
+                    payload={"topic": topic, "event": event.to_dict()},
+                    max_attempts=subscriber.max_attempts,
+                    # The event's, not whatever this code runs under: a handler
+                    # re-publishing an event it rebuilt must not lose them.
+                    request_id=event.request_id,
+                    tenant_id=event.tenant_id,
+                    trace=dict(event.trace),
+                ),
+            )
+
+        if self._events is not None:
+            await self._write(
+                session,
+                id=event.id,
+                kind="event",
+                destination=topic,
+                payload=event.to_dict(),
+                message_key=event.key,
+                request_id=event.request_id,
+                tenant_id=event.tenant_id,
+            )
         return event.id
 
     def _same_database(self, session: Any) -> bool:
@@ -239,8 +303,9 @@ class OutboxRelay:
                     await self._send(row)
                 except Exception as exc:  # noqa: BLE001 - recorded on the row
                     attempts = int(row["attempts"]) + 1
-                    dead = attempts >= self._max_attempts
+                    dead = isinstance(exc, Undeliverable) or attempts >= self._max_attempts
                     delay = min(2**attempts, 300)
+                    reason = f"{type(exc).__name__}: {exc}"[:2000]
                     await session.execute(
                         update(outbox)
                         .where(outbox.c.id == row["id"])
@@ -248,18 +313,26 @@ class OutboxRelay:
                             attempts=attempts,
                             status=DEAD if dead else PENDING,
                             available_at=now + timedelta(seconds=delay),
-                            last_error=f"{type(exc).__name__}: {exc}"[:2000],
+                            last_error=reason,
                         )
                     )
                     log = logger.error if dead else logger.warning
+                    # The cause is in the message itself: a log line that says
+                    # only "not sent" sends whoever reads it to the database.
                     log(
-                        "outbox message not sent",
+                        "outbox %s %s to %r not sent%s: %s",
+                        row["kind"],
+                        row["id"],
+                        row["destination"],
+                        " and is now dead" if dead else "",
+                        reason,
                         extra={
                             "message_id": row["id"],
                             "kind": row["kind"],
                             "destination": row["destination"],
                             "attempts": attempts,
                             "dead": dead,
+                            "error": reason,
                         },
                     )
                     continue
@@ -274,7 +347,10 @@ class OutboxRelay:
     async def _send(self, row: Any) -> None:
         if row["kind"] == "job":
             if self._queue is None:
-                raise RuntimeError("a job is in the outbox and no queue is configured")
+                raise Undeliverable(
+                    'a job is in the outbox and no queue is configured: add "queue" to '
+                    "[plugins].enabled"
+                )
             body = row["payload"] or {}
             await self._queue.enqueue(
                 Job(
@@ -284,18 +360,23 @@ class OutboxRelay:
                     max_attempts=int(body.get("max_attempts", 3)),
                     request_id=row["request_id"],
                     tenant_id=row["tenant_id"],
+                    trace=dict(body.get("trace") or {}),
                 )
             )
             return
         if row["kind"] == "event":
             if self._events is None:
-                raise RuntimeError("an event is in the outbox and no event bus is configured")
-            from jfastframework.plugins.builtin.events import Event
+                raise Undeliverable(
+                    "an event is in the outbox and no event bus is configured: enable the "
+                    '"events" plugin, or have a module @subscribe to it (local subscribers '
+                    "are queued when the event is published, not relayed)"
+                )
+            from jfastframework.events import Event
 
-            event = Event.from_json(json.dumps(row["payload"]), key=row["message_key"])
+            event = Event.from_dict(dict(row["payload"] or {}), key=row["message_key"])
             await self._events.publish(row["destination"], event)
             return
-        raise RuntimeError(f"unknown outbox kind {row['kind']!r}")
+        raise Undeliverable(f"unknown outbox kind {row['kind']!r}")
 
     async def purge(self) -> int:
         """Delete published rows older than the retention window."""
@@ -315,6 +396,33 @@ class OutboxRelay:
             )
             counts = {str(status): int(count) for status, count in rows}
         return {state: counts.get(state, 0) for state in (PENDING, PUBLISHED, DEAD)}
+
+    async def failing(self) -> tuple[int, str | None]:
+        """Pending rows that have failed at least once, and the latest reason.
+
+        A message being retried is not yet dead and may not be old, so neither
+        of the other two signals sees it -- and a relay failing every attempt
+        is the state an operator most needs to hear about early.
+        """
+        async with self._engine.connect() as conn:
+            count = (
+                await conn.execute(
+                    select(func.count()).where(
+                        and_(outbox.c.status == PENDING, outbox.c.attempts > 0)
+                    )
+                )
+            ).scalar_one()
+            reason = None
+            if count:
+                reason = (
+                    await conn.execute(
+                        select(outbox.c.last_error)
+                        .where(and_(outbox.c.status == PENDING, outbox.c.attempts > 0))
+                        .order_by(outbox.c.created_at.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+        return int(count), reason
 
     async def oldest_pending_seconds(self) -> float | None:
         async with self._engine.connect() as conn:
