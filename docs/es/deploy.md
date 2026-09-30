@@ -96,7 +96,7 @@ y lo nombran igual, `<service>_<disk>_data`. El Dockerfile tiene que crear las
 mismas raíces para `appuser`, o Docker crea el punto de montaje como root y el
 disco no puede escribir: `jfast deploy dockerfile` las lee de
 `[plugin.storage.disks]` -- ver
-[Storage](storage.md#discos-locales-en-la-imagen-de-producción).
+[Storage](storage.md#discos-locales-en-la-imagen-de-produccion).
 
 ### Nombres de contenedor
 
