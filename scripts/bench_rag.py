@@ -136,10 +136,20 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         f"{args.pg}/{args.database}", pool_size=args.writers + args.concurrency + 2
     )
     table = args.table
-    async with engine.begin() as conn:
-        await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
-    store = PgVectorStore(engine, table=table, dimensions=args.dims, tenant_scoped=True)
-    await store.ensure_schema()
+    if not args.search_only:
+        async with engine.begin() as conn:
+            await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    store = PgVectorStore(
+        engine,
+        table=table,
+        dimensions=args.dims,
+        tenant_scoped=True,
+        hnsw_ef_search=args.ef_search,
+    )
+    if args.search_only:
+        await store._detect_version()
+    else:
+        await store.ensure_schema()
     hnsw = _name(table, "embedding_hnsw")
 
     corpus = Corpus(
@@ -161,6 +171,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 "live_ingest",
                 "build_mem",
                 "build_workers",
+                "ef_search",
             )
         }
     }
@@ -195,39 +206,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         await asyncio.gather(*workers)
         return written, time.perf_counter() - started
 
-    documents = corpus.documents()
-    live = min(args.live_ingest, args.chunks)
-    written, seconds = await ingest(documents, live)
-    result["ingest_with_hnsw"] = {"chunks": written, "chunks_per_s": round(written / seconds)}
-    print(f"ingest with HNSW in place: {written} chunks, {written / seconds:,.0f}/s", flush=True)
-
-    rest = args.chunks - written
-    if rest > 0:
-        async with engine.begin() as conn:
-            await conn.execute(text(f"DROP INDEX IF EXISTS {hnsw}"))
-        more, seconds = await ingest(documents, rest)
-        result["ingest_without_hnsw"] = {"chunks": more, "chunks_per_s": round(more / seconds)}
-        print(f"bulk ingest without HNSW: {more} chunks, {more / seconds:,.0f}/s", flush=True)
-
-        started = time.perf_counter()
-        async with engine.begin() as conn:
-            await conn.execute(text(f"SET maintenance_work_mem = '{args.build_mem}'"))
-            # A parallel build keeps the graph in dynamic shared memory, which
-            # in a container is /dev/shm: 64 MB unless shm_size raises it (the
-            # generated compose sets 1gb). Over it, the build fails with
-            # "could not resize shared memory segment".
-            await conn.execute(
-                text(f"SET max_parallel_maintenance_workers = {int(args.build_workers)}")
-            )
-            await conn.execute(
-                text(
-                    f"CREATE INDEX {hnsw} ON {table} USING hnsw (embedding vector_cosine_ops) "
-                    "WITH (m = 16, ef_construction = 64)"
-                )
-            )
-        build = time.perf_counter() - started
-        result["hnsw_build_s"] = round(build, 1)
-        print(f"HNSW build over {args.chunks} chunks: {build:.1f} s", flush=True)
+    if not args.search_only:
+        await _load(args, engine, store, corpus, table, hnsw, ingest, result)
 
     async with engine.begin() as conn:
         await conn.execute(text(f"ANALYZE {table}"))
@@ -296,6 +276,53 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     print(f"recall@10 (tenant-filtered HNSW vs exact): {result['recall_at_10']}", flush=True)
     await engine.dispose()
     return result
+
+
+async def _load(
+    args: argparse.Namespace,
+    engine: Any,
+    store: Any,
+    corpus: Corpus,
+    table: str,
+    hnsw: str,
+    ingest: Any,
+    result: dict[str, Any],
+) -> None:
+    from sqlalchemy import text
+
+    documents = corpus.documents()
+    live = min(args.live_ingest, args.chunks)
+    written, seconds = await ingest(documents, live)
+    result["ingest_with_hnsw"] = {"chunks": written, "chunks_per_s": round(written / seconds)}
+    print(f"ingest with HNSW in place: {written} chunks, {written / seconds:,.0f}/s", flush=True)
+
+    rest = args.chunks - written
+    if rest > 0:
+        async with engine.begin() as conn:
+            await conn.execute(text(f"DROP INDEX IF EXISTS {hnsw}"))
+        more, seconds = await ingest(documents, rest)
+        result["ingest_without_hnsw"] = {"chunks": more, "chunks_per_s": round(more / seconds)}
+        print(f"bulk ingest without HNSW: {more} chunks, {more / seconds:,.0f}/s", flush=True)
+
+        started = time.perf_counter()
+        async with engine.begin() as conn:
+            await conn.execute(text(f"SET maintenance_work_mem = '{args.build_mem}'"))
+            # A parallel build keeps the graph in dynamic shared memory, which
+            # in a container is /dev/shm: 64 MB unless shm_size raises it (the
+            # generated compose sets 1gb). Over it, the build fails with
+            # "could not resize shared memory segment".
+            await conn.execute(
+                text(f"SET max_parallel_maintenance_workers = {int(args.build_workers)}")
+            )
+            await conn.execute(
+                text(
+                    f"CREATE INDEX {hnsw} ON {table} USING hnsw (embedding vector_cosine_ops) "
+                    "WITH (m = 16, ef_construction = 64)"
+                )
+            )
+        build = time.perf_counter() - started
+        result["hnsw_build_s"] = round(build, 1)
+        print(f"HNSW build over {args.chunks} chunks: {build:.1f} s", flush=True)
 
 
 async def _plan(engine: Any, table: str, query: Any) -> list[str]:
@@ -384,6 +411,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--concurrency", type=int, default=16)
     parser.add_argument("--recall-queries", type=int, default=100)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--ef-search", type=int, default=100, help="hnsw.ef_search per query")
+    parser.add_argument(
+        "--search-only", action="store_true", help="reuse --table as loaded by a previous run"
+    )
     parser.add_argument("--json", type=str, help="also write the result here")
     args = parser.parse_args(argv)
     if not args.pg:
