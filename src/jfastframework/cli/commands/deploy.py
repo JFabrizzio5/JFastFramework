@@ -47,16 +47,27 @@ def deploy_dockerfile(
     output: Path = typer.Option(Path("Dockerfile"), "--output", "-o"),
     python: str = typer.Option("3.12", "--python"),
     stdout: bool = typer.Option(False, "--stdout"),
+    config: str = typer.Option(
+        DEFAULT_CONFIG_FILE,
+        "--config",
+        "-c",
+        help="Its local storage disks are created in the image, owned by the app user.",
+    ),
 ) -> None:
     """Generate a production Dockerfile and the .dockerignore it needs."""
     from jfastframework.deploy import render_dockerfile, render_dockerignore
+    from jfastframework.deploy.compose import read_storage_disks, storage_dirs
 
-    rendered = render_dockerfile(python)
+    # Every local disk root in jfast.toml, not only the defaults: the image
+    # runs as appuser, and a volume mounted where the image has no directory
+    # is created as root -- /ready 503, and the first upload a 500.
+    disks = read_storage_disks(Path(config))
+    rendered = render_dockerfile(python, disks=disks)
     if stdout:
         typer.echo(rendered)
         return
     output.write_text(rendered, encoding="utf-8")
-    typer.echo(f"wrote {output}")
+    typer.echo(f"wrote {output}  (storage: {' '.join(storage_dirs(disks))})")
 
     # Written next to the Dockerfile, never over an existing one: the exclude
     # list is a thing people edit, and silently replacing an edited copy is

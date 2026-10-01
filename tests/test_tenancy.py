@@ -246,19 +246,24 @@ async def test_token_claim_is_readable_from_the_tenancy_middleware() -> None:
         assert response.json() == {"tenant": "acme", "source": "token"}
 
 
-async def test_token_beats_the_subdomain() -> None:
-    """A signed claim outranks a hostname, whatever the DNS says."""
+async def test_a_subdomain_that_disagrees_with_the_token_grants_nothing() -> None:
+    """A signed claim outranks a hostname; a hostname naming another tenant is refused.
+
+    Neither tenant is granted: serving `acme` on `other.` would hide a
+    confused client, serving `other` would be the F1 hole. `current_tenant`
+    answers 403 (tests/test_tenancy_unsigned_sources.py).
+    """
     app = tenancy_and_auth_app()
     async with client_for(app) as client:  # type: ignore[arg-type]
         response = await client.get("/whoami", headers={"host": f"other.{BASE}", **bearer("acme")})
-        assert response.json() == {"tenant": "acme", "source": "token"}
+        assert response.json() == {"tenant": None, "source": None}
 
 
-async def test_subdomain_still_applies_without_a_token() -> None:
+async def test_a_subdomain_without_a_token_names_a_tenant_but_grants_none() -> None:
     app = tenancy_and_auth_app()
     async with client_for(app) as client:  # type: ignore[arg-type]
         response = await client.get("/whoami", headers={"host": f"acme.{BASE}"})
-        assert response.json() == {"tenant": "acme", "source": "subdomain"}
+        assert response.json() == {"tenant": None, "source": None}
 
 
 async def test_require_tenant_accepts_a_token_without_a_subdomain() -> None:
@@ -438,7 +443,16 @@ async def test_a_signed_in_user_cannot_name_another_tenant_by_header() -> None:
 
 
 async def test_the_header_is_a_tenant_only_as_a_declared_tenancy_source() -> None:
-    app = tenancy_and_auth_app(sources=["header"], base_domain="")
+    app = tenancy_app(sources=["header"])
     async with client_for(app) as client:  # type: ignore[arg-type]
         response = await client.get("/whoami", headers={"X-Tenant-ID": "acme"})
     assert response.json() == {"tenant": "acme", "source": "header"}
+
+
+async def test_with_auth_the_header_still_needs_a_session() -> None:
+    app = tenancy_and_auth_app(sources=["header"], base_domain="")
+    async with client_for(app) as client:  # type: ignore[arg-type]
+        anonymous = await client.get("/whoami", headers={"X-Tenant-ID": "acme"})
+        signed = await client.get("/whoami", headers={"X-Tenant-ID": "acme", **bearer("acme")})
+    assert anonymous.json() == {"tenant": None, "source": None}
+    assert signed.json() == {"tenant": "acme", "source": "token"}

@@ -26,6 +26,7 @@ A caller declares the dependency in contracts.toml:
 """
 
 {% set read_from = "entity" %}
+{% set enum_module = ".enums" %}
 {% set repository_import = "from .storage import " ~ Module ~ "Repository" %}
 {% set fetch = "row = await " ~ Module ~ "Repository(session, tenant_id=tenant_id).get(" ~ module ~ "_id)\n    entity = row.to_domain() if row is not None else None" %}
 {% set fetch_note = "# A read goes through storage and crosses into the domain at to_domain(),\n    # the same seam every use case reads through. A write added here calls the\n    # use case in use_cases/, so the rules run whoever asked." %}

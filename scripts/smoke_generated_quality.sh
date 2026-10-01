@@ -61,9 +61,13 @@ fail() {
 EVERYTHING="database,cache,telemetry,rag,llm,queue,outbox,idempotency,auth,accounts"
 EVERYTHING="${EVERYTHING},ratelimit,channels,websocket,web,sentry,http,storage,tenancy,mail"
 
+# An enum in every layout's key, so its StrEnum reaches the finders, the rules
+# and the fakes under mypy --strict, not only the columns and the models.
 FIELDS="cartera_id:int, mes:str(7), gasto:money, leida:bool=false, nota:text?"
+FIELDS="${FIELDS}, tipo:enum(fijo,variable)=fijo"
 ALL_TYPES="a:int, b:bigint?, c:str(20)=abierto, d:text?, e:bool=true, f:float?"
 ALL_TYPES="${ALL_TYPES}, g:decimal(12,2)=0, h:money, i:date, j:datetime?, k:json?"
+ALL_TYPES="${ALL_TYPES}, m:enum(abierta,en_revision,cerrada)=abierta, n:enum(baja,alta)?"
 
 modules() {
   local layout
@@ -71,7 +75,7 @@ modules() {
     "${JFAST}" new module "ejemplo_${layout}" --layout "${layout}" > /dev/null \
       || fail "$1: new module ejemplo_${layout} (example fields)"
     "${JFAST}" new module "presupuesto_${layout}" --layout "${layout}" \
-      --fields "${FIELDS}" --unique "cartera_id,mes" > /dev/null \
+      --fields "${FIELDS}" --unique "cartera_id,mes,tipo" > /dev/null \
       || fail "$1: new module presupuesto_${layout} (--fields)"
     "${JFAST}" new module "vacio_${layout}" --layout "${layout}" --bare > /dev/null \
       || fail "$1: new module vacio_${layout} (--bare)"
@@ -126,6 +130,34 @@ mkdir -p "${WORK}/everything" && cd "${WORK}/everything"
 if "${JFAST}" new service todo --with "${EVERYTHING}" > new.log 2>&1; then
   cd todo
   modules everything
+  # The imports the docs show, gated by the project's own mypy --strict. In
+  # 0.1.0a12 `jfastframework.auth` exposed them through a `__getattr__` typed
+  # `-> object`, and `Depends(require_auth)` failed every strict project.
+  mkdir -p shared
+  cat > shared/documented_auth.py <<'PY'
+"""The auth imports as docs/auth.md writes them."""
+
+from fastapi import APIRouter, Depends
+
+from jfastframework.auth import Principal, optional_auth, require_auth, require_scopes
+
+router = APIRouter()
+
+
+@router.get("/me")
+async def me(caller: Principal = Depends(require_auth)) -> str:
+    return caller.subject
+
+
+@router.post("/things")
+async def create(caller: Principal = Depends(require_scopes("things:write"))) -> str:
+    return caller.subject
+
+
+@router.get("/maybe")
+async def maybe(caller: Principal | None = Depends(optional_auth)) -> str:
+    return caller.subject if caller else ""
+PY
   gates everything
 else
   cat new.log

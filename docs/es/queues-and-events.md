@@ -57,7 +57,8 @@ jfast worker                    # --concurrency 4, --grace 25
 ```
 
 `GET /queue/stats` reporta las profundidades y los nombres de tasks
-registradas.
+registradas, a cualquiera que pregunte: está encendido en desarrollo y cerrado
+en producción, salvo que `[plugin.queue] expose_stats = true` diga otra cosa.
 
 ### Las tasks viven en su módulo
 
@@ -85,6 +86,38 @@ transacción queda acotada a él, igual que la de una request. Se hace commit
 cuando el handler regresa y rollback cuando lanza, y entonces el job se
 reintenta. Una task que la declara en un servicio sin el plugin `database`
 detiene el arranque con el arreglo en el mensaje.
+
+### Los providers de la app: `llm`, `storage`, el outbox
+
+Una ruta llega a un plugin con `get_context(request.app).require(...)`. Una
+task no tiene request, así que pide el contexto: un parámetro anotado
+`TaskContext` (que *es* `AppContext`; sirve cualquiera de las dos anotaciones)
+recibe el contexto de la app que está corriendo, y `require` funciona igual que
+en una ruta.
+
+```python
+# modules/receipt/tasks.py
+from jfastframework.events import Event
+from jfastframework.tasks import TaskContext, TaskSession, task
+
+@task("receipt.extract", idempotent_on=lambda payload: payload["receipt_id"])
+async def extract(payload: dict, session: TaskSession, ctx: TaskContext) -> None:
+    image = await ctx.require("storage").disk("private").get(payload["key"])
+    result = await ctx.require("llm").chat(
+        [...], tenant_id=payload["tenant_id"], purpose="read-receipt"   # ver llm.md
+    )
+    await ctx.require("outbox").publish(
+        session, "receipts", Event(type="receipt.extracted", data={"id": payload["receipt_id"]})
+    )
+```
+
+Los handlers de `@subscribe` lo reciben igual (`async def react(event: Event,
+ctx: TaskContext)`). Es el contexto del proceso que corre el job -- el del
+worker con `jfast worker`, el de la API cuando lo corre la API -- y los dos
+construyen la misma app desde el mismo `jfast.toml`, así que tienen los mismos
+providers. Cada parámetro es opcional e independiente: pide la sesión, el
+contexto, los dos o ninguno. No guardes tu propia copia del contexto a nivel de
+módulo para esto: el que se pasa es el que tiene los plugins arrancados.
 
 ### Idempotencia sin pensarlo
 
@@ -396,7 +429,7 @@ from jfastframework.tasks import TaskSession
 
 @subscribe("receipt.registered")
 async def check_budget(event: Event, session: TaskSession) -> None:
-    ...
+    ...   # agrega `ctx: TaskContext` para llegar a llm, storage, el outbox
 ```
 
 ```toml

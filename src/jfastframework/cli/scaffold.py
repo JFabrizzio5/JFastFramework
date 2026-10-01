@@ -582,7 +582,7 @@ def module_context(
     snake = to_snake(name)
     plural = pluralize(snake, language)
     resolved_table = table or plural
-    declared = module_fields(fields, unique, bare=bare, table=resolved_table)
+    declared = module_fields(fields, unique, bare=bare, table=resolved_table, owner=to_pascal(name))
     return {
         "module": snake,
         "Module": to_pascal(name),
@@ -700,12 +700,30 @@ def service_context(
             if n not in enabled and n not in BASE_PLUGINS
         ],
         **{f"has_{n}": n in enabled for n in PLUGIN_CATALOG},
+        # AGENTS.md lists them: an agent that sees a boot WARNING about one of
+        # these must know the environment is meant to win.
+        "environment_owned": environment_owned(enabled),
     }
     if language != "python":
         # Non-Python templates ship one sample domain module and need the same
         # naming vocabulary the Python module templates use.
         context.update(module_context(sample_module))
     return context
+
+
+def environment_owned(enabled: Collection[str]) -> list[tuple[str, str]]:
+    """``(section, "key (VARIABLE), ...")`` for ``[app]`` and each enabled plugin.
+
+    Read from ``deployment_keys.DEPLOYMENT_KEYS`` rather than written into the
+    template, so the generated AGENTS.md cannot drift from what the kernel does.
+    """
+    from jfastframework.deployment_keys import DEPLOYMENT_KEYS
+
+    grouped: dict[str, list[str]] = {}
+    for spec in DEPLOYMENT_KEYS:
+        if spec.table == "app" or spec.table in enabled:
+            grouped.setdefault(spec.section, []).append(f"{spec.key} ({spec.variable})")
+    return [(section, ", ".join(keys)) for section, keys in grouped.items()]
 
 
 def view_context(

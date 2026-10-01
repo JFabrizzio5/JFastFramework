@@ -2001,6 +2001,235 @@ def _own_database_error_handlers(project: Project) -> list[str]:
     return found
 
 
+def _dockerfile_owned_dirs(text: str) -> tuple[set[str], set[str]]:
+    """The directories a Dockerfile hands to appuser: ``(chown'd, chown -R'd)``.
+
+    Read from ``chown appuser...`` commands with their continuation lines
+    joined, which is how both the generated line and a hand-written one say it.
+    """
+    joined = text.replace("\\\n", " ")
+    plain: set[str] = set()
+    recursive: set[str] = set()
+    for line in joined.splitlines():
+        for command in re.split(r"&&|;|\|\|", line):
+            words = command.split()
+            if "chown" not in words:
+                continue
+            args = words[words.index("chown") + 1 :]
+            flags = {a for a in args if a.startswith("-")}
+            operands = [a for a in args if not a.startswith("-")]
+            if len(operands) < 2 or not operands[0].startswith("appuser"):
+                continue
+            target = recursive if flags & {"-R", "--recursive"} else plain
+            target.update(p.rstrip("/") or "/" for p in operands[1:])
+    return plain, recursive
+
+
+def _image_cannot_write_local_storage(project: Project) -> list[str]:
+    """A local storage disk whose root a USER appuser image leaves to root."""
+    if "storage" not in _active_plugins(project):
+        return []
+    dockerfile = project.root / "Dockerfile"
+    if not dockerfile.is_file():
+        return []
+    text = dockerfile.read_text(encoding="utf-8", errors="replace")
+    if "USER appuser" not in text:
+        return []
+    disks = _table(_config(project), "plugin", "storage").get("disks")
+
+    from jfastframework.deploy.compose import IMAGE_WORKDIR, local_disk_dirs
+
+    local = local_disk_dirs(disks if isinstance(disks, dict) else None)
+    if not local:
+        return []
+    plain, recursive = _dockerfile_owned_dirs(text)
+    if IMAGE_WORKDIR not in plain | recursive:
+        return ["Dockerfile: USER appuser, and /app is still owned by root"]
+
+    def owned(directory: str) -> bool:
+        if directory in plain or directory in recursive:
+            return True
+        return any(directory.startswith(parent + "/") for parent in recursive)
+
+    # A disk's root has to exist in the image, owned by appuser, or the volume
+    # compose mounts on it is created as root and the disk cannot write:
+    # 0.1.0a12's Dockerfile created only the default disks.
+    return [
+        f"Dockerfile: {directory} (disk {name}) is not created for appuser; "
+        "a volume mounted there starts out owned by root"
+        for name, directory in local.items()
+        if not owned(directory)
+    ]
+
+
+def _nullable_unique_keys(project: Project) -> list[str]:
+    """A generated unique key over an optional column, still NULLS NOT DISTINCT."""
+    found: list[str] = []
+    for relative, tree in _parsed_files(project.root):
+        if not relative.startswith("modules/") or "/tests/" in relative:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            optional = {
+                item.target.id
+                for item in node.body
+                if isinstance(item, ast.AnnAssign)
+                and isinstance(item.target, ast.Name)
+                and "None" in ast.unparse(item.annotation)
+            }
+            for call in ast.walk(node):
+                if not (
+                    isinstance(call, ast.Call)
+                    and ast.unparse(call.func).split(".")[-1] == "UniqueConstraint"
+                    and any(
+                        k.arg == "postgresql_nulls_not_distinct"
+                        and isinstance(k.value, ast.Constant)
+                        and k.value.value is True
+                        for k in call.keywords
+                    )
+                ):
+                    continue
+                columns = [
+                    a.value
+                    for a in call.args
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str)
+                ]
+                nullable = [c for c in columns if c in optional and c != "tenant_id"]
+                if nullable:
+                    found.append(f"{relative}:{call.lineno} {node.name}: {', '.join(nullable)}")
+    return found
+
+
+def _facades_with_an_optional_tenant(project: Project) -> list[str]:
+    """A multitenant service's module facades that still accept ``tenant_id=None``.
+
+    What 0.1.0a11 generated for every layout, tenancy or not. Only a service
+    with tenancy is told: with one customer, None is the right value (its rows
+    carry no tenant), and ``jfast check --multitenant-ready`` lists the same
+    signatures for the day that changes.
+    """
+    from jfastframework.multitenant.readiness import optional_tenant_parameters
+
+    if "tenancy" not in _active_plugins(project):
+        return []
+    found: list[str] = []
+    for relative, tree in _parsed_files(project.root):
+        parts = relative.split("/")
+        if len(parts) != 3 or parts[0] != "modules" or parts[2] != "public.py":
+            continue
+        for function, argument in optional_tenant_parameters(tree):
+            spelled = ast.unparse(argument.annotation) if argument.annotation else "= None"
+            found.append(f"{relative}:{argument.lineno} {function.name}(tenant_id: {spelled})")
+    return found
+
+
+#: Development defaults the generator writes for a setting the environment
+#: owns, and writes knowing it: the line says, in a comment, which variable
+#: wins over it. A project that carries the same value means the same thing,
+#: and for it 0.1.0a12 changes only what F12 asked for -- a deployment that
+#: sets the variable gets its value. `test_a_project_jfast_start_generates_is_
+#: told_nothing` fails the day the generator writes an owned key this does not
+#: name, so the two cannot drift apart.
+_LOCAL_ORIGIN = re.compile(r"http://(localhost|127\.0\.0\.1)(:\d+)?")
+
+
+def _generated_default(table: str, key: str, value: Any, config: dict[str, Any]) -> bool:
+    if (table, key) == ("app", "cors_origins"):
+        # What `jfast start` writes for the frontends' dev servers.
+        return isinstance(value, list) and all(
+            isinstance(origin, str) and _LOCAL_ORIGIN.fullmatch(origin) is not None
+            for origin in value
+        )
+    if (table, key) == ("auth", "audience"):
+        return bool(value == _table(config, "app").get("name"))
+    written: dict[tuple[str, str], Any] = {
+        ("observability", "level"): "INFO",
+        ("observability", "json_logs"): False,
+        ("llm", "budget_usd"): 10.0,
+        ("llm", "tenant_budget_usd"): 2.0,
+        ("storage", "serve_local"): True,
+        ("tenancy", "base_domain"): "localhost",
+        ("notifications", "backend"): "console",
+    }
+    return (table, key) in written and value == written[(table, key)]
+
+
+def _deployment_keys_in_the_file(project: Project) -> list[str]:
+    """Settings the environment now owns that ``jfast.toml`` sets to a chosen value.
+
+    From 0.1.0a12 a variable in ``deployment_keys.DEPLOYMENT_KEYS`` set in the
+    process environment wins over the file, so each listed line is now only a
+    default a deployment may replace -- and a deployment that already set the
+    variable, and was silently ignored, now gets it.
+
+    Listed: a value somebody chose, and a line the generator no longer writes
+    (``[app] env = "local"`` and ``[plugin.auth] issuer = ""``, which every
+    project ``jfast start`` generated before 0.1.0a12 has). Not listed: a key
+    the file does not write, which took the environment's value already, and
+    the development defaults the generator still writes (:func:`_generated_default`),
+    for which the change is exactly the fix. Only ``[app]`` and the tables of
+    plugins that run. The machine running the check is not the deployment, so
+    its own environment is not read: the list is the same on a laptop and in
+    CI. Secrets are masked.
+    """
+    from jfastframework.deployment_keys import (
+        config_lines,
+        line_of,
+        owned_in_file,
+        toml_spelling,
+    )
+
+    config = _config(project)
+    owned = [
+        item
+        for item in owned_in_file(config, {}, tables={"app", *_active_plugins(project)})
+        if not _generated_default(item.spec.table, item.key, item.value, config)
+    ]
+    if not owned:
+        return []
+    try:
+        lines = config_lines((project.root / "jfast.toml").read_text(encoding="utf-8"))
+    except OSError:
+        lines = {}
+    return [
+        f"jfast.toml:{line_of(lines, item) or 0} {item.where} = "
+        f"{toml_spelling(item.value, secret=item.spec.secret)}: "
+        f"{item.variable} in the environment now wins over it"
+        for item in owned
+    ]
+
+
+def _unsigned_tenant_sources_with_auth(project: Project) -> list[str]:
+    """`auth` and `tenancy` on, with a subdomain, path or header among the sources.
+
+    Only that combination changed: without `auth` there is no principal to
+    check and the resolved tenant stays usable, and `token`/`user` are signed.
+    The sources read are the ones the plugin will use -- its default is
+    ``["token", "subdomain"]`` -- and ``subdomain`` counts only with a
+    ``base_domain``, since without one the service refuses to start at all.
+    """
+    active = _active_plugins(project)
+    if "auth" not in active or "tenancy" not in active:
+        return []
+    tenancy = _table(_config(project), "plugin", "tenancy")
+    sources = tenancy.get("sources", ["token", "subdomain"])
+    if not isinstance(sources, list):
+        return []
+    unsigned = [
+        str(source)
+        for source in sources
+        if source in ("path", "header")
+        or (source == "subdomain" and str(tenancy.get("base_domain") or ""))
+    ]
+    if not unsigned:
+        return []
+    spelled = ", ".join(f'"{source}"' for source in sources)
+    written = "sources" in tenancy
+    where = f"[plugin.tenancy] sources = [{spelled}]" + ("" if written else " (the default)")
+    return [f"{where}: {', '.join(unsigned)} no longer grants a tenant without a session"]
+
+
 def _tenant_header_without_tenancy(project: Project) -> list[str]:
     """Code that sends or configures the tenant header, in a service without ``tenancy``.
 
@@ -2289,6 +2518,122 @@ CHANGES: tuple[Change, ...] = (
             "Make sure the client address is the real one (trusted proxies), then raise "
             "login_limit_per_ip for a shared egress. Set [plugin.accounts] rate_limit = false "
             "to keep 0.1.0a10's behaviour."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="breaking",
+        code="image-cannot-write-local-storage",
+        summary="The generated image cannot write a local storage disk: boot fails or /ready 503s.",
+        detail=(
+            "The Dockerfile runs as appuser, but WORKDIR created /app as root and --chown only "
+            "reached the copied files, so local storage could not create storage/ and the "
+            "service failed to start. A volume mounted on a path the image never created is "
+            "created as root too: a disk other than public and private (storage/adjuntos) "
+            "answered /ready 503 and every upload 500 with PermissionError. Development on "
+            "the host never sees it."
+        ),
+        detect=_image_cannot_write_local_storage,
+        remedy=(
+            "Regenerate it with `jfast deploy dockerfile` (it reads [plugin.storage.disks]), "
+            "or run `jfast add storage` to rewrite only its storage line. By hand: RUN mkdir "
+            "-p <each local disk root> && chown appuser:appuser /app <each root and its "
+            "parents>. A volume docker already created as root keeps root: chown it once "
+            "(docs/storage.md, `A volume created as root`)."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="behaviour",
+        code="unique-key-on-optional-field",
+        summary="A unique key over an optional field allowed one row without a value.",
+        detail=(
+            "`jfast new module --unique` generated NULLS NOT DISTINCT for every key, so two "
+            "rows with the optional field empty collided, and the rule looked None up: the "
+            "second receipt without a UUID answered 409. 0.1.0a12 generates a partial unique "
+            "index (WHERE field IS NOT NULL) and skips the rule when the value is missing."
+        ),
+        detect=_nullable_unique_keys,
+        remedy=(
+            "Replace the UniqueConstraint with Index(name, 'tenant_id', 'field', unique=True, "
+            "postgresql_nulls_not_distinct=True, postgresql_where=text('field IS NOT NULL')), "
+            "return early from the availability rule when the field is None, and write the "
+            "migration that drops the constraint and creates the index."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="behaviour",
+        code="facade-tenant-optional",
+        summary="Generated facades accepted tenant_id=None, which reads every tenant's rows.",
+        detail=(
+            "public.py's get_<module>(session, *, tenant_id: str | None, ...) built its "
+            "repository with tenant_id as given, and None means no tenant filter: a task or "
+            "another module passing a variable that happened to be None read every tenant. "
+            "`jfast check --multitenant-ready` only caught the literal None. 0.1.0a12 "
+            "generates tenant_id: str in a service with tenancy, and the readiness report "
+            "flags a facade signature that admits None (facade-tenant-optional)."
+        ),
+        detect=_facades_with_an_optional_tenant,
+        remedy=(
+            "Change each listed parameter to `tenant_id: str` and run mypy: it names every "
+            "caller that can still pass None. Give those the tenant they run for -- "
+            "current_tenant in a route, job.tenant_id in a task."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="behaviour",
+        code="jfast-env-wins-over-the-file",
+        summary=(
+            "The environment now wins over jfast.toml for the settings that depend on where "
+            "the service runs: [app] env and debug, mail, llm budgets, DSNs, auth issuer..."
+        ),
+        detail=(
+            'jfast start wrote [app] env = "local", and jfast.toml won over the environment, '
+            "so JFAST_ENV=prod -- the switch docs/deploy.md's checklist names -- did nothing: "
+            "the production image ran with /docs, /info and /queue/stats open, console mail "
+            "and no HSTS. The same rule ignored JFAST_MAIL_BACKEND=smtp, JFAST_LLM_BUDGET_USD "
+            "and JFAST_STORAGE_SERVE_LOCAL=false under a file that set them. For the keys in "
+            "deployment_keys.DEPLOYMENT_KEYS (the table in docs/deploy.md, 'Which wins') the "
+            "process environment now beats the file, which keeps winning for everything "
+            "else; a disagreement is a masked WARNING at boot and a line in jfast check. A "
+            "deployment that already set one of these variables now gets its value instead "
+            "of the file's."
+        ),
+        detect=_deployment_keys_in_the_file,
+        remedy=(
+            'For each listed line: if the value is a development default (env = "local", a '
+            "console backend, a localhost address, json_logs = false), delete it or keep it "
+            "knowing it is only a default, and set the real value where the service is "
+            "deployed -- under compose's environment:, not in a copied .env. If a deployment "
+            "sets the variable, make sure its value is the one you want: it is the one that "
+            "runs now. `jfast check` lists every disagreement between the two."
+        ),
+    ),
+    Change(
+        version="0.1.0a12",
+        kind="breaking",
+        code="unsigned-tenant-needs-a-session",
+        summary=(
+            "With auth on, a subdomain, path or header names a tenant but no longer grants one."
+        ),
+        detail=(
+            "current_tenant returned the subdomain's tenant with nobody signed in, so "
+            "`curl -H 'Host: acme.example.com' /tickets` listed and created acme's rows, and a "
+            "signed-in user of one tenant on another's subdomain was served as that tenant. "
+            "Now, with auth on: no session is a 401; a token whose tenant claim differs from "
+            "the subdomain, path or header is a 403; a token with no tenant is a 403 unless "
+            "[plugin.tenancy] trust_unscoped_principals = true. request.state.tenant_id, the "
+            "RLS session and TenantSession get only the granted tenant; the named one is on "
+            "request.state.tenant_requested, which the sign-in routes read."
+        ),
+        detect=_unsigned_tenant_sources_with_auth,
+        remedy=(
+            "Nothing for routes that use current_tenant: sign in on the subdomain and send the "
+            "token. A page that is public on purpose (a tenant's sign-in form, its branding) "
+            "takes Depends(requested_tenant) instead. If tokens carry no tenant claim and the "
+            "service checks membership itself, set trust_unscoped_principals = true."
         ),
     ),
     Change(

@@ -803,7 +803,7 @@ def analyze(project: Project, *, known_plugins: frozenset[str] | None = None) ->
                         why=(
                             "The table is never created. The service starts and the first query "
                             "fails on a relation that does not exist. Run "
-                            "`alembic revision --autogenerate`."
+                            "`jfast exec -- alembic revision --autogenerate`."
                         ),
                         path=f"{module.path}/",
                     )

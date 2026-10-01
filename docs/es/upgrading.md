@@ -170,6 +170,60 @@ desarrollo.
 
 ---
 
+## Lo que cambia en `0.1.0a12`
+
+Correcciones, y una es de seguridad y cambia respuestas:
+
+- `unsigned-tenant-needs-a-session` -- `auth` y `tenancy` activos, con
+  `subdomain`, `path` o `header` entre las fuentes (el default del plugin, y lo
+  que escribe `jfast new service --with auth,tenancy`). Esas fuentes ya no
+  otorgan un tenant por sí solas: un request en `acme.` sin sesión es 401 donde
+  `current_tenant` le entregaba las filas de acme, y un token cuyo tenant no
+  coincide con el subdominio -- o que no trae ninguno -- es 403. Las rutas que
+  usan `current_tenant` no necesitan nada; una página pública a propósito toma
+  `Depends(requested_tenant)`; un servicio cuyos tokens no traen tenant y que
+  revisa la membresía por su cuenta pone `[plugin.tenancy]
+  trust_unscoped_principals = true`. Ver
+  [multi-tenancy](multitenancy.md#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-si-sola).
+  **Un servicio de Go** generado antes tiene el mismo hueco en su
+  `internal/jfast/tenancy.go` copiado, y `jfast upgrade --check` no lee Go: si
+  pone `JFAST_TENANCY_SOURCES` con `subdomain`, `path` o `header` y auth está
+  activo, copia `tenancy.go` de un servicio generado por 0.1.0a12 y pásale el
+  `*jfast.Auth` a `jfast.NewTenancy(tenancyConfig, cfg, auth, logger)`.
+
+- `jfast-env-wins-over-the-file` -- un ajuste que depende de dónde corre el
+  servicio, escrito en `jfast.toml`: `[app] env` (que tiene todo proyecto que
+  generó `jfast start`), `debug`, `[plugin.auth] issuer = ""` (modo jwks), un
+  backend de correo, un tope del LLM, un DSN -- la tabla completa está en
+  [deploy](deploy.md#quien-gana-jfasttoml-o-el-entorno). El entorno del proceso
+  ahora le gana a cada uno, así que un despliegue que pone `JFAST_ENV=prod`
+  por fin corre como producción (`/docs`, `/info` y `/queue/stats` se cierran,
+  y un plugin que quedó en un backend de desarrollo se niega a arrancar), y uno
+  que pone `JFAST_MAIL_BACKEND=smtp` por fin manda correo. La nota lista un
+  valor que alguien eligió y las dos líneas que 0.1.0a12 ya no escribe; deja
+  fuera los defaults de desarrollo que el generador sigue escribiendo
+  (`json_logs = false`, `serve_local = true`, `base_domain = "localhost"`,
+  ...), para los que el cambio es el arreglo mismo. Borra lo que solo es un
+  default de desarrollo, pon el valor real en el `environment:` de compose y
+  lee el log de arranque por las líneas `overridden by ... from the
+  environment` -- `jfast check` lista lo mismo, con archivo y línea.
+
+Nada más detiene a un servicio correcto de `0.1.0a11`. Tres notas señalan
+archivos que `0.1.0a11` generó y que hay que tocar:
+
+- `image-cannot-write-local-storage` -- un servicio con `storage` cuyo
+  Dockerfile corre como `appuser` sin ser dueño de `/app` (la imagen se detiene
+  al arrancar), o sin crear la raíz de un disco local que no sea `public` ni
+  `private` (`/ready` 503, subidas 500). `jfast deploy dockerfile` la regenera
+  desde `[plugin.storage.disks]`; un volumen ya creado como root necesita un
+  `chown` ([Storage](storage.md#un-volumen-creado-como-root)).
+- `facade-tenant-optional` -- un servicio multitenant cuyas fachadas `public.py`
+  aceptan `tenant_id: str | None`: None lee todos los tenants. Cámbialo a
+  `tenant_id: str` y deja que mypy nombre a quien lo llama.
+- `unique-key-on-optional-field` -- una llave `--unique` sobre un campo `?`,
+  todavía como restricción `NULLS NOT DISTINCT`: la segunda fila sin valor es un
+  409. Reemplázala por el índice parcial que cita la nota, en una migración.
+
 ## Lo que cambia en `0.1.0a11`
 
 Nada en esta versión impide arrancar a un servicio correcto de `0.1.0a10`. Lo

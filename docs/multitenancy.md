@@ -20,13 +20,13 @@ base_domain = "app.example.com"
 
 The list is tried in order and the first hit wins. That order is the design:
 
-| Source | Controlled by | Trust |
-| --- | --- | --- |
-| `token` | your identity provider, cryptographically | high |
-| `user` | the same signed token: the user *is* the tenant | high |
-| `subdomain` | your DNS and TLS | medium |
-| `path` | the URL | low |
-| `header` | whoever sent the request | **none** |
+| Source | Controlled by | Signed | With `auth` on |
+| --- | --- | --- | --- |
+| `token` | your identity provider, cryptographically | yes | grants the tenant |
+| `user` | the same signed token: the user *is* the tenant | yes | grants the tenant |
+| `subdomain` | whoever sends the `Host` header | no | names a tenant; the principal must agree |
+| `path` | whoever writes the URL | no | names a tenant; the principal must agree |
+| `header` | whoever sent the request | no | names a tenant; the principal must agree |
 
 `header` exists because it is genuinely useful in development and in tests. It
 is not in the default list, and enabling it in production logs a warning,
@@ -35,6 +35,74 @@ because `X-Tenant-ID: acme` is one `curl` away from another tenant's data.
 A signed claim always outranks the hostname. Someone who points `acme.` at your
 IP has not become Acme; someone holding a token your identity provider signed
 for Acme has.
+
+### With `auth` on, an unsigned source never grants a tenant by itself
+
+The subdomain is not protected by your DNS: `curl -H "Host: acme.example.com"
+https://your-ip/tickets` needs no DNS at all. So when the `auth` plugin is on, a
+tenant that comes from `subdomain`, `path` or `header` only *names* the tenant
+the request is about. The tenant the request may act in -- the one on
+`request.state.tenant_id`, in the RLS session, in `TenantSession`, in every job
+and event, and the one `current_tenant` returns -- has to be backed by the
+principal:
+
+| The request | Tenant granted | `current_tenant` |
+| --- | --- | --- |
+| no session, whatever the subdomain, path or header say | none | **401** |
+| token claim `acme`; the unsigned source says nothing or `acme` | `acme` | `acme` |
+| token claim `acme`; the unsigned source says `globex` | none | **403** |
+| signed in, no tenant in the token; the unsigned source says `globex` | none | **403** |
+| the same, with `trust_unscoped_principals = true` | `globex` | `globex` |
+| signed in, no tenant anywhere | none | 403, as before |
+
+A signed source outranks an unsigned one wherever each sits in `sources`; the
+order only ranks sources of the same kind. The `user` source counts as signed:
+with `sources = ["token", "user", "subdomain"]`, a user without an organisation
+claim is their own tenant, and another tenant's subdomain is a 403.
+
+Why the token without a tenant is refused by default: nothing signed says that
+account belongs to `globex`. The framework cannot tell a member from a
+stranger -- a platform account from one customer, a user created before
+organisations existed -- and serving the subdomain's tenant to any signed-in
+account is the same hole with a login in front of it. A service that *does*
+know -- staff accounts that work across tenants, a membership table it reads
+on every request -- says so explicitly:
+
+```toml
+[plugin.tenancy]
+sources = ["token", "subdomain"]
+base_domain = "app.example.com"
+# The service checks membership itself; a signed-in account without a tenant
+# claim may act in the tenant the subdomain names.
+trust_unscoped_principals = true
+```
+
+The refused request is not refused wholesale: routes that ask for no tenant --
+`/health`, `/auth/refresh`, `/auth/logout` -- still answer. Only what asks for a
+tenant hears the 401 or 403. `request.state.tenant_id` is `None`, so a route
+that reads it directly gets no tenant rather than the wrong one.
+
+**Signing in on a subdomain** is the legitimate use of an unsigned source, and
+it keeps working: before a session exists, the subdomain is the only way to say
+which tenant's accounts `/auth/login`, `/auth/register` and the password-reset
+routes look in, and the password is what proves the caller belongs there. The
+named tenant is on `request.state.tenant_requested`; a page that is public on
+purpose -- a tenant's sign-in form, its logo -- reads it with `requested_tenant`:
+
+```python
+from jfastframework.plugins.builtin.tenancy import requested_tenant
+
+@router.get("/branding")
+async def branding(tenant: str = Depends(requested_tenant)):  # 404 if none named
+    ...
+```
+
+It proves nothing about the caller: never choose whose rows to read or write
+with it.
+
+**Without `auth`** there is no principal to check the source against. A public
+site with a tenant per subdomain -- a catalogue at `acme.shop.example.com` --
+keeps the resolved tenant as it always has.
 
 ## Every account is its own tenant: the `user` source
 
@@ -78,12 +146,15 @@ async def invoices(tenant: str = Depends(current_tenant), session: DbSession = .
     return await InvoiceService(InvoiceRepository(session, tenant_id=tenant)).list()
 ```
 
-`current_tenant` returns what the plugin resolved. With nobody signed in it
-answers **401** -- an expired token must make the client refresh, and clients
-refresh on a 401, not on a 403 -- and with a signed-in caller the sources could
-not scope, **403**. It reads nothing else -- not a header, not a body field. In a
-service without the tenancy plugin it falls back to the token's `tenant_id`
-claim, so a service that only uses `auth` still works.
+`current_tenant` returns what the plugin granted. With `auth` on and nobody
+signed in it answers **401** -- whatever the subdomain, path or header say; an
+expired token must make the client refresh, and clients refresh on a 401, not on
+a 403 -- and **403** when the signed-in caller's tenant disagrees with the one
+the request names, or the sources could not scope the request at all (the
+[table above](#with-auth-on-an-unsigned-source-never-grants-a-tenant-by-itself)).
+It reads nothing else -- not a header, not a body field. In a service without
+the tenancy plugin it falls back to the token's `tenant_id` claim, so a service
+that only uses `auth` still works.
 
 Prefer it to `getattr(request.state, "tenant_id", None)`: a `None` that reaches
 a repository means "no tenant filter", and the dependency makes that a 403
@@ -119,8 +190,6 @@ TLS, plus the global `ask` endpoint that gates it:
 {
 	on_demand_tls {
 		ask http://api:8000/internal/tenant-exists
-		interval 2m
-		burst 5
 	}
 }
 ```
@@ -148,6 +217,11 @@ hostname Caddy sees, including the ones probing you.
 You also need a wildcard DNS record (`*.app.example.com`) pointing at the same
 address.
 
+A SPA served from one host that signs users in at their tenant's subdomain
+makes a cross-origin request, and `cors_origins` is a list of exact origins.
+`cors_origin_regex = 'https://[a-z0-9-]+\.app\.example\.com'` in `[app]`
+allows every tenant at once -- see [Deploy, CORS](deploy.md#cors).
+
 ## Requiring a tenant
 
 ```toml
@@ -157,7 +231,9 @@ require_tenant = true
 
 Any request that resolves to no tenant gets a `403` in problem+json. Health
 checks, metrics, `/docs` and `/openapi.json` are exempt — a readiness probe has
-no tenant and must not fail.
+no tenant and must not fail. A request that *names* a tenant it was not granted
+-- `acme.` with no session -- passes this check, so the sign-in routes on the
+subdomain stay reachable; `current_tenant` answers its 401 or 403.
 
 ## A database per tenant
 
@@ -463,6 +539,7 @@ nothing marks. This lists them with file and line, the way `jfast upgrade
 | Rule | Severity | Looks for |
 | --- | --- | --- |
 | `tenant-none-literal` | high | a call passing `tenant_id=None`: a repository, a facade, `rag`, `llm` |
+| `facade-tenant-optional` | high | a module facade (`modules/<name>/public.py`) whose `tenant_id` admits None (`str \| None`, `Optional[str]`, `= None`): a variable that happens to be None reads every tenant, and no literal marks the call. The facades generated for a single-tenant service are listed here on purpose -- change them to `tenant_id: str` when tenancy goes on |
 | `route-without-tenant` | high | a route that opens a database session and has no tenant dependency |
 | `factory-without-tenant` | high | the same, in a dependency (`get_service`), reported once with the routes that use it |
 | `raw-sql-without-tenant` | high | an SQL string naming a tenant table and never `tenant_id` |

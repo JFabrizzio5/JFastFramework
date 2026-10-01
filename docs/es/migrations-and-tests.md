@@ -12,11 +12,23 @@ que configurar.
 `database` esté habilitado.
 
 ```bash
-alembic revision --autogenerate -m "add invoices"
-alembic upgrade head
-alembic downgrade -1
-alembic history
+jfast exec -- alembic revision --autogenerate -m "add invoices"
+jfast exec -- alembic upgrade head
+jfast exec -- alembic downgrade -1
+jfast exec -- alembic history
 ```
+
+**Por qué `jfast exec --`.** En un workspace el `.env` del servicio está escrito
+para compose: el DSN nombra `<workspace>-database:5432` y deja la contraseña
+como `${<WORKSPACE>_DATABASE_PASSWORD}`. Ninguna de las dos cosas sirve para un
+proceso en tu máquina, así que un `alembic` a secas falla con un error de DNS.
+`jfast exec --` corre el comando con el `.env` traducido como lo hace `jfast
+dev` -- nombres de contenedor a `localhost:<puerto publicado>`, la contraseña
+tomada del `.env` del workspace -- y no cambia nada cuando no hay un
+`docker-compose.yml` junto al servicio o un nivel arriba, o cuando corre dentro
+de un contenedor. Una variable que pongas en el shell gana. `alembic` a secas
+sigue siendo lo correcto donde el `.env` ya apunta a una base alcanzable, y es
+lo que corre el entrypoint de la imagen.
 
 Dos cosas que hace y que un `alembic init` de fábrica no hace:
 
@@ -231,7 +243,11 @@ generó una versión vieja, y el hallazgo es correcto.
 #### Los conteos de filas necesitan una base de datos
 
 La línea `Reason` de `plan` da un conteo real cuando resuelve un DSN — `--dsn`,
-después `JFAST_DB_DSN`, después `.env` en la raíz del proyecto:
+después `JFAST_DB_DSN`, después `.env` en la raíz del proyecto. En un workspace
+ese `.env` se lee traducido para el host, como lo leen `jfast serve` y `jfast
+exec` (los nombres de contenedor pasan a `localhost:<puerto publicado>` y
+`${...}` se llena desde el `.env` del workspace), así que `jfast migration
+check` en el host llega a la base que publica el archivo de compose:
 
 ```
 Migration:  0004_add_status
@@ -282,6 +298,7 @@ traen sus propios tests, que pasan de inmediato:
 ```bash
 pytest                          # modules/ and tests/
 pytest modules/invoice/tests    # one module
+jfast exec -- pytest            # un workspace: tests que llegan a la base de compose
 ```
 
 ### Fixtures

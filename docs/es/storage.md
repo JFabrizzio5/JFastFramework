@@ -25,7 +25,7 @@ Un servicio nuevo trae dos, y la diferencia entre ellos es todo el punto:
 ```toml
 [plugin.storage]
 default = "public"
-serve_local = true                    # development only
+serve_local = true                    # default de desarrollo; gana JFAST_STORAGE_SERVE_LOCAL
 
 [plugin.storage.disks.public]
 driver = "local"
@@ -52,6 +52,11 @@ await storage.disk("private").put("invoices/1042.pdf", pdf)
 storage.disk("private").url("invoices/1042.pdf")      # StorageError
 await storage.disk("private").temporary_url("invoices/1042.pdf", expires_in=300)
 ```
+
+Eso es desde una ruta. Un handler de `@task` o `@subscribe` no tiene request:
+anota un parámetro `TaskContext` y se lo pide a él -- `ctx.require("storage")`,
+el mismo objeto
+([Colas y eventos](queues-and-events.md#los-providers-de-la-app-llm-storage-el-outbox)).
 
 ## URLs absolutas
 
@@ -448,6 +453,13 @@ En producción, pon Caddy o un CDN delante del disco público y configura
 para transmitir un PDF de 40 MB es un worker que no está sirviendo requests. El
 plugin loguea un warning si se encuentra sirviendo archivos en producción.
 
+`JFAST_STORAGE_SERVE_LOCAL=false` lo hace desde el despliegue aunque
+`jfast.toml` diga `serve_local = true`: el entorno le gana al archivo en esta
+llave y en `signing_key`
+([deploy](deploy.md#quien-gana-jfasttoml-o-el-entorno)). Los ajustes propios de
+un disco -- `bucket`, `endpoint_url`, `region` -- no están en esa tabla: viven
+en la tabla del disco, y los decide el archivo.
+
 Las descargas se mandan como `Content-Disposition: attachment` con
 `X-Content-Type-Options: nosniff`. Un `.html` o `.svg` subido y renderizado
 inline corre el script de quien lo subió en tu origen, contra las cookies de tus
@@ -547,6 +559,48 @@ Estos se firman con la clave del servicio y no con la del disco, así que el lin
 sigue verificando después de que el objeto se mudó a un disco que no firma nada
 por su cuenta. La regla de visibilidad no cambia: decide el disco al que
 resuelve la clave.
+
+## Discos locales en la imagen de producción
+
+La imagen generada corre como `appuser` (uid 10001), y el compose generado
+monta un volumen con nombre en la raíz de cada disco local
+(`<servicio>_<disco>_data`). Docker crea el punto de montaje de un volumen como
+root cuando la imagen no tiene ya ese directorio, así que cada raíz local tiene
+que existir en la imagen y ser de `appuser`. `jfast deploy dockerfile` escribe
+una línea `mkdir`/`chown` con cada disco local de `[plugin.storage.disks]`, y
+`jfast add storage` reescribe solo esa línea en un Dockerfile que ya editaste.
+Después de declarar un disco:
+
+```bash
+jfast add storage          # el Dockerfile crea la raíz nueva para appuser
+jfast workspace compose    # su volumen (`jfast deploy compose` en un servicio suelto)
+docker compose up --build
+```
+
+Sin el primero, `/ready` responde 503 (`/app/storage/adjuntos is not
+writable`) mientras `/health` sigue en 200, y la primera subida es un 500
+`PermissionError`. `jfast upgrade --check` nombra cada raíz que el Dockerfile
+no crea (`image-cannot-write-local-storage`).
+
+### Un volumen creado como root
+
+Docker copia el directorio de la imagen, dueño incluido, en un volumen con
+nombre que está vacío al montarse. Así que un volumen creado como root antes de
+que la imagen tuviera el directorio se arregla con la imagen reconstruida solo
+mientras sigue vacío; en cuanto guarda un archivo se queda de root, `/ready`
+sigue en 503 y reconstruir no cambia nada. Entrégalo una vez, como root, con
+los datos en su lugar:
+
+```bash
+docker compose run --rm --no-deps --user root <servicio> \
+  chown -R appuser:appuser /app/storage/adjuntos
+```
+
+`<servicio>` es el servicio de compose de la API -- `api` con `jfast deploy
+compose`, el nombre del servicio en un workspace. El worker monta el mismo
+volumen, así que basta una vez. Un volumen vacío se puede borrar en su lugar
+(`docker volume rm <proyecto>_<servicio>_adjuntos_data`); el siguiente `up` lo
+crea desde la imagen.
 
 ## Salud
 

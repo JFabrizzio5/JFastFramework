@@ -24,6 +24,7 @@ Design decisions worth keeping:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -31,6 +32,7 @@ import signal
 import subprocess  # nosec B404
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -154,6 +156,140 @@ def host_environment(service_env: Path, root_env: Path, compose_file: Path) -> d
             )
         resolved[key] = value
     return resolved
+
+
+def in_container() -> bool:
+    """Whether this process runs inside a container.
+
+    The host translation below is for a process on the developer's machine. In
+    a container the compose names resolve and ``localhost`` is the container
+    itself, so translating would break a configuration that works. The
+    generated image cannot find a compose file anyway -- ``.dockerignore``
+    drops ``docker-compose*.yml`` and the workspace's lives outside the build
+    context -- but a hand-written Dockerfile might copy one in, and a dev
+    container might mount the whole workspace.
+    """
+    return (
+        Path("/.dockerenv").exists()
+        or Path("/run/.containerenv").exists()
+        or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+    )
+
+
+def find_compose(service_dir: Path) -> Path | None:
+    """The compose file for this service, which usually lives one level up.
+
+    A workspace writes one compose file at its root covering every service, so
+    looking only in the service directory finds nothing in the normal case.
+    """
+    for candidate in (service_dir, service_dir.parent):
+        found = candidate / "docker-compose.yml"
+        if found.is_file():
+            return found
+    return None
+
+
+@dataclass
+class HostEnvironment:
+    """What a host process needs on top of its own environment, and why.
+
+    ``values`` never contains a variable already set in the process
+    environment: pydantic-settings reads the shell over ``.env``, and the
+    translated ``.env`` takes the file's place, not the shell's.
+    """
+
+    values: dict[str, str]
+    compose_file: Path | None
+    skipped: str | None = None
+
+
+def service_host_environment(
+    service_dir: Path, environ: Mapping[str, str] | None = None
+) -> HostEnvironment:
+    """The service's ``.env`` translated for the host, when there is a compose file.
+
+    Found the way ``jfast dev`` finds it (:func:`find_compose`); inside a
+    container, or with no compose file, nothing is translated and ``skipped``
+    says why.
+    """
+    current = os.environ if environ is None else environ
+    if in_container():
+        return HostEnvironment({}, None, "inside a container")
+    compose_file = find_compose(service_dir)
+    if compose_file is None:
+        return HostEnvironment({}, None, "no docker-compose.yml here or one level up")
+    translated = host_environment(service_dir / ".env", compose_file.parent / ".env", compose_file)
+    values = {key: value for key, value in translated.items() if key not in current}
+    return HostEnvironment(values, compose_file)
+
+
+def apply_host_environment(service_dir: Path) -> HostEnvironment:
+    """:func:`service_host_environment`, written into ``os.environ``.
+
+    For the commands that run the app in this very process -- ``jfast serve``
+    and ``jfast worker`` -- so the settings they load, and any child uvicorn
+    starts for ``--reload``, see the host's addresses.
+    """
+    found = service_host_environment(service_dir)
+    os.environ.update(found.values)
+    return found
+
+
+#: Vite's own default, used when neither the dev script nor vite.config names one.
+VITE_DEFAULT_PORT = 5173
+
+_PORT_FLAG = re.compile(r"(?:^|\s)--port(?:=|\s+)(\d+)(?=\s|$)")
+_CONFIG_PORT = re.compile(r"\bserver\s*:\s*\{[^}]*?\bport\s*:\s*(\d+)", re.DOTALL)
+
+
+def frontend_port(front_dir: Path) -> tuple[int, bool]:
+    """The port ``npm run dev`` starts Vite on, and whether the script pins it.
+
+    The generated ``package.json`` runs ``vite --port <workspace port>`` and the
+    generated ``vite.config`` repeats it under ``server.port``; Vite takes the
+    command line over the config and the config over its own 5173. Announcing
+    5173 because ``jfast dev`` did not pass a port printed a URL where nothing
+    was listening. A hand-edited script or config that hides the number (a
+    variable, another tool in front of vite) falls through to the next source.
+    """
+    script = ""
+    package = front_dir / "package.json"
+    try:
+        scripts = json.loads(package.read_text(encoding="utf-8")).get("scripts") or {}
+        script = str(scripts.get("dev") or "")
+    except (OSError, ValueError, AttributeError):
+        script = ""
+    found = _PORT_FLAG.findall(script)
+    if found:
+        # Vite keeps the last --port it is given.
+        return int(found[-1]), True
+    for name in ("vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.mts"):
+        config = front_dir / name
+        if not config.is_file():
+            continue
+        match = _CONFIG_PORT.search(config.read_text(encoding="utf-8"))
+        if match:
+            return int(match.group(1)), False
+    return VITE_DEFAULT_PORT, False
+
+
+def frontend_command(front_dir: Path, web_port: int | None) -> tuple[list[str], int]:
+    """``npm run dev``, with ``--port`` only when it changes something, and the
+    port the frontend will actually be on.
+
+    Appending ``--port`` to a script that already pins the same one produced
+    ``vite --port 8610 --port 8610``. When the requested port differs from the
+    pinned one it is still appended: Vite honours the last ``--port``.
+    """
+    pinned, in_script = frontend_port(front_dir)
+    command = ["npm", "run", "dev"]
+    if web_port is None:
+        return command, pinned
+    if not (in_script and pinned == web_port):
+        # The bare `--` is npm's, not vite's: without it npm eats the flag
+        # instead of forwarding it to the script.
+        command += ["--", "--port", str(web_port)]
+    return command, web_port
 
 
 def run(command: list[str], *, cwd: Path, what: str, env: dict[str, str] | None = None) -> None:
@@ -307,12 +443,21 @@ def python_executable() -> str:
 
 
 __all__ = [
+    "VITE_DEFAULT_PORT",
     "DevError",
+    "HostEnvironment",
     "Process",
+    "apply_host_environment",
     "compose_services",
     "docker_available",
+    "find_compose",
+    "frontend_command",
+    "frontend_port",
+    "host_environment",
+    "in_container",
     "python_executable",
     "run",
+    "service_host_environment",
     "spawn",
     "supervise",
     "terminate",

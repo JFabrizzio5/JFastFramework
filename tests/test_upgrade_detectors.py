@@ -1844,6 +1844,376 @@ def _the_header_only_in_a_comment_or_a_test(root: Path) -> None:
     write(root / "tests" / "test_x.py", GATEWAY_CLIENT)
 
 
+OLD_DOCKERFILE = (
+    "FROM python:3.12-slim\nWORKDIR /app\n"
+    "RUN useradd --create-home --uid 10001 appuser\n"
+    "COPY --chown=appuser:appuser . /app\nUSER appuser\n"
+)
+
+
+@affected_by("image-cannot-write-local-storage")
+def _a_local_disk_in_an_image_that_leaves_app_to_root(root: Path) -> list[str]:
+    service(root, "observability", "storage")
+    write(root / "Dockerfile", OLD_DOCKERFILE)
+    return ["Dockerfile: USER appuser"]
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _the_regenerated_dockerfile(root: Path) -> None:
+    from jfastframework.deploy.compose import render_dockerfile
+
+    service(root, "observability", "storage")
+    write(root / "Dockerfile", render_dockerfile())
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _only_object_storage_disks(root: Path) -> None:
+    service(
+        root,
+        "observability",
+        "storage",
+        extra='\n[plugin.storage.disks.files]\ndriver = "s3"\nbucket = "b"\n',
+    )
+    write(root / "Dockerfile", OLD_DOCKERFILE)
+
+
+ADJUNTOS = (
+    '\n[plugin.storage.disks.public]\ndriver = "local"\nroot = "storage/public"\n'
+    '\n[plugin.storage.disks.private]\ndriver = "local"\nroot = "storage/private"\n'
+    '\n[plugin.storage.disks.adjuntos]\ndriver = "local"\nroot = "storage/adjuntos"\n'
+)
+
+#: What the first 0.1.0a12 build generated: /app handed over, the two default
+#: disks created, and nothing for a disk of the project's own.
+A12_STORAGE_LINES = (
+    "FROM python:3.12-slim\nWORKDIR /app\n"
+    "RUN useradd --create-home --uid 10001 appuser\n"
+    "COPY --chown=appuser:appuser . /app\n"
+    "RUN mkdir -p /app/storage/public /app/storage/private \\\n"
+    " && chown appuser:appuser /app /app/storage /app/storage/public /app/storage/private\n"
+    "USER appuser\n"
+)
+
+
+@affected_by("image-cannot-write-local-storage")
+def _a_disk_of_its_own_the_dockerfile_never_creates(root: Path) -> list[str]:
+    """The help desk's `adjuntos` disk (bitácora F13): /ready 503, upload 500."""
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    write(root / "Dockerfile", A12_STORAGE_LINES)
+    return ["Dockerfile: /app/storage/adjuntos (disk adjuntos) is not created for appuser"]
+
+
+@affected_by("image-cannot-write-local-storage")
+def _a_disk_created_but_left_to_root(root: Path) -> list[str]:
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    write(root / "Dockerfile", A12_STORAGE_LINES)
+    edit(
+        root / "Dockerfile",
+        "mkdir -p /app/storage/public /app/storage/private",
+        "mkdir -p /app/storage/public /app/storage/private /app/storage/adjuntos",
+    )
+    return ["Dockerfile: /app/storage/adjuntos (disk adjuntos)"]
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _the_dockerfile_regenerated_from_the_disks(root: Path) -> None:
+    from jfastframework.deploy.compose import read_storage_disks, render_dockerfile
+
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    write(root / "Dockerfile", render_dockerfile(disks=read_storage_disks(root / "jfast.toml")))
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _the_storage_line_refreshed_by_jfast_add_storage(root: Path) -> None:
+    from jfastframework.deploy.compose import read_storage_disks, refresh_storage_block
+
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    refreshed = refresh_storage_block(A12_STORAGE_LINES, read_storage_disks(root / "jfast.toml"))
+    assert refreshed is not None
+    write(root / "Dockerfile", refreshed)
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _the_whole_storage_tree_handed_over_recursively(root: Path) -> None:
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    write(root / "Dockerfile", A12_STORAGE_LINES)
+    edit(
+        root / "Dockerfile",
+        "RUN mkdir -p /app/storage/public /app/storage/private \\\n"
+        " && chown appuser:appuser /app /app/storage /app/storage/public "
+        "/app/storage/private\n",
+        "RUN mkdir -p /app/storage/adjuntos && chown -R appuser:appuser /app\n",
+    )
+
+
+@unaffected_by("image-cannot-write-local-storage")
+def _a_second_disk_on_object_storage(root: Path) -> None:
+    service(root, "observability", "storage", extra=ADJUNTOS)
+    edit(
+        root / "jfast.toml",
+        'disks.adjuntos]\ndriver = "local"\nroot = "storage/adjuntos"',
+        'disks.adjuntos]\ndriver = "s3"\nbucket = "adjuntos"',
+    )
+    write(root / "Dockerfile", A12_STORAGE_LINES)
+
+
+NULLABLE_UNIQUE_ENTITY = (
+    "from sqlalchemy import UniqueConstraint\n"
+    "from sqlalchemy.orm import Mapped, mapped_column\n\n\n"
+    "class Gasto(Base):\n"
+    "    __tablename__ = 'gastos'\n"
+    "    __table_args__ = (\n"
+    "        UniqueConstraint('tenant_id', 'folio', name='uq_gastos_folio',\n"
+    "                         postgresql_nulls_not_distinct=True),\n"
+    "    )\n"
+    "    folio: Mapped[str | None] = mapped_column(nullable=True)\n"
+    "    total: Mapped[int] = mapped_column()\n"
+)
+
+
+@affected_by("unique-key-on-optional-field")
+def _a_generated_key_over_an_optional_field(root: Path) -> list[str]:
+    service(root, "observability", "database")
+    write(root / "modules" / "gasto" / "models.py", NULLABLE_UNIQUE_ENTITY)
+    return ["modules/gasto/models.py:8 Gasto: folio"]
+
+
+@unaffected_by("unique-key-on-optional-field")
+def _a_key_over_a_required_field(root: Path) -> None:
+    service(root, "observability", "database")
+    write(
+        root / "modules" / "gasto" / "models.py",
+        NULLABLE_UNIQUE_ENTITY.replace(
+            "Mapped[str | None] = mapped_column(nullable=True)", "Mapped[str] = mapped_column()"
+        ),
+    )
+
+
+A11_FACADE = (
+    "from __future__ import annotations\n\n"
+    "from .repositories import InvoiceRepository\n\n\n"
+    "async def get_invoice(\n"
+    "    session: AsyncSession, *, tenant_id: str | None, invoice_id: int\n"
+    ") -> InvoiceSummary | None:\n"
+    "    return await InvoiceRepository(session, tenant_id=tenant_id).get(invoice_id)\n"
+)
+
+
+@affected_by("facade-tenant-optional")
+def _a_multitenant_facade_that_admits_none(root: Path) -> list[str]:
+    service(root, "observability", "database", "auth", "tenancy")
+    write(root / "modules" / "invoice" / "public.py", A11_FACADE)
+    return ["modules/invoice/public.py:7 get_invoice(tenant_id: str | None)"]
+
+
+@unaffected_by("facade-tenant-optional")
+def _the_facade_requiring_the_tenant(root: Path) -> None:
+    _a_multitenant_facade_that_admits_none(root)
+    edit(root / "modules" / "invoice" / "public.py", "tenant_id: str | None", "tenant_id: str")
+
+
+@unaffected_by("facade-tenant-optional")
+def _the_same_facade_in_a_single_tenant_service(root: Path) -> None:
+    # One customer: its rows carry no tenant, so None is the value that finds them.
+    _a_multitenant_facade_that_admits_none(root)
+    edit(root / "jfast.toml", ', "tenancy"', "")
+
+
+@pytest.mark.parametrize("layout", MODULE_LAYOUTS)
+def test_a_facade_generated_for_a_multitenant_service_is_not_told(
+    tmp_path: Path, layout: str
+) -> None:
+    service(tmp_path, "observability", "database", "auth", "tenancy")
+    Scaffolder().render_trees(
+        module_trees(layout, "api", tmp_path / "modules", tmp_path),
+        module_context("orders", layout=layout, access="tenant"),
+    )
+    assert "facade-tenant-optional" not in report(tmp_path)
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _the_env_jfast_start_wrote(root: Path) -> list[str]:
+    # `service` writes the [app] block every 0.1.0a11 project has.
+    service(root, "observability")
+    return ['jfast.toml:4 [app] env = "local": JFAST_ENV in the environment now wins']
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _debug_committed_on(root: Path) -> list[str]:
+    service(root, "observability")
+    edit(root / "jfast.toml", 'env = "local"\n', "debug = true\n")
+    return ["jfast.toml:4 [app] debug = true: JFAST_DEBUG in the environment now wins"]
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _the_line_removed(root: Path) -> None:
+    _the_env_jfast_start_wrote(root)
+    edit(root / "jfast.toml", 'env = "local"\n', "")
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _env_only_in_another_table(root: Path) -> None:
+    # A plugin's own `env` key is not the deployment's.
+    _the_line_removed(root)
+    write(root / "jfast.toml", (root / "jfast.toml").read_text() + '\n[plugin.x]\nenv = "a"\n')
+
+
+# The rest of the table: every setting that depends on where the service runs.
+# A value somebody chose is listed; a development default the generator still
+# writes -- and marks as one -- is not.
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _the_f12_mail_backend(root: Path) -> list[str]:
+    # What the help desk wrote by hand, and JFAST_MAIL_BACKEND=smtp never beat.
+    _the_line_removed(root)
+    edit(root / "jfast.toml", '"observability"]', '"observability", "mail"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text() + '\n[plugin.mail]\nbackend = "console"\nport = 25\n',
+    )
+    return [
+        'jfast.toml:10 [plugin.mail] backend = "console": JFAST_MAIL_BACKEND in the environment',
+        "jfast.toml:11 [plugin.mail] port = 25: JFAST_MAIL_PORT in the environment",
+    ]
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _the_empty_issuer_jfast_start_wrote(root: Path) -> list[str]:
+    # 0.1.0a11 wrote issuer = "" in jwks mode; 0.1.0a12 leaves it to the environment.
+    _the_line_removed(root)
+    edit(root / "jfast.toml", '"observability"]', '"observability", "auth"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + '\n[plugin.auth]\nmode = "jwks"\nissuer = ""\naudience = "billing"\n',
+    )
+    return ['jfast.toml:11 [plugin.auth] issuer = "": JFAST_AUTH_ISSUER in the environment']
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _a_dsn_in_the_file_is_listed_masked(root: Path) -> list[str]:
+    _the_line_removed(root)
+    edit(root / "jfast.toml", '"observability"]', '"observability", "database"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + '\n[plugin.database]\ndsn = "postgresql+asyncpg://app:hunter2@localhost/app"\n',
+    )
+    return [
+        'jfast.toml:10 [plugin.database] dsn = "postgresql+asyncpg://***@localhost/app": '
+        "JFAST_DB_DSN"
+    ]
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _an_upstream_address(root: Path) -> list[str]:
+    _the_line_removed(root)
+    edit(root / "jfast.toml", '"observability"]', '"observability", "http"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + '\n[plugin.http.upstreams.billing]\nbase_url = "http://localhost:8010"\n',
+    )
+    return [
+        "jfast.toml:10 [plugin.http] upstreams.billing.base_url = "
+        '"http://localhost:8010": JFAST_HTTP_UPSTREAMS__BILLING__BASE_URL'
+    ]
+
+
+@affected_by("jfast-env-wins-over-the-file")
+def _a_chosen_log_format(root: Path) -> list[str]:
+    # json_logs = false is the generator's development default; true was chosen.
+    _the_line_removed(root)
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + '\n[plugin.observability]\nlevel = "DEBUG"\njson_logs = true\n',
+    )
+    return [
+        'jfast.toml:10 [plugin.observability] level = "DEBUG": JFAST_LOG_LEVEL',
+        "jfast.toml:11 [plugin.observability] json_logs = true: JFAST_LOG_JSON_LOGS",
+    ]
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _the_development_defaults_the_generator_writes(root: Path) -> None:
+    _a_chosen_log_format(root)
+    edit(
+        root / "jfast.toml",
+        'level = "DEBUG"\njson_logs = true',
+        'level = "INFO"\njson_logs = false',
+    )
+    edit(root / "jfast.toml", '"observability"]', '"observability", "storage", "tenancy", "llm"]')
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text()
+        + "\n[plugin.storage]\nserve_local = true\n"
+        + '\n[plugin.tenancy]\nbase_domain = "localhost"\n'
+        + "\n[plugin.llm]\nbudget_usd = 10.0\ntenant_budget_usd = 2.0\n",
+    )
+    edit(
+        root / "jfast.toml",
+        "[plugins]",
+        'cors_origins = ["http://localhost:8010", "http://127.0.0.1:8010"]\n\n[plugins]',
+    )
+
+
+@unaffected_by("jfast-env-wins-over-the-file")
+def _a_table_for_a_plugin_that_does_not_run(root: Path) -> None:
+    _the_line_removed(root)
+    write(
+        root / "jfast.toml",
+        (root / "jfast.toml").read_text() + '\n[plugin.mail]\nbackend = "console"\n',
+    )
+
+
+TENANT_BY_SUBDOMAIN = (
+    '\n[plugin.tenancy]\nsources = ["token", "subdomain"]\nbase_domain = "localhost"\n'
+)
+
+
+@affected_by("unsigned-tenant-needs-a-session")
+def _auth_and_a_subdomain_tenant(root: Path) -> list[str]:
+    # The help desk of F1: the documented example, anonymous rows by Host header.
+    service(root, "observability", "database", "auth", "tenancy", extra=TENANT_BY_SUBDOMAIN)
+    return ['[plugin.tenancy] sources = ["token", "subdomain"]: subdomain no longer grants']
+
+
+@affected_by("unsigned-tenant-needs-a-session")
+def _auth_and_the_default_sources(root: Path) -> list[str]:
+    # No `sources` line: the plugin's default is ["token", "subdomain"].
+    service(
+        root,
+        "observability",
+        "auth",
+        "tenancy",
+        extra='\n[plugin.tenancy]\nbase_domain = "app.example.com"\n',
+    )
+    return ['[plugin.tenancy] sources = ["token", "subdomain"] (the default): subdomain']
+
+
+@unaffected_by("unsigned-tenant-needs-a-session")
+def _only_signed_sources(root: Path) -> None:
+    # What `jfast start --multitenant` writes: nothing a client can choose.
+    _auth_and_a_subdomain_tenant(root)
+    edit(root / "jfast.toml", '["token", "subdomain"]', '["token", "user"]')
+
+
+@unaffected_by("unsigned-tenant-needs-a-session")
+def _a_public_site_without_auth(root: Path) -> None:
+    # No principal to check against: the subdomain's tenant stays usable.
+    _auth_and_a_subdomain_tenant(root)
+    edit(root / "jfast.toml", '"auth", ', "")
+
+
+@unaffected_by("unsigned-tenant-needs-a-session")
+def _a_subdomain_source_without_a_base_domain(root: Path) -> None:
+    # Refused at boot before and after: nothing changed for it at runtime.
+    _auth_and_a_subdomain_tenant(root)
+    edit(root / "jfast.toml", 'base_domain = "localhost"\n', "")
+
+
 @affected_by("revocation-fail-open")
 def _auth_checking_revocation_against_redis(root: Path) -> list[str]:
     service(root, "observability", "database", "cache", "auth", extra=AUTH_ISSUING)

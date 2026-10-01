@@ -24,6 +24,12 @@ The key never goes in `jfast.toml`. Without it the service still starts: the
 plugin shows as degraded in `/ready` -- not failed, the rest of the service does
 not need a model -- and every call raises a 503 naming the variable.
 
+The key, `base_url`, both models and both caps depend on where the service
+runs, so the environment wins over the file for them: `JFAST_LLM_BUDGET_USD=0.5`
+caps a staging deployment whose `jfast.toml` says `20.0`, and the boot log says
+so on a WARNING line. The values above are the defaults for wherever those
+variables are unset ([deploy](deploy.md#which-wins-jfasttoml-or-the-environment)).
+
 Every service that calls a model ends up writing the same four things, usually
 after the first surprise invoice: a hard budget, a record of what each call
 cost, prices in one place, and retries that respect `Retry-After`. This plugin
@@ -49,7 +55,10 @@ result.text, result.usage.usd, result.usage.input_tokens
 ```
 
 `jfastframework.llm` has no FastAPI dependency: a queue worker, a script and a
-test use the same client.
+test use the same client. A `@task` or `@subscribe` handler has no request to
+call `get_context` on: it annotates a parameter `TaskContext` and calls
+`ctx.require("llm")` on that
+([Queues and events](queues-and-events.md#the-apps-providers-llm-storage-the-outbox)).
 
 ### Structured output
 

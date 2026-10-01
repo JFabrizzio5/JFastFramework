@@ -22,6 +22,11 @@ Si lo corres sin flag te pregunta, porque la ubicación *es* la decisión:
 No hace falta que aciertes el primer día. Arranca un enum en el módulo que lo
 necesita, y el check te avisa el día en que un segundo lo quiere.
 
+Un enum que es el tipo de una columna se declara con el módulo:
+`jfast new module cartera --fields "tipo:enum(personal,empresa,otra)"` escribe
+el mismo `StrEnum` en el archivo de enums del módulo y lo conecta a la columna,
+a los modelos y a `public.py` ([la gramática de campos](modules.md#la-gramatica)).
+
 ### La regla
 
 **`shared/` es vocabulario, no comportamiento.** Un enum, un tipo o una función

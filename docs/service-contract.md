@@ -134,16 +134,30 @@ variables, so one token behaves the same against every service:
 | `JFAST_TENANCY_SOURCES` | Where the tenant comes from, in order of trust: `token`, `user`, `subdomain`, `path`, `header` | `["token", "subdomain"]` |
 | `JFAST_TENANCY_BASE_DOMAIN` | Needed by the `subdomain` source | empty |
 | `JFAST_TENANCY_REQUIRE_TENANT` | Refuse with 403 any request that resolves to no tenant, outside `/health`, `/ready` and the like | `false` |
+| `JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS` | With auth on, let a caller whose token carries no tenant act in the tenant a subdomain, path or header names (the service checks membership itself) | `false` |
 
 The rules: `exp`, `iat` and `sub` are required; a token with `typ: refresh`
 is not a bearer; a bad token on an open route is ignored, not rejected. Answer
 **401** when there is no verified caller and **403** when there is one without
 the scope, role or tenant -- a client refreshes its session on a 401 and gives
 up on a 403. A tenant comes from a signed claim before anything a request can
-choose; `X-Tenant-ID` is only a source when `header` is listed.
+choose; `X-Tenant-ID` is only a source when `header` is listed. With auth on,
+a subdomain, path or header only **names** a tenant; the verified caller has
+to back it: no session is a 401, a token whose tenant claim differs is a 403,
+and a token with no tenant is a 403 unless
+`JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS` is true. A signed source outranks an
+unsigned one wherever it is listed. Without auth, the first source that yields
+a tenant wins ([multitenancy](multitenancy.md#with-auth-on-an-unsigned-source-never-grants-a-tenant-by-itself)).
+Python and Go apply this rule identically, and `tests/test_go_service.py`
+checks it by sending the same requests to both.
 
 In Python the plugin settings can also come from `jfast.toml`
-(`[plugin.auth]`, `[plugin.tenancy]`), which wins over the environment. A
+(`[plugin.auth]`, `[plugin.tenancy]`), which wins over the environment for the
+service's shape -- mode, algorithms, tenancy sources -- but not for what
+depends on where it runs: `issuer`, `audience`, `jwks_url`, the secret or
+public key and `base_domain` come from the environment when it sets them, as
+`JFAST_ENV` and `JFAST_DEBUG` do for `[app]`
+([deploy](deploy.md#which-wins-jfasttoml-or-the-environment)). A
 service in another language only has the environment, so write the values it
 must share -- mode, algorithms, secret or public key, issuer, audience,
 tenancy sources -- into its `.env`. Nothing copies them between services for
@@ -168,7 +182,7 @@ stops it at boot rather than letting it answer requests unchecked.
 | Trace context | propagated; spans with the `telemetry` plugin | passed through unchanged; no spans (add `otelhttp` yourself) |
 | Auth (section 7) | `auth` plugin: `jwks`, `public_key`, `secret`; issues tokens | verify only: `public_key`, `secret`; `jwks` refuses to start |
 | Token revocation | checked in Redis on every request | **not checked**: a revoked access token works until it expires (15 min by default) |
-| Tenancy (section 7) | `tenancy` plugin | same sources and 401/403; no per-tenant time zones |
+| Tenancy (section 7) | `tenancy` plugin | same sources, same named-vs-granted rule, same 401/403; no per-tenant time zones |
 | Plugin system | yes | no |
 | Module generator | yes | one sample module |
 | Migrations | Alembic | bring your own |

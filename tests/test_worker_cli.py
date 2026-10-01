@@ -181,6 +181,155 @@ async def test_sigterm_finishes_short_jobs_and_releases_long_ones(
     await engine.dispose()
 
 
+async def test_a_task_and_a_subscriber_in_jfast_worker_reach_the_apps_providers(
+    dsn: str, project: Path, tmp_path: Path
+) -> None:
+    """The worker path, end to end: `jfast worker` builds the app, and a
+    handler that annotates ``TaskContext`` gets that app's context -- what it
+    needs to reach ``llm``, ``storage`` or the outbox from a job.
+    """
+    (project / "modules" / "ctxdemo").mkdir()
+    (project / "modules" / "ctxdemo" / "__init__.py").write_text("", encoding="utf-8")
+    (project / "modules" / "ctxdemo" / "tasks.py").write_text(
+        textwrap.dedent(
+            """
+            from __future__ import annotations
+
+            import json
+            from pathlib import Path
+            from typing import TYPE_CHECKING
+
+            from jfastframework.events import Event, subscribe
+            from jfastframework.tasks import TaskContext, TaskSession, task
+
+            if TYPE_CHECKING:
+                from jfastframework.context import AppContext
+
+
+            def _report(path: str, ctx: TaskContext, **extra: object) -> None:
+                Path(path).write_text(json.dumps({
+                    "app": ctx.settings.app_name,
+                    "queue": type(ctx.require("queue")).__name__,
+                    "sessionmaker": ctx.has("db.sessionmaker"),
+                    **extra,
+                }))
+
+
+            @task("ctxdemo.report")
+            async def report(payload: dict, session: TaskSession, ctx: TaskContext) -> None:
+                _report(payload["out"], ctx, session=type(session).__name__)
+
+
+            @subscribe("ctxdemo.happened")
+            async def react(event: Event, ctx: AppContext) -> None:
+                _report(event.data["out"], ctx, event=event.type)
+            """
+        ),
+        encoding="utf-8",
+    )
+    engine, queue = await _queue(dsn)
+    from jfastframework.events import Event
+
+    task_out, subscriber_out = tmp_path / "task.json", tmp_path / "subscriber.json"
+    event = Event(type="ctxdemo.happened", data={"out": str(subscriber_out)})
+    await queue.enqueue(Job(task="ctxdemo.report", payload={"out": str(task_out)}))
+    await queue.enqueue(
+        Job(task="ctxdemo.happened->ctxdemo.react", payload={"event": event.to_dict()})
+    )
+
+    process = subprocess.Popen(  # noqa: ASYNC220
+        [sys.executable, "-m", "jfastframework", "worker", "--grace", "3"],
+        cwd=project,
+        env=_env(dsn),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        await _wait_for([task_out, subscriber_out], process, 30)
+        process.send_signal(signal.SIGTERM)
+        output, _ = process.communicate(timeout=20)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    await engine.dispose()
+
+    assert process.returncode == 0, output
+    expected = {"app": "svc", "queue": "PostgresQueue", "sessionmaker": True}
+    assert json.loads(task_out.read_text()) == {**expected, "session": "AsyncSession"}
+    assert json.loads(subscriber_out.read_text()) == {**expected, "event": "ctxdemo.happened"}
+
+
+def _as_workspace_service(project: Path, tmp_path: Path, dsn: str) -> Path:
+    """The project fixture's service, moved one level down into a workspace
+    whose compose file publishes the test PostgreSQL's port, with the .env a
+    workspace writes: the compose name and a ${...} password."""
+    from sqlalchemy.engine import make_url
+
+    url = make_url(dsn)
+    workspace = tmp_path / "ws"
+    service = workspace / "svc"
+    workspace.mkdir()
+    project.rename(service)
+    (workspace / "docker-compose.yml").write_text(
+        textwrap.dedent(
+            f"""\
+            services:
+              ws-database:
+                image: postgres:16
+                ports:
+                  - "{url.port}:5432"
+            """
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".env").write_text(f"WS_DATABASE_PASSWORD={url.password}\n", encoding="utf-8")
+    (service / ".env").write_text(
+        f"JFAST_DB_DSN=postgresql+asyncpg://{url.username}:${{WS_DATABASE_PASSWORD}}"
+        f"@ws-database:5432/{url.database}\n",
+        encoding="utf-8",
+    )
+    return service
+
+
+async def test_the_worker_translates_a_compose_env_for_the_host(
+    dsn: str, project: Path, tmp_path: Path
+) -> None:
+    """F4 on the worker: a workspace's service .env names the database by its
+    compose name and leaves the password to compose. `jfast worker` on the
+    host used to fail on DNS; it now translates the .env as `jfast dev` does.
+    """
+    service = _as_workspace_service(project, tmp_path, dsn)
+
+    engine, queue = await _queue(dsn)
+    marks = [tmp_path / "started", tmp_path / "finished"]
+    await queue.enqueue(
+        Job(
+            task="demo.sleep",
+            payload={"seconds": 0, "started": str(marks[0]), "finished": str(marks[1])},
+        )
+    )
+    # No JFAST_DB_DSN in the environment: only the .env says where the database is.
+    env = {k: v for k, v in _env(dsn).items() if k != "JFAST_DB_DSN"}
+    process = subprocess.Popen(  # noqa: ASYNC220
+        [sys.executable, "-m", "jfastframework", "worker", "--grace", "3"],
+        cwd=service,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        await _wait_for(marks, process, 30)
+        process.send_signal(signal.SIGTERM)
+        output, _ = process.communicate(timeout=20)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    await engine.dispose()
+    assert process.returncode == 0, output
+
+
 async def test_jobs_dead_lists_the_reason_and_retry_puts_them_back(dsn: str, project: Path) -> None:
     engine, queue = await _queue(dsn)
     first = Job(task="demo.sleep", max_attempts=1)

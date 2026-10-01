@@ -165,6 +165,10 @@ class RequestContextMiddleware:
         # already reset its own context by the time this line is written.
         if (resolved_tenant := state.get("tenant_id")) is not None:
             fields["tenant_id"] = resolved_tenant
+        elif (named := state.get("tenant_requested")) is not None:
+            # A subdomain or path the request named and tenancy did not
+            # grant: logged as what it is, like the header below.
+            fields["tenant_claimed"] = named
         elif (claimed := state.get("tenant_claimed")) is not None:
             fields["tenant_claimed"] = claimed
         self.logger.info("request", extra=fields)

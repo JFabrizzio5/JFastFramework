@@ -21,13 +21,13 @@ base_domain = "app.example.com"
 La lista se prueba en orden y gana la primera que acierta. Ese orden es el
 diseño:
 
-| Fuente | Controlado por | Confianza |
-| --- | --- | --- |
-| `token` | tu identity provider, criptográficamente | alta |
-| `user` | el mismo token firmado: el usuario *es* el tenant | alta |
-| `subdomain` | tu DNS y TLS | media |
-| `path` | la URL | baja |
-| `header` | quien haya mandado el request | **ninguna** |
+| Fuente | Controlado por | Firmada | Con `auth` activo |
+| --- | --- | --- | --- |
+| `token` | tu identity provider, criptográficamente | sí | otorga el tenant |
+| `user` | el mismo token firmado: el usuario *es* el tenant | sí | otorga el tenant |
+| `subdomain` | quien manda el header `Host` | no | nombra un tenant; el principal tiene que coincidir |
+| `path` | quien escribe la URL | no | nombra un tenant; el principal tiene que coincidir |
+| `header` | quien haya mandado el request | no | nombra un tenant; el principal tiene que coincidir |
 
 `header` existe porque es realmente útil en desarrollo y en los tests. No está
 en la lista por defecto, y activarlo en producción escribe un warning, porque
@@ -36,6 +36,77 @@ en la lista por defecto, y activarlo en producción escribe un warning, porque
 Un claim firmado siempre le gana al hostname. Alguien que apunta `acme.` a tu
 IP no se convirtió en Acme; alguien con un token que tu identity provider firmó
 para Acme, sí.
+
+### Con `auth` activo, una fuente sin firma nunca otorga un tenant por sí sola
+
+El subdominio no lo protege tu DNS: `curl -H "Host: acme.example.com"
+https://tu-ip/tickets` no necesita DNS. Así que con el plugin `auth` activo, un
+tenant que sale de `subdomain`, `path` o `header` solo *nombra* el tenant del
+que habla el request. El tenant en el que el request puede actuar -- el de
+`request.state.tenant_id`, el de la sesión con RLS, el de `TenantSession`, el de
+cada job y evento, y el que regresa `current_tenant` -- tiene que respaldarlo el
+principal:
+
+| El request | Tenant otorgado | `current_tenant` |
+| --- | --- | --- |
+| sin sesión, digan lo que digan el subdominio, la ruta o el header | ninguno | **401** |
+| claim `acme` en el token; la fuente sin firma no dice nada o dice `acme` | `acme` | `acme` |
+| claim `acme` en el token; la fuente sin firma dice `globex` | ninguno | **403** |
+| con sesión, sin tenant en el token; la fuente sin firma dice `globex` | ninguno | **403** |
+| lo mismo, con `trust_unscoped_principals = true` | `globex` | `globex` |
+| con sesión, sin tenant en ninguna parte | ninguno | 403, como antes |
+
+Una fuente firmada le gana a una sin firma sin importar dónde esté cada una en
+`sources`; el orden solo ordena fuentes del mismo tipo. La fuente `user` cuenta
+como firmada: con `sources = ["token", "user", "subdomain"]`, un usuario sin
+claim de organización es su propio tenant, y el subdominio de otro tenant es un
+403.
+
+Por qué el token sin tenant se rechaza por defecto: nada firmado dice que esa
+cuenta pertenece a `globex`. El framework no distingue a un miembro de un
+extraño -- una cuenta de plataforma de la de un cliente, un usuario creado antes
+de que existieran las organizaciones --, y servir el tenant del subdominio a
+cualquier cuenta con sesión es el mismo hueco con un login delante. Un servicio
+que *sí* lo sabe -- cuentas de staff que trabajan en varios tenants, una tabla de
+membresías que lee en cada request -- lo dice explícitamente:
+
+```toml
+[plugin.tenancy]
+sources = ["token", "subdomain"]
+base_domain = "app.example.com"
+# El servicio revisa la membresía por su cuenta; una cuenta con sesión sin
+# claim de tenant puede actuar en el tenant que nombra el subdominio.
+trust_unscoped_principals = true
+```
+
+El request rechazado no se rechaza completo: las rutas que no piden tenant --
+`/health`, `/auth/refresh`, `/auth/logout` -- siguen respondiendo. Solo lo que
+pide un tenant recibe el 401 o el 403. `request.state.tenant_id` es `None`, así
+que una ruta que lo lee directo no obtiene ningún tenant en vez del equivocado.
+
+**Iniciar sesión en un subdominio** es el uso legítimo de una fuente sin firma,
+y sigue funcionando: antes de que exista una sesión, el subdominio es la única
+forma de decir en las cuentas de qué tenant buscan `/auth/login`,
+`/auth/register` y las rutas de recuperar contraseña, y la contraseña es lo que
+prueba que quien llama pertenece ahí. El tenant nombrado queda en
+`request.state.tenant_requested`; una página pública a propósito -- el
+formulario de inicio de sesión de un tenant, su logo -- lo lee con
+`requested_tenant`:
+
+```python
+from jfastframework.plugins.builtin.tenancy import requested_tenant
+
+@router.get("/branding")
+async def branding(tenant: str = Depends(requested_tenant)):  # 404 si no nombra ninguno
+    ...
+```
+
+No prueba nada sobre quien llama: nunca elijas con él de quién son las filas que
+lees o escribes.
+
+**Sin `auth`** no hay principal contra el cual revisar la fuente. Un sitio
+público con un tenant por subdominio -- un catálogo en `acme.shop.example.com`
+-- conserva el tenant resuelto como siempre.
 
 ## Cada cuenta es su propio tenant: la fuente `user`
 
@@ -79,10 +150,14 @@ async def invoices(tenant: str = Depends(current_tenant), session: DbSession = .
     return await InvoiceService(InvoiceRepository(session, tenant_id=tenant)).list()
 ```
 
-`current_tenant` regresa lo que el plugin resolvió. Sin nadie con sesión
-responde **401** -- un token vencido tiene que hacer que el cliente refresque, y
-los clientes refrescan ante un 401, no ante un 403 --, y con una sesión que las
-fuentes no pudieron limitar a un tenant, **403**. No lee nada más -- ni un header, ni un campo del body.
+`current_tenant` regresa lo que el plugin otorgó. Con `auth` activo y nadie con
+sesión responde **401** -- digan lo que digan el subdominio, la ruta o el header;
+un token vencido tiene que hacer que el cliente refresque, y los clientes
+refrescan ante un 401, no ante un 403 --, y **403** cuando el tenant de quien
+llama no coincide con el que nombra el request, o las fuentes no pudieron
+limitarlo a ningún tenant (la
+[tabla de arriba](#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-si-sola)).
+No lee nada más -- ni un header, ni un campo del body.
 En un servicio sin el plugin tenancy cae al claim `tenant_id` del token, así que
 un servicio que solo usa `auth` sigue funcionando.
 
@@ -120,8 +195,6 @@ on-demand, más el endpoint `ask` global que lo controla:
 {
 	on_demand_tls {
 		ask http://api:8000/internal/tenant-exists
-		interval 2m
-		burst 5
 	}
 }
 ```
@@ -150,6 +223,12 @@ nuevo que ve Caddy, incluidos los que te están sondeando.
 También necesitas un registro DNS wildcard (`*.app.example.com`) apuntando a la
 misma dirección.
 
+Un SPA servido desde un host que inicia sesión en el subdominio de cada tenant
+hace un request de otro origen, y `cors_origins` es una lista de orígenes
+exactos. `cors_origin_regex = 'https://[a-z0-9-]+\.app\.example\.com'` en
+`[app]` permite a todos los tenants de una vez -- ver [Despliegue,
+CORS](deploy.md#cors).
+
 ## Exigir un tenant
 
 ```toml
@@ -160,6 +239,9 @@ require_tenant = true
 Cualquier request que no resuelva a ningún tenant recibe un `403` en
 problem+json. Los health checks, las métricas, `/docs` y `/openapi.json` quedan
 exentos — un readiness probe no tiene tenant y no debe fallar.
+Un request que *nombra* un tenant que no se le otorgó -- `acme.` sin sesión --
+pasa esta revisión, para que las rutas de inicio de sesión en el subdominio
+sigan al alcance; `current_tenant` responde su 401 o 403.
 
 ## Una base de datos por tenant
 
@@ -472,6 +554,7 @@ upgrade --check` lista lo que rompe una actualización:
 | Regla | Severidad | Busca |
 | --- | --- | --- |
 | `tenant-none-literal` | high | una llamada que pasa `tenant_id=None`: un repositorio, una fachada, `rag`, `llm` |
+| `facade-tenant-optional` | high | una fachada de módulo (`modules/<nombre>/public.py`) cuyo `tenant_id` admite None (`str \| None`, `Optional[str]`, `= None`): una variable que resulta ser None lee todos los tenants, y ningún literal marca la llamada. Las fachadas generadas para un servicio de un solo tenant aparecen aquí a propósito -- cámbialas a `tenant_id: str` al encender tenancy |
 | `route-without-tenant` | high | una ruta que abre una sesión de base de datos y no tiene dependencia de tenant |
 | `factory-without-tenant` | high | lo mismo en una dependencia (`get_service`), reportada una vez con las rutas que la usan |
 | `raw-sql-without-tenant` | high | un string SQL que nombra una tabla de tenant y nunca `tenant_id` |

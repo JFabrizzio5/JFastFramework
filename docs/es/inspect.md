@@ -278,6 +278,29 @@ es lo que hace al comando seguro en un hook de pre-commit, y también es su
 límite: `deploy` prueba que el compose se puede generar y que es consistente
 consigo mismo, no que las imágenes bajen.
 
+### Avisos: el entorno sobrescribe `jfast.toml`
+
+Una cosa que `check` reporta sin nunca fallar por ella. Para un ajuste que es
+del entorno ([Quién gana](deploy.md#quien-gana-jfasttoml-o-el-entorno)), una
+variable puesta en *este* proceso que no coincide con `jfast.toml` aparece bajo
+`config`, con archivo, línea y variable, las credenciales enmascaradas:
+
+```
+  ✓ config      pass   shop (local)  (1 environment override)
+  ...
+  CONFIG  the environment overrides jfast.toml (reported, never a failure)
+    jfast.toml:52  [plugin.mail] backend = 'console' is overridden by JFAST_MAIL_BACKEND='smtp' from the environment
+```
+
+En `--json` son los `notices` del check (severidad `medium`, código
+`environment-overrides-file`) y el conteo `notices` de arriba. Nunca ponen un
+status ni un exit code, `--ci` incluido: toda otra respuesta aquí es la misma
+en cualquier máquina, y esta es sobre la máquina -- corrido con el entorno del
+despliegue lista exactamente lo que lista el WARNING de arranque; en una laptop,
+lo de la laptop. Un default del archivo que el despliegue reemplaza suele ser
+el diseño funcionando, y fallar ahí empujaría a un equipo a borrar el default o
+a copiar los valores de producción al CI.
+
 ### Qué NO chequea `check`
 
 **`jfast check` no corre ningún linter, ningún formateador, ningún type checker

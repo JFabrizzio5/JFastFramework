@@ -160,9 +160,17 @@ Endpoints that need the database only work once one is running:
 
 ```bash
 docker compose up -d shop-database
-alembic revision --autogenerate -m "initial"
-alembic upgrade head
+jfast exec -- alembic revision --autogenerate -m "initial"
+jfast exec -- alembic upgrade head
 ```
+
+`jfast exec --` runs a command with the service's `.env` translated for your
+machine. In a workspace that `.env` is written for compose -- the database is
+`shop-database:5432` and the password is `${SHOP_DATABASE_PASSWORD}`, which
+only compose fills in -- so a bare `alembic` or `pytest` on the host fails
+with a DNS error. `jfast serve`, `jfast worker` and `jfast dev` translate it by
+themselves; everything else goes through `jfast exec --`. With no
+`docker-compose.yml` beside the service or one level up it changes nothing.
 
 ### Run the frontend
 
@@ -179,8 +187,13 @@ you see it immediately rather than on your first real feature.
 
 ```bash
 cd ~/projects/shop
+(cd shop-web && npm install && npm run build)   # the SPA Caddy serves
 docker compose up --build
 ```
+
+Caddy serves the frontend from `shop-web/dist`, which is where `npm run build`
+writes; the compose file runs no Node container, so the build comes first.
+Without it the API still answers under `/api` and `/` is empty.
 
 ---
 
@@ -258,9 +271,9 @@ argument lists plugins and capabilities together.
 ```bash
 jfast dev                         # containers, migrations, API and frontend
 jfast new module invoice          # asks which architecture; registers itself
-pytest modules/invoice/tests
+jfast exec -- pytest modules/invoice/tests
 jfast contracts check             # layer boundaries, forbidden calls
-alembic revision --autogenerate -m "add invoices"
+jfast exec -- alembic revision --autogenerate -m "add invoices"
 ```
 
 The module mounts itself: the generator splices the import and the router into
@@ -357,7 +370,10 @@ than choosing by hand.
 
 **Alembic can't reach the database** — `migrations/env.py` reads
 `JFAST_DB_DSN` from `.env`, deliberately the same value the app uses. Start
-the container first: `docker compose up -d <service>-database`.
+the container first: `docker compose up -d <service>-database`. If the error is
+`nodename nor servname provided` or `Name or service not known` naming
+`<workspace>-database`, the `.env` is the compose one: run it as `jfast exec --
+alembic ...`.
 
 **Windows** — run all of this inside WSL. The generated Dockerfiles, the
 compose files and the shell scripts assume a POSIX shell.

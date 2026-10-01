@@ -98,8 +98,8 @@ one starts to, something has crossed the port.
 ## Migration
 
 ```bash
-alembic revision --autogenerate -m "add {{ table }}"
-alembic upgrade head
+jfast exec -- alembic revision --autogenerate -m "add {{ table }}"
+jfast exec -- alembic upgrade head
 ```
 
 Read the generated migration before applying it. Autogenerate misses

@@ -20,6 +20,10 @@ from __future__ import annotations
 {% endfor %}
 
 from jfastframework.errors import {{ "ConflictError, ValidationError" if example else "ConflictError" }}
+{% if spec.enum_names(keys=true) %}
+
+{{ spec.enum_import("..enums", keys=true) }}
+{% endif %}
 {% include "_module_shared/unique_rules.j2" %}
 {% if example %}
 

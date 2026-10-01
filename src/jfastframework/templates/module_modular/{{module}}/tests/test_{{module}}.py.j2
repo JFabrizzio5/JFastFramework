@@ -22,7 +22,7 @@ from __future__ import annotations
 {{ line }}
 {% endfor %}
 
-{% if spec.non_nullable or spec.has_limits %}
+{% if spec.non_nullable or spec.has_limits or spec.enum_fields %}
 import pydantic
 {% endif %}
 import pytest
@@ -30,6 +30,9 @@ import pytest
 from jfastframework.db import Page
 from jfastframework.errors import {{ (["NotFoundError"] + (["ConflictError"] if uniques else []) + (["ValidationError"] if example else []))|sort|join(", ") }}
 
+{% if spec.enum_fields %}
+{{ spec.enum_import("modules." ~ module ~ ".enums") }}
+{% endif %}
 from modules.{{ module }}.models import {{ Module }}, {{ Module }}Create{{ ", " ~ Module ~ "Update" if fields }}
 from modules.{{ module }}.services import {{ Module }}Service
 {% if uniques %}
@@ -80,4 +83,14 @@ async def test_rules_are_testable_without_a_service() -> None:
     {{ fit("await " ~ unique.rule ~ "(", ["repository"] + unique.sample_arguments(1), ")", indent=4) }}
     with pytest.raises(ConflictError):
         {{ fit("await " ~ unique.rule ~ "(", ["repository"] + unique.sample_arguments(0), ")", indent=8) }}
+{% if unique.nullable_names %}
+
+
+async def test_rows_without_a_key_value_never_collide() -> None:
+    """{{ unique.nullable_names|join(", ") }} may be empty, and empty is not a value."""
+    repository = FakeRepository()
+    empty = { {% for name in unique.nullable_names %}"{{ name }}": None{{ ", " if not loop.last }}{% endfor %} }
+    await repository.create(**(first().model_dump() | empty))
+    {{ fit("await " ~ unique.rule ~ "(", ["repository"] + unique.empty_arguments(), ")", indent=4) }}
+{% endif %}
 {% endif %}

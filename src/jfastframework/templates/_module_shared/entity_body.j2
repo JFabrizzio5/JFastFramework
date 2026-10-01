@@ -11,6 +11,33 @@
 # other backend, so the in-memory SQLite a test may use still creates the table.
 JSON_COLUMN = JSON().with_variant(JSONB(), "postgresql")
 {% endif %}
+{% if spec.enum_fields %}
+
+
+def _by_value(enum: type[StrEnum]) -> Enum:
+    """A column holding a member's value -- the wire format -- rather than its name.
+
+    VARCHAR with a CHECK (``_one_of``), not a native PostgreSQL ENUM: a new
+    member is then a migration that replaces one CHECK, not an ALTER TYPE, and
+    the in-memory SQLite a test may use creates the same table.
+    """
+    return Enum(
+        enum,
+        native_enum=False,
+        values_callable=lambda members: [member.value for member in members],
+    )
+
+
+def _one_of(column: str, enum: type[StrEnum]) -> str:
+    """``tipo IN ('personal', 'empresa')``: the CHECK that keeps a column to an enum.
+
+    Autogenerate does not compare CHECK constraints, so a member added to the
+    enum needs a migration that drops ``ck_<table>_<column>`` and creates it
+    again with this text.
+    """
+    values = ", ".join("'" + member.value.replace("'", "''") + "'" for member in enum)
+    return f"{column} IN ({values})"
+{% endif %}
 
 
 {% if "VersionedMixin" in entity_bases %}
@@ -18,14 +45,31 @@ JSON_COLUMN = JSON().with_variant(JSONB(), "postgresql")
 {% endif %}
 class {{ entity_class }}({{ entity_bases }}):
     __tablename__ = "{{ table }}"
-{% if uniques %}
-    # The rule the service checks, made true by the database: two requests can
-    # both pass the check, only one can pass the constraint. tenant_id first,
-    # and NULLS NOT DISTINCT so it also holds for rows with no tenant
-    # (PostgreSQL 15+). Named, because the naming convention would give every
-    # tenant-first constraint on this table the same name.
+{% if uniques or spec.enum_fields %}
     __table_args__ = (
+{% endif %}
+{% if uniques %}
+        # The rule the service checks, made true by the database: two requests
+        # can both pass the check, only one can pass the constraint. tenant_id
+        # first, and NULLS NOT DISTINCT so it also holds for rows with no tenant
+        # (PostgreSQL 15+). Named, because the naming convention would give
+        # every tenant-first constraint on this table the same name.
 {% for unique in uniques %}
+{% if unique.nullable_names %}
+        # {{ unique.nullable_names|join(", ") }} may be empty, and an empty value is not a
+        # value: two rows without one do not collide. A partial index, because
+        # NULLS NOT DISTINCT would treat every missing value as the same one.
+        Index(
+            "{{ unique.constraint_name }}",
+{% for column in ["tenant_id"] + unique.names|list %}
+            "{{ column }}",
+{% endfor %}
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+            postgresql_where=text("{{ unique.present }}"),
+            sqlite_where=text("{{ unique.present }}"),
+        ),
+{% else %}
         UniqueConstraint(
 {% for column in ["tenant_id"] + unique.names|list %}
             "{{ column }}",
@@ -33,7 +77,13 @@ class {{ entity_class }}({{ entity_bases }}):
             name="{{ unique.constraint_name }}",
             postgresql_nulls_not_distinct=True,
         ),
+{% endif %}
 {% endfor %}
+{% endif %}
+{% for f in spec.enum_fields %}
+        {{ fit("CheckConstraint(", f.check_arguments, "),", indent=8) }}
+{% endfor %}
+{% if uniques or spec.enum_fields %}
     )
 {% endif %}
 

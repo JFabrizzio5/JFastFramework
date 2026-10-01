@@ -166,6 +166,8 @@ class Subscriber:
     handler: SubscriberHandler = field(compare=False)
     #: The handler's parameter annotated ``TaskSession``, if it takes one.
     session_param: str | None = None
+    #: The handler's parameter annotated ``TaskContext`` (``AppContext``), if any.
+    context_param: str | None = None
     max_attempts: int = 5
 
     @property
@@ -230,13 +232,14 @@ def subscribe(
                 f"subscriber {handler.__qualname__} must be `async def`: it runs on the "
                 f"worker's event loop"
             )
-        from jfastframework.tasks import task_session_param
+        from jfastframework.tasks import task_context_param, task_session_param
 
         subscriber = Subscriber(
             event_type=event_type,
             name=name or _default_name(handler),
             handler=handler,
             session_param=task_session_param(handler),
+            context_param=task_context_param(handler),
             max_attempts=max_attempts,
         )
         registered = _SUBSCRIBERS.setdefault(event_type, [])

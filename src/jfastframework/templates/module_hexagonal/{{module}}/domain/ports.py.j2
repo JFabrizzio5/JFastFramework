@@ -23,6 +23,9 @@ from __future__ import annotations
 {% endfor %}
 
 from .entities import {{ Module }}
+{% if spec.enum_names(keys=true) %}
+{{ spec.enum_import(".enums", keys=true) }}
+{% endif %}
 
 
 @dataclass

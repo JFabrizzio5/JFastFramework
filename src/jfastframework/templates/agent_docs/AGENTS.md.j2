@@ -94,6 +94,27 @@ Run the checker yourself before claiming a change is done:
 jfast contracts check
 ```
 
+## Settings the environment owns
+
+Most of `jfast.toml` is the shape of this service, and the file wins over the
+environment for it. These keys describe **where the service runs** instead, and
+for them the process environment wins: a value `jfast.toml` writes for one is
+only the default used where its variable is unset.
+
+{% for section, keys in environment_owned %}
+- `{{ section }}` {{ keys }}
+{% endfor %}
+
+`jfast ai context` lists, under `environment`, which of them this file writes
+and which the current environment overrides; the full table is in the
+framework's deploy guide, "Which wins".
+
+When the two disagree -- a boot WARNING `... in jfast.toml is overridden by
+JFAST_...`, or a notice in `jfast check` -- **tell the human; do not "fix"
+either side.** Editing the file changes nothing wherever the variable is set,
+and the environment belongs to whoever deploys the service. Never write a
+secret into `jfast.toml` to make a value agree.
+
 ## Do not
 
 - **Do not add a dependency** without saying so. Check whether the framework
@@ -128,6 +149,7 @@ before building a screen it does not have yet.
 | | |
 | --- | --- |
 | `jfast serve` | run this service locally |
+| `jfast exec -- <command>` | alembic, pytest or a script, with `.env` translated for the host |
 | `jfast new module <name>` | a new module, wired up |
 | `jfast new enum <Name>` | an enum, in one module or in `shared/` |
 | `jfast contracts check` | enforce everything above |

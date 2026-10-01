@@ -33,11 +33,13 @@ fi
 WORK="$(mktemp -d)"
 # The compose project name, so teardown reaches every container even when the
 # run dies between `up` and the first assertion.
-WORKSPACE_PROJECT="jfastworkspace$$"
-SERVICE_PROJECT="jfastservice$$"
+# SMOKE_PROJECT_PREFIX and SMOKE_BASE_PORT let two checkouts run this at once
+# on one machine without sharing a compose project or a host port.
+WORKSPACE_PROJECT="${SMOKE_PROJECT_PREFIX:-jfast}workspace$$"
+SERVICE_PROJECT="${SMOKE_PROJECT_PREFIX:-jfast}service$$"
 # Above the default block and above anything smoke_docker.sh publishes, so two
 # jobs on one runner do not collide on a host port.
-BASE_PORT=9600
+BASE_PORT="${SMOKE_BASE_PORT:-9600}"
 
 cleanup() {
   code=$?
@@ -45,7 +47,8 @@ cleanup() {
   for project in "${WORKSPACE_PROJECT}" "${SERVICE_PROJECT}"; do
     docker compose -p "${project}" down -v --remove-orphans > /dev/null 2>&1 || true
   done
-  docker rmi -f "${WORKSPACE_PROJECT}-demo" "${SERVICE_PROJECT}-api" > /dev/null 2>&1 || true
+  docker rmi -f "${WORKSPACE_PROJECT}-demo" "${WORKSPACE_PROJECT}-demo-worker" \
+    "${SERVICE_PROJECT}-api" "${SERVICE_PROJECT}-worker" > /dev/null 2>&1 || true
   rm -rf "${WORK}"
   exit ${code}
 }
@@ -69,8 +72,14 @@ up_built() {
   local project="$1" service="$2" base
   shift 2
   base="$(default_compose_file)" || fail "no compose file in $(pwd)"
-  docker compose -p "${project}" -f "${base}" -f "$(wheel_hosts_override "${service}")" \
-    up -d --build "$@"
+  local files=(-f "${base}" -f "$(wheel_hosts_override "${service}")")
+  # The workspace's Caddy publishes 80 and 443 on the host, which this run
+  # does not own. It is asked from inside instead, so it publishes nothing.
+  if grep -q '^  caddy:' "${base}"; then
+    printf 'services:\n  caddy:\n    ports: !reset []\n' > "${WORK}/caddy-unpublished.yml"
+    files+=(-f "${WORK}/caddy-unpublished.yml")
+  fi
+  docker compose -p "${project}" "${files[@]}" up -d --build "$@"
 }
 
 # Ask the running container rather than the host: the host port is a mapping
@@ -116,8 +125,57 @@ mkdir workspace && cd workspace
 
 [ -f demo/Dockerfile ] || fail "no demo/Dockerfile: \`build:\` in the compose file has nothing to read"
 
+# The first thing most services add is an upload. `jfast add storage` edits
+# requirements.txt, which is all the production image installs: in 0.1.0a11
+# the storage extra lacked python-multipart, so dev worked and this image
+# failed to import main.py at its first UploadFile route.
+(cd demo && "${JFAST}" add storage --no-install > /dev/null) \
+  || fail "jfast add storage failed on a project nobody had touched"
+
+# Then a disk of its own, declared by hand the way the docs show. 0.1.0a12's
+# image created only public/ and private/, so compose's volume on this one was
+# root's: /ready 503 and every upload a PermissionError. Running `jfast add
+# storage` again rewrites the Dockerfile's storage line; `jfast workspace
+# compose` gives the disk its volume.
+cat >> demo/jfast.toml <<'TOML'
+
+[plugin.storage.disks.adjuntos]
+driver = "local"
+root = "storage/adjuntos"
+visibility = "private"
+TOML
+(cd demo && "${JFAST}" add storage --no-install > /dev/null) \
+  || fail "jfast add storage did not refresh the Dockerfile"
+grep -q '/app/storage/adjuntos' demo/Dockerfile \
+  || fail "the Dockerfile does not create the adjuntos disk"
+"${JFAST}" workspace compose > /dev/null
+grep -q 'demo_adjuntos_data:/app/storage/adjuntos' docker-compose.yml \
+  || fail "the compose file has no volume for the adjuntos disk"
+
+cat >> demo/main.py <<'PY'
+
+
+# smoke_compose: one real upload through the production image, written to the
+# disk the project declared -- a volume the image had to create for appuser.
+from fastapi import Request, UploadFile  # noqa: E402
+
+
+@app.post("/_smoke/upload")
+async def _smoke_upload(request: Request, file: UploadFile) -> dict[str, int]:
+    storage = request.app.state.jfast.require("storage")
+    await storage.disk("adjuntos").put("smoke/t.pdf", await file.read())
+    return {"bytes": len(await storage.disk("adjuntos").get("smoke/t.pdf"))}
+PY
+
 # Not in a subshell: the wheel server it may start has to be stopped by cleanup.
 cd demo && pin_to_checkout_wheel && cd ..
+
+# What `npm run build` leaves behind, where it leaves it: Vite's default outDir
+# in the generated frontend. Written rather than built so this run needs no
+# Node; the compose file has to mount this directory, not ./dist at the root,
+# where 0.1.0a12 looked and nothing ever wrote.
+mkdir -p demo-web/dist
+printf '<!doctype html><title>jfast-smoke-spa</title>\n' > demo-web/dist/index.html
 
 up_built "${WORKSPACE_PROJECT}" demo demo \
   || fail "docker compose up --build failed on a project nobody had touched"
@@ -136,6 +194,66 @@ step "the module jfast start generated is actually served"
 # the routes are absent because nothing mounted the router.
 inside "${WORKSPACE_PROJECT}" demo "${BASE_PORT}" /openapi.json | grep -q '"/items"' \
   || fail "/items is not in the schema: the generated module was never mounted"
+
+step "a file uploaded to the production image is written to its own disk"
+docker compose -p "${WORKSPACE_PROJECT}" exec -T demo python - "${BASE_PORT}" <<'PY' \
+  || fail "the upload was not written: the image lacks what an UploadFile route needs, or appuser cannot write the adjuntos volume"
+import json, sys, urllib.request
+boundary = "jfastsmoke"
+body = (
+    f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"t.pdf\"\r\n"
+    "Content-Type: application/pdf\r\n\r\n%PDF-1.4 smoke\r\n"
+    f"--{boundary}--\r\n"
+).encode()
+request = urllib.request.Request(
+    f"http://127.0.0.1:{sys.argv[1]}/_smoke/upload", data=body, method="POST",
+    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+)
+with urllib.request.urlopen(request, timeout=10) as response:
+    answer = json.load(response)
+assert answer == {"bytes": 14}, answer
+PY
+
+step "Caddy serves the built SPA and proxies /api"
+# Brought up only now: `up ... demo` above starts the API and what it depends
+# on, and Caddy depends on the API, not the other way round.
+up_built "${WORKSPACE_PROJECT}" demo caddy > /dev/null 2>&1 \
+  || fail "docker compose up caddy failed on the generated file"
+caddy_get() {
+  # By the hostname the Caddyfile serves: a request for 127.0.0.1 matches no
+  # site and Caddy answers an empty 200.
+  docker compose -p "${WORKSPACE_PROJECT}" exec -T caddy wget -qO- "http://localhost$1"
+}
+for _ in $(seq 1 15); do caddy_get / > /dev/null 2>&1 && break; sleep 1; done
+caddy_get / | grep -q jfast-smoke-spa || {
+  docker compose -p "${WORKSPACE_PROJECT}" ps -a caddy || true
+  docker compose -p "${WORKSPACE_PROJECT}" logs --tail 20 caddy || true
+  fail "Caddy does not serve demo-web/dist: the compose file mounts another directory"
+}
+# try_files: a client-side route on a hard refresh is the SPA, not a 404.
+caddy_get /items/42 | grep -q jfast-smoke-spa || fail "a client-side route is not index.html"
+# `up caddy` may have recreated the API it depends on; give it its start.
+for _ in $(seq 1 30); do caddy_get /api/health > /dev/null 2>&1 && break; sleep 2; done
+caddy_get /api/health | grep -q '"status"' || {
+  docker compose -p "${WORKSPACE_PROJECT}" logs --tail 10 caddy | grep -i error || true
+  docker compose -p "${WORKSPACE_PROJECT}" ps -a || true
+  fail "Caddy does not proxy /api to the service"
+}
+
+step "Caddy accepts every Caddyfile jfast workspace caddy writes"
+# The plain one is already running above. The tenant variants are not, and
+# 0.1.0a12's --wildcard-tenants put `header_up` where Caddy refuses it -- the
+# container restarted in a loop. `caddy validate` is the binary's own parser.
+"${JFAST}" workspace caddy --wildcard-tenants -o Caddyfile.wildcard > /dev/null
+"${JFAST}" workspace caddy --hostname app.example.com --production --wildcard-tenants \
+  -o Caddyfile.production > /dev/null
+for variant in Caddyfile Caddyfile.wildcard Caddyfile.production; do
+  docker run --rm -v "$(pwd)/${variant}:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+    caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile > /dev/null 2>&1 \
+    || { docker run --rm -v "$(pwd)/${variant}:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+           caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile 2>&1 | tail -5
+         fail "caddy refuses the generated ${variant}"; }
+done
 
 docker compose -p "${WORKSPACE_PROJECT}" down -v > /dev/null 2>&1 || true
 

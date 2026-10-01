@@ -7,6 +7,7 @@ the first request that touches it.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Sequence
 from datetime import tzinfo
@@ -16,6 +17,7 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from jfastframework.deployment_keys import owned_in_file, without_environment_owned
 from jfastframework.middleware import (
     DEFAULT_PERMISSIONS_POLICY,
     DEFAULT_REFERRER_POLICY,
@@ -39,6 +41,13 @@ HSTS_ONE_YEAR = 31_536_000
 UPLOAD_PLUGIN = "storage"
 UPLOAD_MAX_BODY_BYTES = 25 * 1024 * 1024
 UPLOAD_REQUEST_TIMEOUT = 120.0
+
+
+# Which settings the process environment wins over `jfast.toml` for -- `[app]
+# env`, `debug`, the CORS and proxy lists, and every plugin setting that
+# depends on where the service runs -- is declared once, as data, in
+# `deployment_keys.DEPLOYMENT_KEYS`. Everywhere else the file wins: it is the
+# committed description of the service.
 
 
 def raises_request_limits(enabled: Sequence[str], disabled: Sequence[str]) -> bool:
@@ -109,6 +118,12 @@ class JFastSettings(BaseSettings):
     # cors_allow_credentials, because browsers reject that pair anyway and
     # failing at boot beats failing in someone's console.
     cors_origins: list[str] = Field(default_factory=list)
+    # Origins a list cannot spell: one per tenant subdomain, say. Matched
+    # whole (Starlette's allow_origin_regex uses fullmatch), so anchors are
+    # implied; escape the dots, or `.` also matches the `-` in a lookalike
+    # domain. Checked in addition to cors_origins, and compiled at boot.
+    #   cors_origin_regex = 'https://[a-z0-9-]+\.example\.com'   # TOML literal string
+    cors_origin_regex: str | None = None
     cors_allow_credentials: bool = False
     cors_allow_methods: list[str] = Field(default_factory=lambda: ["*"])
     cors_allow_headers: list[str] = Field(default_factory=lambda: ["*"])
@@ -282,6 +297,18 @@ class JFastSettings(BaseSettings):
         resolve_zone(value)
         return value
 
+    @field_validator("cors_origin_regex")
+    @classmethod
+    def _validate_origin_regex(cls, value: str | None) -> str | None:
+        """A pattern that does not compile would fail on the first preflight."""
+        if value is None or not value.strip():
+            return None
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"cors_origin_regex is not a valid pattern: {exc}") from exc
+        return value
+
     @field_validator("trusted_proxies")
     @classmethod
     def _validate_cidrs(cls, value: list[str]) -> list[str]:
@@ -319,9 +346,19 @@ class JFastConfig:
         pool_size = 20
     """
 
-    def __init__(self, settings: JFastSettings, raw: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        settings: JFastSettings,
+        raw: dict[str, Any] | None = None,
+        *,
+        overridden: Sequence[str] = (),
+    ) -> None:
         self.settings = settings
         self.raw: dict[str, Any] = raw or {}
+        # One sentence per owned value the environment replaced with a
+        # different one (secrets masked): the app factory logs them at boot, so
+        # a file and a deployment that disagree are never silent.
+        self.overridden: tuple[str, ...] = tuple(overridden)
 
     @classmethod
     def load(
@@ -342,6 +379,12 @@ class JFastConfig:
         if "name" in app_section:
             app_section.setdefault("app_name", app_section.pop("name"))
 
+        # A setting the environment owns, set there, beats the file. Left out
+        # rather than overwritten, so pydantic-settings reads and validates the
+        # variable itself: `JFAST_ENV=production` fails the boot exactly as it
+        # would with no `[app] env` at all.
+        app_section = without_environment_owned("app", app_section)
+
         plugins_section = raw.get("plugins", {})
         if "enabled" in plugins_section:
             app_section.setdefault("plugins", plugins_section["enabled"])
@@ -351,12 +394,28 @@ class JFastConfig:
             app_section.update(overrides)
 
         settings = JFastSettings(**app_section)
+        # Every table, not only the plugins that run: a disagreement in a
+        # table nobody loads is still a file that says one thing while the
+        # deployment says another, and it costs one line.
+        forced = set(overrides or {})
+        overridden = [
+            owned.sentence()
+            for owned in owned_in_file(raw)
+            if owned.disagrees and not (owned.spec.table == "app" and owned.key in forced)
+        ]
         # Published here rather than in the field validator: a validator runs
         # on every JFastSettings a test constructs, and a process-wide default
         # must change only when a configuration is actually loaded.
         set_default_zone(settings.timezone)
-        return cls(settings=settings, raw=raw)
+        return cls(settings=settings, raw=raw, overridden=overridden)
 
     def plugin_config(self, name: str) -> dict[str, Any]:
-        """Raw config block for one plugin (``[plugin.<name>]`` in jfast.toml)."""
-        return dict(self.raw.get("plugin", {}).get(name, {}))
+        """One plugin's ``[plugin.<name>]`` block, as it applies to this process.
+
+        A key the environment owns (``deployment_keys.DEPLOYMENT_KEYS``) is
+        left out when the process environment sets its variable, so the
+        plugin's settings read the variable instead of the file's default.
+        Read at every call rather than frozen at ``load``: a plugin built from
+        this is built for the environment it runs in.
+        """
+        return without_environment_owned(name, self.raw.get("plugin", {}).get(name, {}))

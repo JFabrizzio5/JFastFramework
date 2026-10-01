@@ -246,6 +246,8 @@ def generate_service(
         workspace.migrate_resources()
         workspace.save()
         ui.note(f"registered in {workspace.file}")
+        for path in write_dev_cors(workspace):
+            ui.created(str(path), "[app] cors_origins: the frontend's dev server")
 
     return destination, context
 
@@ -363,7 +365,7 @@ def _print_next_steps(destination: Path, context: dict[str, Any], kind: str) -> 
         # not exist fails.
         steps.append(("jfast deploy compose -o docker-compose.yml", "writes it from the plugins"))
         steps.append(("docker compose up -d", "the datastores it needs"))
-        steps.append(("alembic upgrade head", "creates the schema"))
+        steps.append(("jfast exec -- alembic upgrade head", "creates the schema"))
     steps.append(
         ("jfast serve", f"http://127.0.0.1:{port}  {ui.G.bullet}  /docs  {ui.G.bullet}  /ready")
     )
@@ -507,6 +509,67 @@ def write_service_secrets(destination: Path, context: dict[str, Any]) -> list[st
             encoding="utf-8",
         )
     return sorted(missing)
+
+
+_APP_HEADER = re.compile(r"^\[app\]\s*(#.*)?$", re.MULTILINE)
+_CORS_LINE = re.compile(r"^cors_origins\s*=.*$", re.MULTILINE)
+
+
+def write_dev_cors(workspace: Workspace) -> list[Path]:
+    """Let the frontends' dev servers call the API they are pointed at.
+
+    ``VITE_API_URL`` sends a frontend on :8610 to the API on :8600: two
+    origins, and with no ``cors_origins`` the browser blocks the very first
+    call (the preflight answered 405). The Vite config refuses a proxy on
+    purpose -- it would hide CORS in development and break in production --
+    so the origin is written where it is visible: the API's ``[app]
+    cors_origins``. Only adds; an origin somebody configured stays. In
+    production Caddy serves both under one origin and this list is unused.
+    """
+    import tomllib
+
+    target = workspace.gateway or (workspace.backends[0] if workspace.backends else None)
+    if target is None or not workspace.frontends:
+        return []
+    config = Path(target.path) / "jfast.toml"
+    if not config.is_file():
+        return []
+    text = config.read_text(encoding="utf-8")
+    try:
+        current = list(tomllib.loads(text).get("app", {}).get("cors_origins", []))
+    except tomllib.TOMLDecodeError:
+        return []
+    wanted = [
+        f"http://{host}:{frontend.port}"
+        for frontend in workspace.frontends
+        if frontend.port
+        for host in ("localhost", "127.0.0.1")
+    ]
+    merged = current + [origin for origin in wanted if origin not in current]
+    if merged == current:
+        return []
+    line = "cors_origins = [" + ", ".join(f'"{origin}"' for origin in merged) + "]"
+    header = _APP_HEADER.search(text)
+    if header is None:
+        return []
+    section_end = text.find("\n[", header.end())
+    section = text[header.end() : len(text) if section_end == -1 else section_end]
+    if _CORS_LINE.search(section):
+        section = _CORS_LINE.sub(line, section, count=1)
+    else:
+        section = (
+            section.rstrip("\n")
+            + "\n# The frontends' dev servers (VITE_API_URL points here): two origins, so\n"
+            + "# the browser needs this. Written by jfast; production serves one origin.\n"
+            + "# Default for development; JFAST_CORS_ORIGINS wins over it.\n"
+            + line
+            + "\n"
+        )
+    end = len(text) if section_end == -1 else section_end
+    updated = text[: header.end()] + section + text[end:]
+    tomllib.loads(updated)  # never write a file that no longer parses
+    config.write_text(updated, encoding="utf-8")
+    return [config]
 
 
 def _write_service_envs(workspace: Workspace) -> list[Path]:

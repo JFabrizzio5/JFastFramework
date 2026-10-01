@@ -7,8 +7,16 @@
 # The project: jfast new service shop --with database,auth,tenancy,metrics,rag,queue
 # and one module per layout (modular, screaming, hexagonal, layered).
 #
-# 0.1.0a10 -> 0.1.0a11. The a10-generated hexagonal module's own test fails
-# (its package init imports FastAPI through CreatePayload); 0.1.0a11's
-# template defers the import. upgrades.py needs an entry for it -- proposed
-# code below -- or this smoke fails at the expected-codes step, on purpose.
-hexagonal-eager-create-payload
+# 0.1.0a11 -> 0.1.0a12. The project has tenancy on, and every public.py
+# 0.1.0a11 generated takes `tenant_id: str | None` -- None builds an unscoped
+# repository. It has auth and tenancy with sources = ["token", "subdomain"]
+# and base_domain = "localhost", so a subdomain no longer grants a tenant
+# without a session. No local storage disk and no --unique over an optional
+# field, so those two a12 notes stay quiet. Its [app] says env = "local" and
+# its [plugin.auth] (jwks mode) issuer = "", which JFAST_ENV and
+# JFAST_AUTH_ISSUER now beat; its other owned lines (log level and format,
+# audience = the service name, base_domain = "localhost") are the development
+# defaults 0.1.0a12 still writes, so the note leaves them out.
+facade-tenant-optional
+jfast-env-wins-over-the-file
+unsigned-tenant-needs-a-session

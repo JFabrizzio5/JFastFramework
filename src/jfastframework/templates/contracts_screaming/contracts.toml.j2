@@ -92,6 +92,11 @@ why = "Configuration is typed. Add a field to a settings model so a bad value fa
 
 [[rules.forbid_call]]
 pattern = "print"
+# scripts/ holds command-line entry points -- a seed, an e2e run, a one-off
+# fix -- that a person runs in a terminal and reads: stdout is their interface,
+# and there is no request for a structured log line to belong to. The async
+# rules below exempt the same directory for the same reason.
+except_in = ["scripts/**"]
 why = "Use the structured logger; print output has no request id and no level."
 
 [[rules.require]]

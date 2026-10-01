@@ -26,6 +26,261 @@ before depending on any single part of this.
 ## [Unreleased]
 
 
+## [0.1.0a12] - 2026-09-30
+
+What building a new SaaS from scratch on 0.1.0a11 ran into, fixed. None of it
+was visible to the test suite, because each needed the path a new user takes:
+an optional unique field, a production image, the generated frontend in a
+browser, an upload, a migration run on the host, a model call from a worker.
+One addition came with it: enums in `--fields`.
+
+### Fixed
+
+- **Security: with `auth` on, a subdomain, path or header granted a tenant by
+  itself.** `current_tenant` returned the subdomain's tenant with nobody signed
+  in, so with the plugin's default `sources = ["token", "subdomain"]` an
+  anonymous `curl -H "Host: acme.localhost" localhost:8700/tickets` listed and
+  created acme's rows -- the `Host` header is the client's to choose -- and a
+  signed-in user whose token carried no tenant was served as whichever
+  tenant's subdomain they reached. An unsigned source now only *names* a
+  tenant; the tenant granted to the request (on `request.state.tenant_id`, in
+  the RLS session, `TenantSession`, jobs, events and `current_tenant`) must be
+  backed by the principal: no session is a 401, a token claim that disagrees
+  is a 403, and a token with no tenant is a 403 unless the new `[plugin.tenancy]
+  trust_unscoped_principals = true` says the service checks membership itself.
+  A signed source outranks an unsigned one wherever it sits in `sources`.
+  Sign-in keeps working on the subdomain: the named tenant is on
+  `request.state.tenant_requested`, which `/auth/login`, `/auth/register` and
+  password reset read, and a public page reads it with the new
+  `requested_tenant` dependency. Without `auth` (a public site with a tenant
+  per subdomain) the resolved tenant stays usable. Found building a
+  multi-company help desk; every row of the rule is tested over HTTP,
+  including that curl and its POST (401). `jfast upgrade --check`:
+  `unsigned-tenant-needs-a-session`.
+- **The Go scaffold had the same hole.** Its `ResolveTenant` took the first
+  source that yielded a tenant, so with auth on, an anonymous request to
+  `acme.<base_domain>` got `TenantFrom` = acme and `RequireTenant` let it
+  through. It now applies the Python rule: the named tenant
+  (`TenantRequestedFrom`) is separate from the granted one; no session is a
+  401; a claim that disagrees is a 403; a token with no tenant is a 403 unless
+  `JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS=true`; without auth, nothing
+  changes. `NewTenancy` now takes the service's `*Auth`, so whether auth is on
+  cannot be left out when wiring it. `tests/test_go_service.py` sends the same
+  seven requests (host plus token) to a JFast app and to the compiled Go
+  chain, with the opt-in on and off, and requires the same status and tenant
+  from both. `scripts/smoke_go.sh` runs the curl from the log against the
+  built binary; the old template fails that step.
+- **`JFAST_ENV=prod` did nothing in a project `jfast start` generated.** The
+  generator wrote `[app] env = "local"`, and `JFastConfig.load` passed `[app]`
+  to the settings as arguments, which beat environment variables -- so the
+  switch `docs/deploy.md`'s checklist names was overridden by the file, and a
+  production image ran with `/docs`, `/openapi.json`, `/info` (every plugin's
+  settings) and `/queue/stats` open, console mail "sent" to stdout and no HSTS,
+  with nothing in the log. `env` and `debug` describe the deployment, so
+  `JFAST_ENV` and `JFAST_DEBUG` set in the process environment now win over
+  `[app] env` and `debug` -- and so does every other setting that depends on
+  where the service runs (next entry). A `.env` file read by the settings does not count (the generated
+  `.env.example` says `JFAST_ENV=local`, and a copied one must not turn a
+  committed `prod` off). A disagreement is a WARNING at boot. `jfast start`,
+  `jfast new service` and the gateway no longer write `env` at all (the default
+  is `local`), and the Cloud Run script now sets `JFAST_ENV=prod` instead of
+  `production`, which the settings refuse -- and which was only harmless while
+  the file won. Verified on a generated project: with `JFAST_ENV=prod`,
+  `/docs`, `/openapi.json`, `/info` and `/queue/stats` are 404, `/health` says
+  `prod`, and console mail stops the boot. `jfast upgrade --check`:
+  `jfast-env-wins-over-the-file`.
+- **`JFAST_MAIL_BACKEND=smtp`, `JFAST_LLM_BUDGET_USD` and
+  `JFAST_STORAGE_SERVE_LOCAL=false` were ignored under a `jfast.toml` that set
+  them.** The same help desk hit it after `JFAST_ENV`: every `[plugin.x]`
+  table beat the environment, so a production deployment kept the file's
+  console mail, its $10 cap and its Python file server, silently. The rule is
+  now **the environment wins for what depends on where the service runs; the
+  file keeps winning for the service's shape**, declared once in
+  `jfastframework.deployment_keys.DEPLOYMENT_KEYS` and read by the kernel and
+  every tool: `[app]` `env`, `debug`, `cors_origins`, `cors_origin_regex`,
+  `trusted_hosts`, `trusted_proxies`, `root_path`; the log level and format;
+  mail backend, host, port, credentials, sender and TLS flags; the
+  notifications backend; the LLM key, `base_url`, models and both caps;
+  storage `serve_local` and `signing_key`; auth `issuer`, `audience`,
+  `jwks_url` and keys; accounts `frontend_url`; tenancy `base_domain`; every
+  DSN and address a plugin connects to (database, cache, mongo, qdrant,
+  rabbitmq, kafka, ollama, sentry, the OTLP endpoint) and each HTTP upstream's
+  `base_url`. The full table, and why a storage disk's bucket or `[app] port`
+  are not in it, is in `docs/deploy.md`, "Which wins". As for `env`, only the
+  process environment counts, never a `.env` file the settings read. A test
+  checks every row against the settings class that reads it.
+  Every disagreement is visible, with credentials masked (`'***'`, and a URL
+  keeps its host but not its user and password): one WARNING per key at boot;
+  a `jfast check` notice with `jfast.toml:<line>` and the variable -- reported,
+  never a failure, `--ci` included, since it describes the machine and not the
+  repository; an `environment` section in `jfast ai context`; and a paragraph
+  in the generated `AGENTS.md` telling an agent which keys the environment owns
+  and to report a disagreement instead of editing either side. The generator
+  no longer writes `[plugin.auth] issuer = ""` or `[plugin.notifications]
+  project_id = ""`, and every owned key it still writes (log format,
+  `serve_local`, `base_domain`, the LLM caps, the dev CORS origins) names the
+  variable that wins over it. `jfast upgrade --check`:
+  `jfast-env-wins-over-the-file` now lists every owned key a project set to a
+  chosen value, plus the two lines 0.1.0a12 stopped writing.
+- **The first `jfast dev` of a new project crashed: the API and the worker
+  created the bootstrap administrator at once.** Both saw no administrator and
+  inserted the `admin` role; the loser died on `uq_jfast_roles_tenant_name`
+  with a 400-line traceback and `jfast dev` stopped everything. The production
+  image, with one uvicorn worker per CPU, raced the same way. The bootstrap now
+  holds a PostgreSQL advisory lock (`serialize_setup`, like the other startup
+  work) until its transaction commits, so the next process waits and finds the
+  administrator. Tested against PostgreSQL with six concurrent startups in one
+  event loop and four separate processes started at the same instant: one
+  administrator, one role, no failures (both failed before the fix).
+- **CLI help dropped every `[section]` it named.** Rich reads `[scaffold]` as a
+  style tag, so "Defaults to [scaffold] language." printed "Defaults to
+  language." Escaped in `new module`, `remove` and `tenancy enable`; a test now
+  walks all 61 commands' help. The same walk exposed that the bare-install test
+  added in 0.1.0a11 checked the root command only: it now reaches every one.
+- **`GET /queue/stats` answered anyone, in every environment.** It lists the
+  service's task names and queue depths without authentication. Unset,
+  `expose_stats` now follows `/docs`: on in development, closed in production;
+  set it to choose.
+- **The generated image could not write local storage, so it stopped at
+  boot.** It runs as `appuser`, but `WORKDIR` created `/app` as root and
+  `--chown` only reached the copied files. The Dockerfile now creates
+  `/app/storage` and the default disks owned by `appuser` (a volume mounted on
+  them starts out writable), and a disk that still cannot create its root says
+  which line to add. Found by the compose smoke's new upload step, which runs
+  `jfast add storage` on a generated project and uploads a file to the built
+  image. `jfast upgrade --check`: `image-cannot-write-local-storage`.
+- **`--unique` on an optional field allowed one row without a value.** The
+  generated key was `NULLS NOT DISTINCT` and the rule looked `None` up, so the
+  second receipt without a UUID answered 409. A key with a `?` field is now a
+  partial unique index (`WHERE field IS NOT NULL`), the rule skips a missing
+  value, and the generated tests cover it. Verified on PostgreSQL. Tables
+  already created keep their constraint: `jfast upgrade --check` lists them
+  (`unique-key-on-optional-field`) with the migration to write.
+- **The `storage` extra lacked `python-multipart`.** FastAPI refuses to import a
+  route with `UploadFile` without it; development worked because the `dev`
+  extra pulls it, and a production image built from `requirements.txt` did not
+  start. The compose smoke now uploads a file to that image.
+- **The generated frontend could not call its API in development.** Two
+  origins (:8610 and :8600) and no `cors_origins`: the browser blocked the first
+  request. `jfast start`, `jfast new service` and `jfast workspace env` add the
+  frontends' dev origins to the API's `[app] cors_origins`, never removing one
+  somebody configured.
+- **The generated API client turned uploads into JSON.** It forced
+  `Content-Type: application/json`, and axios then serialised a `FormData` as
+  `{"archivo":{}}`. Removed; axios sends objects as JSON by itself.
+- **The generated contract forbade `print()` in `scripts/` too.** The async
+  rules already exempted `scripts/`, and `forbid_call print` had no
+  `except_in`, so a project's own e2e script failed `jfast contracts check`
+  once per line it printed. The rule now carries `except_in = ["scripts/**"]`:
+  a command someone runs in a terminal talks through stdout. Contracts already
+  written keep their rule; add the line to `[[rules.forbid_call]] pattern =
+  "print"` by hand.
+- **Generated facades accepted `tenant_id=None` in a multitenant service.**
+  `public.py`'s `get_<module>(session, *, tenant_id: str | None, ...)` passed
+  the value to the repository, and None means no tenant filter: a task or
+  another module holding a variable that happened to be None read every
+  tenant's rows, and `--multitenant-ready` only caught the literal. A module
+  generated with tenant access (what tenancy implies) now takes `tenant_id:
+  str`. A single-tenant service keeps `str | None` -- its rows are written with
+  no tenant, so None is the only value that finds them -- with a comment saying
+  so, and `jfast check --multitenant-ready` has a new rule,
+  `facade-tenant-optional`, that lists every facade signature admitting None
+  (`str | None`, `Optional[str]`, `= None`) as a step before the switch.
+  `jfast upgrade --check`: `facade-tenant-optional`, for services with tenancy.
+- **`jfast new enum` left the module's `# None yet: jfast new enum ...`
+  comment above the enum it wrote.** The placeholder is removed when the first
+  enum lands.
+
+- **A `@task` or `@subscribe` handler could not reach `llm`, `storage` or the
+  outbox.** It received the payload and a `TaskSession`, nothing else, and the
+  docs only showed `request.app.state.jfast.require(...)` -- which a worker does
+  not have -- so every project kept its own global copy of the context. A
+  parameter annotated `TaskContext` (from `jfastframework.tasks`; it is
+  `AppContext`, and that annotation works too) now receives the running app's
+  context, in `jfast worker` and in the API alike. Verified with a real `jfast
+  worker` process running a task and a subscriber that ask it for providers.
+- **`jfast dev` announced the frontend on :5173 while Vite ran on 8610.** The
+  generated dev script pins the workspace port and `jfast dev` printed Vite's
+  default; `--web-port 8610` then ran `vite --port 8610 --port 8610`. The
+  announced URL is now read from the frontend (its dev script, then
+  `vite.config`, then 5173), and `--port` is passed only when it changes
+  something.
+- **Only `jfast dev` could use a workspace's `.env` on the host.** It names the
+  database by its compose name and leaves the password for compose to fill in,
+  so `alembic revision --autogenerate` -- the step `jfast new module` prints --
+  `jfast serve`, `jfast worker` and `pytest` failed with a DNS error. `jfast
+  serve` and `jfast worker` now translate it as `jfast dev` does when they find
+  the compose file, `jfast exec -- <command>` runs anything else with it, and
+  every printed `alembic` step goes through `jfast exec --`. A variable set in
+  the shell wins; inside a container, and in the production image (which has
+  no compose file to find), nothing changes.
+
+What a help desk built from scratch on this release hit in production
+containers, fixed before it shipped:
+
+- **A local disk other than `public` and `private` was not writable in the
+  image.** The Dockerfile created only the two default roots, so compose's
+  volume on `/app/storage/adjuntos` was root's: `/ready` 503 and every upload
+  a 500 `PermissionError`, while `/health` said 200. `jfast deploy dockerfile`
+  now reads `[plugin.storage.disks]` and creates and hands to `appuser` every
+  local root (and its parents); `jfast add storage` rewrites just that line in
+  an existing Dockerfile, so an edited one keeps its edits. The compose
+  volumes and the Dockerfile come from one resolver, which also stopped
+  skipping a disk that relies on the default `driver` or `root`.
+  `image-cannot-write-local-storage` now names each root the Dockerfile does
+  not create, and docs/storage.md says how to `chown` a volume Docker already
+  created as root. Verified by building the image: the compose smoke declares
+  its own disk and writes an upload to it; by hand, the old line reproduced
+  the 503, and the documented `chown` repaired the existing volume.
+- **`jfast workspace caddy --wildcard-tenants` wrote a Caddyfile Caddy
+  refuses.** `header_up` sat at site level (`unrecognized directive`) and the
+  container restarted in a loop. It is gone -- `reverse_proxy` already passes
+  the Host header and sets `X-Forwarded-Host`, verified behind
+  `caddy:2-alpine` -- and so are on-demand TLS `interval` and `burst`, which
+  Caddy 2.11 no longer accepts, and the blank line that made every start warn
+  the file was unformatted. A test runs `caddy validate` over every variant
+  and shape (skipped without Docker), and requires no warnings.
+- **Caddy served an empty site.** The workspace compose mounted `./dist`; the
+  frontend builds into `<frontend>/dist`. It mounts that now, and `jfast
+  start`'s panel builds the SPA before `docker compose up --build` instead of
+  promising "nothing else to install". The compose smoke asks the running
+  Caddy for `/`, a client-side route and `/api/health`.
+- **`jfast migration check` on the host reported `database: unavailable`.**
+  It read the workspace `.env` as is; it now translates it as `serve`,
+  `worker` and `exec` do. On a real PostgreSQL that also exposed a second
+  cause: on a database nothing had migrated yet, the failed read of
+  `alembic_version` aborted the transaction the row counts ran in.
+- **`from jfastframework.auth import require_auth` failed `mypy --strict`.**
+  The lazy `__getattr__` was typed `-> object`, so `Depends(require_auth)` was
+  an error in every project that followed the docs. The names are declared
+  for the type checker; the import stays lazy. The generated `ruff.toml` also
+  lets `Depends(require_scopes(...))` through B008, which it flagged. The
+  generated-quality smoke gates the documented imports.
+
+### Added
+
+- **`[app] cors_origin_regex`**, for origins a list cannot spell -- one per
+  tenant subdomain, when the SPA signs users in at `<tenant>.example.com`.
+  Passed to Starlette's `allow_origin_regex`, matched against the whole
+  origin, in addition to `cors_origins`; a pattern that does not compile
+  stops the boot. Tested against a lookalike (`evil-example.com`) and a suffix
+  (`example.com.evil.com`). Documented in docs/deploy.md, CORS.
+
+- **`--fields` knows enums: `tipo:enum(personal,empresa,otra)`** (with `?` and
+  `=personal` like any other type, and allowed in a `--unique` key). It writes
+  `class CarteraTipo(StrEnum)` into the module's enums file -- the shape `jfast
+  new enum` writes -- and uses it in the column, the Create/Update/Read models
+  (any other value is a 422, and the generated tests say so), the domain
+  entity and the `public.py` DTO, in all four layouts. The column is
+  `Enum(native_enum=False)` storing the member's value, plus a named CHECK
+  built from the enum: autogenerate renders it as one column and one
+  `CheckConstraint` (with `create_constraint=True` it wrote the CHECK twice),
+  it reads back as the enum, and SQLite creates the same table. Verified on
+  PostgreSQL and SQLite: the rendered migration applies, a second autogenerate
+  finds nothing, and a raw INSERT of another value is refused. Autogenerate
+  does not compare CHECK constraints, so a member added later needs a
+  hand-written migration (docs/modules.md says which).
+
 ## [0.1.0a11] - 2026-09-30
 
 Built from two real services on 0.1.0a10, Cuadra and Dictamen, and from what

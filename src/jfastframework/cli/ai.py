@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json as jsonlib
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
@@ -137,7 +138,7 @@ REMEDY: dict[str, str] = {
     "shared-imports-module": "move the shared piece into shared/, or invert the import",
     "cross-module-import": "go through modules/<other>/public.py  (jfast contracts check names it)",
     "code-outside-module": "move it into a module, or into shared/",
-    "module-no-migration": "alembic revision --autogenerate",
+    "module-no-migration": "jfast exec -- alembic revision --autogenerate",
     # The contract describes a tree this project does not have, so editing its
     # globs by hand is the long way round: the layout's own contract is a
     # template that ships. `<layout>` is filled in from the recorded layout
@@ -387,7 +388,7 @@ def steps(found: Survey) -> list[Step]:
                 Step(
                     stage="persist",
                     what=f"{', '.join(module.tables)} has no revision (this project has none)",
-                    do="alembic revision --autogenerate",
+                    do="jfast exec -- alembic revision --autogenerate",
                     why=(
                         "The table is never created. The service starts and the first query "
                         "fails on a relation that does not exist."
@@ -641,6 +642,51 @@ BRIEF_OMITTED = (
 )
 
 
+#: What an agent is told about settings the environment owns. Stated as an
+#: instruction because the failure it prevents is an agent's: seeing
+#: `backend = "console"` in jfast.toml and a boot WARNING about
+#: JFAST_MAIL_BACKEND=smtp, and "fixing" whichever side it happened to open.
+ENVIRONMENT_RULE = (
+    "For these keys the process environment wins over jfast.toml: a value the file "
+    "writes is only the default for where the variable is unset. Do not edit either "
+    "side to make them agree -- report a disagreement to a human, who knows which "
+    "environment is right."
+)
+WHICH_WINS = f"{DOCS_URL}deploy.html#which-wins-jfasttoml-or-the-environment"
+
+
+def environment_payload(root: Path, plugins: Sequence[str]) -> dict[str, Any]:
+    """The settings the environment owns that jfast.toml writes, and any it overrides now.
+
+    ``in_file`` is static -- the same on every machine. ``overridden_here`` is
+    this process's environment against the file, masked, which is what the
+    boot WARNING would say if the service started here.
+    """
+    from jfastframework.deployment_keys import config_lines, line_of, owned_in_file
+
+    source = root / CONFIG_FILE
+    try:
+        text = source.read_text(encoding="utf-8")
+        raw = tomllib.loads(text)
+    except (OSError, tomllib.TOMLDecodeError):
+        text, raw = "", {}
+    lines = config_lines(text)
+    owned = sorted(
+        owned_in_file(raw, tables={"app", *plugins}), key=lambda item: line_of(lines, item) or 0
+    )
+    return {
+        "rule": ENVIRONMENT_RULE,
+        "in_file": [
+            {"key": item.where, "variable": item.variable, "line": line_of(lines, item)}
+            for item in owned
+        ],
+        "overridden_here": [
+            {**item.describe(), "line": line_of(lines, item)} for item in owned if item.disagrees
+        ],
+        "every_key": WHICH_WINS,
+    }
+
+
 def context_payload(
     found: Survey,
     *,
@@ -678,6 +724,7 @@ def context_payload(
             "enabled_but_not_installed": unknown,
             "installed_but_broken": found.broken_plugins,
         },
+        "environment": environment_payload(project.root, project.plugins),
         "modules": [_module_summary(m, with_files=module is not None) for m in chosen],
         "graph": insight.graph_payload(project, module),
         "contract": None,
@@ -799,6 +846,15 @@ def render_context(found: Survey, payload: dict[str, Any]) -> str:
     lines.append(f"  contract   {'declared' if found.contract else 'none'}")
     lines.append(f"  findings   {sum(payload['checks']['analyze']['counts'].values())}")
     lines.append(f"  violations {payload['checks']['contracts']['violations']}")
+    environment = payload["environment"]
+    lines.append(
+        f"  environment owns {len(environment['in_file'])} key(s) jfast.toml writes, "
+        f"{len(environment['overridden_here'])} overridden here"
+    )
+    for item in environment["overridden_here"]:
+        lines.append(
+            f"    {item['key']} = {item['file']}  <-  {item['variable']}={item['environment']}"
+        )
     lines.append("")
     outstanding = len(payload["next"])
     if outstanding:

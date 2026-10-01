@@ -97,7 +97,17 @@ the migration fails with a DNS error naming a host that was never meant to
 resolve there.
 
 Anything it cannot resolve is left exactly as it was. A wrong guess would be
-harder to debug than the original value.
+harder to debug than the original value. A variable already set in your shell
+is left alone too, as pydantic-settings leaves it over `.env`.
+
+The translation is not only `jfast dev`'s. `jfast serve`, `jfast worker` and
+`jfast migration check`/`plan` apply it when they find the compose file the same way (the service directory or
+one level up), and `jfast exec -- <command>` runs anything else with it --
+`jfast exec -- alembic revision --autogenerate -m "add invoices"`, `jfast exec
+-- pytest`. Inside a container nothing is translated: there the compose names
+resolve and `localhost` is the container. The production image has no compose
+file to find in any case (`.dockerignore` drops it, and the workspace's lives
+outside the build context).
 
 ---
 
@@ -127,7 +137,7 @@ next `jfast dev` then fails with `address already in use` and a confusing hunt.
 | Migrations | no | applies them |
 | Queue worker | no (`jfast worker`) | starts it |
 | Frontend | no | starts it |
-| `.env` translated for the host | no | yes |
+| `.env` translated for the host | yes | yes |
 
 `serve` is the smaller tool and stays that way: one process, no side effects,
 nothing started that you have to remember to stop. Reach for it when the
@@ -138,11 +148,13 @@ database is already running and you want a server and nothing else.
 ## Everything in containers instead
 
 ```bash
+(cd shop-web && npm install && npm run build)
 docker compose up --build
 ```
 
-Which is what runs in production, and needs nothing installed locally. The
-compose file `jfast start` writes is complete — the workspace `.env` with the
+Which is what runs in production. The frontend is the one thing built on the
+host: Caddy serves `<frontend>/dist`, where `npm run build` writes, and no Node
+container runs. The compose file `jfast start` writes is complete — the workspace `.env` with the
 generated passwords and each service's `.env` are written alongside it, so this
 works on a fresh clone with no further steps.
 

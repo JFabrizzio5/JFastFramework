@@ -7,7 +7,9 @@
 [app]
 name = "{{ service_slug }}"
 version = "0.1.0"
-env = "local"
+# No `env` here on purpose: it is a property of the deployment, not of the
+# code. It defaults to "local"; a deployment sets JFAST_ENV=prod, which also
+# wins over an `env` written in this file. See docs/deploy.md.
 port = {{ port }}
 
 [plugins]
@@ -15,8 +17,10 @@ enabled = ["observability", "metrics", "gateway"]
 disabled = []
 
 [plugin.observability]
+# Development defaults: JFAST_LOG_LEVEL and JFAST_LOG_JSON_LOGS win over both
+# (docs/deploy.md, "Which wins"). A deployment sets JFAST_LOG_JSON_LOGS=true.
 level = "INFO"
-json_logs = false
+json_logs = false   # readable in a dev terminal
 
 [plugin.gateway]
 timeout = 30.0

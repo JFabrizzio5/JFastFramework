@@ -70,6 +70,7 @@ __all__ = [
     "PRECEDENCE",
     "CheckResult",
     "build_error",
+    "environment_overrides",
     "payload",
     "register",
     "render",
@@ -190,6 +191,18 @@ class CheckResult:
     #: `--only plugins` deselects that check, and without this field the skip
     #: left behind would read as success.
     blocked_by: Code | None = None
+    #: Reported, never counted: no status, no exit code, `--ci` included.
+    #:
+    #: What goes here is a fact about the *machine* running the check rather
+    #: than about the repository -- today, a setting the environment owns whose
+    #: variable disagrees with the default jfast.toml writes. The rest of this
+    #: command gives the same answer on every machine; these would not, and the
+    #: disagreement is often the design working (the file carries the laptop's
+    #: default, the deployment carries its own). Failing on it would push a
+    #: team to delete the default or to copy production's values into CI. So
+    #: it is printed with file and line and carried in `--json`, and the boot
+    #: WARNING says the same thing where the service runs.
+    notices: tuple[Finding, ...] = ()
 
     @property
     def ran(self) -> bool:
@@ -227,6 +240,7 @@ class CheckResult:
             "duration_ms": self.duration_ms,
             "counts": insight.severity_counts(list(self.findings)),
             "findings": [finding.describe() for finding in self.findings],
+            "notices": [notice.describe() for notice in self.notices],
         }
 
 
@@ -347,7 +361,45 @@ def _config_check(root: Path, config_path: str, state: _State) -> CheckResult:
         name="config",
         detail=f"{settings.app_name} ({settings.env})",
         duration_ms=_timed(started),
+        notices=tuple(environment_overrides(source, state.config.raw)),
     )
+
+
+def environment_overrides(source: Path, raw: dict[str, Any]) -> list[Finding]:
+    """One notice per setting the environment owns and sets to something else.
+
+    Read from this process's environment, which is the point and the caveat:
+    run where the service runs, it lists exactly what the boot WARNING lists;
+    run on a laptop, it lists the laptop's. Values are masked.
+    """
+    from jfastframework.deployment_keys import config_lines, line_of, owned_in_file
+
+    try:
+        lines = config_lines(source.read_text(encoding="utf-8"))
+    except OSError:
+        lines = {}
+    found = [
+        Finding(
+            severity="medium",
+            code="environment-overrides-file",
+            message=(
+                f"{owned.where} = {owned.file_shown} is overridden by "
+                f"{owned.variable}={owned.environment_shown} from the environment"
+            ),
+            why=(
+                "The environment owns this setting, so its value is the one that runs and "
+                "the file's is only the default for where the variable is unset. If the "
+                "environment is right, nothing to do; if the file is, unset the variable. "
+                "Reported, never failed: it describes this machine, not the repository."
+            ),
+            path=source.name,
+            line=line_of(lines, owned),
+        )
+        for owned in owned_in_file(raw)
+        if owned.disagrees
+    ]
+    # In file order, which is how a reader walks jfast.toml to fix one.
+    return sorted(found, key=lambda notice: notice.line or 0)
 
 
 def _plugins_check(root: Path, state: _State) -> CheckResult:
@@ -977,6 +1029,7 @@ def payload(
         "duration_ms": duration_ms,
         "summary": {status: len(names) for status, names in grouped.items()},
         "counts": insight.severity_counts(every),
+        "notices": sum(len(result.notices) for result in results),
         "passed": grouped["pass"],
         "warned": grouped["warn"],
         "failed": grouped["fail"],
@@ -1014,6 +1067,8 @@ def render(
             note = "  ".join(f"{severity} {count}" for severity, count in counts.items())
         else:
             note = result.detail
+        if result.notices:
+            note = f"{note}  ({_plural(len(result.notices), 'environment override')})"
         lines.append(f"  {marks[status]} {result.name:<{width}}  {status:<5}  {note}")
 
     for result in results:
@@ -1022,6 +1077,18 @@ def render(
         lines.append("")
         lines.append(f"  {result.name.upper()}  ({MEANING[result.code]}, exit {int(result.code)})")
         lines.append(insight.render_analysis(list(result.findings)))
+
+    for result in results:
+        if not result.notices:
+            continue
+        lines.append("")
+        lines.append(
+            f"  {result.name.upper()}  the environment overrides jfast.toml "
+            "(reported, never a failure)"
+        )
+        for notice in result.notices:
+            where = f"{notice.path}:{notice.line}" if notice.line else notice.path or ""
+            lines.append(f"    {where}  {notice.message}")
 
     grouped = _by_status(results, threshold)
     tally = ", ".join(f"{len(names)} {status}" for status, names in grouped.items() if names)

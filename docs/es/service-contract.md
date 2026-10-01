@@ -136,6 +136,7 @@ variables, así que un token se comporta igual contra cualquier servicio:
 | `JFAST_TENANCY_SOURCES` | De dónde sale el tenant, en orden de confianza: `token`, `user`, `subdomain`, `path`, `header` | `["token", "subdomain"]` |
 | `JFAST_TENANCY_BASE_DOMAIN` | Lo necesita la fuente `subdomain` | vacío |
 | `JFAST_TENANCY_REQUIRE_TENANT` | Rechazar con 403 todo request que no resuelva tenant, fuera de `/health`, `/ready` y similares | `false` |
+| `JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS` | Con auth activo, dejar que un llamante cuyo token no trae tenant actúe en el tenant que nombra un subdominio, una ruta o un header (el servicio revisa la membresía por su cuenta) | `false` |
 
 Las reglas: `exp`, `iat` y `sub` son obligatorios; un token con
 `typ: refresh` no sirve como bearer; un token malo en una ruta abierta se
@@ -143,10 +144,23 @@ ignora, no se rechaza. Responde **401** cuando no hay un llamante verificado y
 **403** cuando lo hay pero le falta el scope, el rol o el tenant -- un cliente
 refresca su sesión ante un 401 y se rinde ante un 403. El tenant sale de un
 claim firmado antes que de cualquier cosa que el request pueda elegir;
-`X-Tenant-ID` solo es fuente cuando `header` está en la lista.
+`X-Tenant-ID` solo es fuente cuando `header` está en la lista. Con auth activo,
+un subdominio, una ruta o un header solo **nombran** un tenant; el llamante
+verificado tiene que respaldarlo: sin sesión es 401, un token cuyo claim de
+tenant es otro es 403, y un token sin tenant es 403 salvo que
+`JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS` sea true. Una fuente firmada le gana a
+una sin firma sin importar dónde esté en la lista. Sin auth, gana la primera
+fuente que da un tenant ([multi-tenancy](multitenancy.md#con-auth-activo-una-fuente-sin-firma-nunca-otorga-un-tenant-por-si-sola)).
+Python y Go aplican esta regla igual, y `tests/test_go_service.py` lo comprueba
+mandando los mismos requests a los dos.
 
 En Python la configuración de los plugins también puede venir de `jfast.toml`
-(`[plugin.auth]`, `[plugin.tenancy]`), que le gana al entorno. Un servicio en
+(`[plugin.auth]`, `[plugin.tenancy]`), que le gana al entorno para la forma del
+servicio -- modo, algoritmos, fuentes de tenancy -- pero no para lo que depende
+de dónde corre: `issuer`, `audience`, `jwks_url`, el secreto o la llave pública
+y `base_domain` vienen del entorno cuando este los pone, como `JFAST_ENV` y
+`JFAST_DEBUG` para `[app]`
+([deploy](deploy.md#quien-gana-jfasttoml-o-el-entorno)). Un servicio en
 otro lenguaje solo tiene el entorno, así que escribe en su `.env` los valores
 que debe compartir -- modo, algoritmos, secreto o llave pública, issuer,
 audience, fuentes de tenancy. Nada los copia entre servicios por ti: un
@@ -172,7 +186,7 @@ dejarlo responder requests sin verificar.
 | Trace context | se propaga; spans con el plugin `telemetry` | pasa sin cambios; sin spans (agrega `otelhttp` tú) |
 | Auth (sección 7) | plugin `auth`: `jwks`, `public_key`, `secret`; emite tokens | solo verifica: `public_key`, `secret`; `jwks` no arranca |
 | Revocación de tokens | se consulta en Redis en cada request | **no se consulta**: un access token revocado sirve hasta que vence (15 min por default) |
-| Tenancy (sección 7) | plugin `tenancy` | mismas fuentes y 401/403; sin zona horaria por tenant |
+| Tenancy (sección 7) | plugin `tenancy` | mismas fuentes, misma regla de nombrado contra otorgado, mismos 401/403; sin zona horaria por tenant |
 | Sistema de plugins | sí | no |
 | Generador de módulos | sí | un módulo de ejemplo |
 | Migraciones | Alembic | las pones tú |

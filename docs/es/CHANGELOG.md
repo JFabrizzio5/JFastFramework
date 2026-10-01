@@ -25,6 +25,277 @@ archivo para leer antes de depender de cualquier parte de esto.
 
 ## [Unreleased]
 
+## [0.1.0a12] - 2026-09-30
+
+Lo que se encontró al construir un SaaS nuevo desde cero sobre 0.1.0a11,
+corregido. La suite no lo veía porque cada caso necesitaba el camino de un
+usuario nuevo: un campo único opcional, una imagen de producción, el frontend
+generado en un navegador, una subida, una migración corrida en el host, una
+llamada a un modelo desde un worker. Llegó con ello una adición: enums en
+`--fields`.
+
+### Corregido
+
+- **Seguridad: con `auth` activo, un subdominio, una ruta o un header otorgaban
+  un tenant por sí solos.** `current_tenant` regresaba el tenant del subdominio
+  sin nadie con sesión, así que con el default del plugin, `sources = ["token",
+  "subdomain"]`, un `curl -H "Host: acme.localhost" localhost:8700/tickets`
+  anónimo listaba y creaba filas de acme -- el header `Host` lo elige el
+  cliente --, y un usuario con sesión cuyo token no traía tenant quedaba servido
+  como el tenant de cualquier subdominio al que llegara. Una fuente sin firma
+  ahora solo *nombra* un tenant; el tenant que se le otorga al request (en
+  `request.state.tenant_id`, la sesión con RLS, `TenantSession`, jobs, eventos
+  y `current_tenant`) tiene que respaldarlo el principal: sin sesión es 401, un
+  claim del token que no coincide es 403, y un token sin tenant es 403 salvo que
+  el nuevo `[plugin.tenancy] trust_unscoped_principals = true` diga que el
+  servicio revisa la membresía por su cuenta. Una fuente firmada le gana a una
+  sin firma sin importar su lugar en `sources`. Iniciar sesión en el subdominio
+  sigue funcionando: el tenant nombrado queda en
+  `request.state.tenant_requested`, que leen `/auth/login`, `/auth/register` y
+  la recuperación de contraseña, y una página pública lo lee con la nueva
+  dependencia `requested_tenant`. Sin `auth` (un sitio público con un tenant por
+  subdominio) el tenant resuelto sigue sirviendo. Encontrado al construir una
+  mesa de ayuda multi-empresa; cada fila de la regla está probada por HTTP,
+  incluido ese curl y su POST (401). `jfast upgrade --check`:
+  `unsigned-tenant-needs-a-session`.
+- **El scaffold de Go tenía el mismo hueco.** Su `ResolveTenant` tomaba la
+  primera fuente que daba un tenant, así que con auth activo un request anónimo
+  a `acme.<base_domain>` obtenía acme de `TenantFrom` y `RequireTenant` lo
+  dejaba pasar. Ahora aplica la regla de Python: el tenant nombrado
+  (`TenantRequestedFrom`) va aparte del otorgado; sin sesión es 401; un claim
+  que no coincide es 403; un token sin tenant es 403 salvo
+  `JFAST_TENANCY_TRUST_UNSCOPED_PRINCIPALS=true`; sin auth, nada cambia.
+  `NewTenancy` ahora recibe el `*Auth` del servicio, así que al conectarlo no
+  se puede omitir si auth está activo. `tests/test_go_service.py` manda los
+  mismos siete requests (host más token) a una app JFast y a la cadena de Go
+  compilada, con la opción activa y apagada, y exige el mismo status y tenant
+  en los dos. `scripts/smoke_go.sh` corre el curl de la bitácora contra el
+  binario compilado; la plantilla vieja falla ese paso.
+- **`JFAST_ENV=prod` no hacía nada en un proyecto generado por `jfast start`.**
+  El generador escribía `[app] env = "local"`, y `JFastConfig.load` le pasaba
+  `[app]` a los settings como argumentos, que le ganan a las variables de
+  entorno -- así que el interruptor que nombra el checklist de
+  `docs/deploy.md` quedaba anulado por el archivo, y una imagen de producción
+  corría con `/docs`, `/openapi.json`, `/info` (los settings de cada plugin) y
+  `/queue/stats` abiertos, el correo por consola "enviado" a stdout y sin HSTS,
+  sin nada en el log. `env` y `debug` describen el despliegue, así que
+  `JFAST_ENV` y `JFAST_DEBUG` puestas en el entorno del proceso ahora le ganan a
+  `[app] env` y `debug` -- y también todo otro ajuste que depende de dónde
+  corre el servicio (siguiente entrada). Un archivo `.env` que lean los settings no
+  cuenta (el `.env.example` generado dice `JFAST_ENV=local`, y una copia no debe
+  apagar un `prod` commiteado). Un desacuerdo es un WARNING al arrancar. `jfast
+  start`, `jfast new service` y el gateway ya no escriben `env` (el default es
+  `local`), y el script de Cloud Run ahora pone `JFAST_ENV=prod` en vez de
+  `production`, que los settings rechazan -- y que solo era inofensivo mientras
+  ganaba el archivo. Verificado en un proyecto generado: con `JFAST_ENV=prod`,
+  `/docs`, `/openapi.json`, `/info` y `/queue/stats` dan 404, `/health` dice
+  `prod` y el correo por consola detiene el arranque. `jfast upgrade --check`:
+  `jfast-env-wins-over-the-file`.
+- **`JFAST_MAIL_BACKEND=smtp`, `JFAST_LLM_BUDGET_USD` y
+  `JFAST_STORAGE_SERVE_LOCAL=false` se ignoraban bajo un `jfast.toml` que las
+  ponía.** La misma mesa de ayuda lo encontró después de `JFAST_ENV`: toda
+  tabla `[plugin.x]` le ganaba al entorno, así que un despliegue de producción
+  se quedaba con el correo por consola del archivo, su tope de $10 y su
+  servidor de archivos en Python, en silencio. La regla ahora es **el entorno
+  gana en lo que depende de dónde corre el servicio; el archivo sigue ganando
+  en la forma del servicio**, declarada una sola vez en
+  `jfastframework.deployment_keys.DEPLOYMENT_KEYS` y leída por el kernel y por
+  cada herramienta: `[app]` `env`, `debug`, `cors_origins`,
+  `cors_origin_regex`, `trusted_hosts`, `trusted_proxies`, `root_path`; el
+  nivel y formato de logs; backend, host, puerto, credenciales, remitente y
+  flags de TLS del correo; el backend de notificaciones; la key, `base_url`,
+  modelos y los dos topes del LLM; `serve_local` y `signing_key` de storage;
+  `issuer`, `audience`, `jwks_url` y llaves de auth; `frontend_url` de
+  accounts; `base_domain` de tenancy; todo DSN y dirección a la que se conecta
+  un plugin (base, cache, mongo, qdrant, rabbitmq, kafka, ollama, sentry, el
+  endpoint OTLP) y el `base_url` de cada upstream HTTP. La tabla completa, y
+  por qué el bucket de un disco o `[app] port` no están, está en
+  `docs/deploy.md`, "Quién gana". Como con `env`, solo cuenta el entorno del
+  proceso, nunca un archivo `.env` que lean los settings. Un test revisa cada
+  fila contra la clase de settings que la lee.
+  Todo desacuerdo se ve, con las credenciales enmascaradas (`'***'`, y una URL
+  conserva su host pero no su usuario y contraseña): un WARNING por llave al
+  arrancar; un aviso de `jfast check` con `jfast.toml:<línea>` y la variable --
+  reportado, nunca una falla, `--ci` incluido, porque describe la máquina y no
+  el repositorio --; una sección `environment` en `jfast ai context`; y un
+  párrafo en el `AGENTS.md` generado que le dice a un agente qué llaves son del
+  entorno y que reporte un desacuerdo en vez de editar cualquiera de los dos
+  lados. El generador ya no escribe `[plugin.auth] issuer = ""` ni
+  `[plugin.notifications] project_id = ""`, y cada llave del entorno que sigue
+  escribiendo (formato de logs, `serve_local`, `base_domain`, los topes del
+  LLM, los orígenes CORS de desarrollo) nombra la variable que le gana. `jfast
+  upgrade --check`: `jfast-env-wins-over-the-file` ahora lista cada llave del
+  entorno que un proyecto puso en un valor elegido, más las dos líneas que
+  0.1.0a12 dejó de escribir.
+- **El primer `jfast dev` de un proyecto nuevo se caía: la API y el worker
+  creaban el administrador de arranque a la vez.** Los dos veían que no había
+  administrador e insertaban el rol `admin`; el que perdía moría en
+  `uq_jfast_roles_tenant_name` con un traceback de 400 líneas y `jfast dev`
+  detenía todo. La imagen de producción, con un worker de uvicorn por CPU,
+  competía igual. El arranque ahora sostiene un advisory lock de PostgreSQL
+  (`serialize_setup`, como el resto del trabajo de arranque) hasta que su
+  transacción hace commit, así que el siguiente proceso espera y encuentra al
+  administrador. Probado contra PostgreSQL con seis arranques simultáneos en un
+  event loop y cuatro procesos separados que arrancan en el mismo instante: un
+  administrador, un rol, ninguna falla (los dos fallaban antes del arreglo).
+- **La ayuda de la CLI se comía cada `[sección]` que nombraba.** Rich lee
+  `[scaffold]` como etiqueta de estilo, así que "Defaults to [scaffold]
+  language." salía "Defaults to  language." Escapado en `new module`, `remove` y
+  `tenancy enable`; una prueba ahora recorre la ayuda de los 61 comandos. Ese
+  recorrido mostró que la prueba de instalación sin extras de 0.1.0a11 solo
+  revisaba el comando raíz: ahora llega a todos.
+- **`GET /queue/stats` respondía a cualquiera, en cualquier entorno.** Lista
+  los nombres de tareas y las profundidades de la cola sin autenticación. Sin
+  configurar, `expose_stats` ahora sigue a `/docs`: encendido en desarrollo,
+  cerrado en producción; configúralo para elegir.
+- **La imagen generada no podía escribir en el storage local, así que se
+  detenía al arrancar.** Corre como `appuser`, pero `WORKDIR` creó `/app` como
+  root y `--chown` solo alcanzó a los archivos copiados. El Dockerfile ahora crea
+  `/app/storage` y los discos por defecto a nombre de `appuser` (un volumen
+  montado encima empieza con permisos de escritura), y un disco que aun así no
+  puede crear su raíz dice qué línea agregar. Lo encontró el paso nuevo del
+  smoke de compose, que corre `jfast add storage` en un proyecto generado y sube
+  un archivo a la imagen construida. `jfast upgrade --check`:
+  `image-cannot-write-local-storage`.
+- **`--unique` sobre un campo opcional permitía una sola fila sin valor.** La
+  llave generada era `NULLS NOT DISTINCT` y la regla buscaba `None`, así que el
+  segundo comprobante sin UUID respondía 409. Una llave con un campo `?` ahora
+  es un índice único parcial (`WHERE campo IS NOT NULL`), la regla ignora el
+  valor vacío y las pruebas generadas lo cubren. Verificado en PostgreSQL. Las
+  tablas ya creadas conservan su restricción: `jfast upgrade --check` las lista
+  (`unique-key-on-optional-field`) con la migración que hay que escribir.
+- **Al extra `storage` le faltaba `python-multipart`.** FastAPI no importa una
+  ruta con `UploadFile` sin él; en desarrollo funcionaba porque el extra `dev`
+  lo trae, y la imagen de producción construida desde `requirements.txt` no
+  arrancaba. El smoke de compose ahora sube un archivo a esa imagen.
+- **El frontend generado no podía llamar a su API en desarrollo.** Dos orígenes
+  (:8610 y :8600) y ningún `cors_origins`: el navegador bloqueaba la primera
+  petición. `jfast start`, `jfast new service` y `jfast workspace env` agregan
+  los orígenes de desarrollo de los frontends a `[app] cors_origins` de la API,
+  sin quitar nunca uno que alguien configuró.
+- **El cliente de API generado convertía las subidas en JSON.** Forzaba
+  `Content-Type: application/json` y axios serializaba un `FormData` como
+  `{"archivo":{}}`. Se quitó; axios manda los objetos como JSON por sí solo.
+- **El contrato generado prohibía `print()` también en `scripts/`.** Las reglas
+  async ya exceptuaban `scripts/`, y `forbid_call print` no tenía `except_in`,
+  así que el script e2e del propio proyecto fallaba `jfast contracts check` una
+  vez por cada línea que imprimía. La regla ahora lleva `except_in =
+  ["scripts/**"]`: un comando que alguien corre en una terminal habla por
+  stdout. Los contratos ya escritos conservan su regla; agrega la línea a
+  `[[rules.forbid_call]] pattern = "print"` a mano.
+- **Las fachadas generadas aceptaban `tenant_id=None` en un servicio
+  multitenant.** `get_<modulo>(session, *, tenant_id: str | None, ...)` de
+  `public.py` le pasaba el valor al repositorio, y None significa sin filtro de
+  tenant: una tarea u otro módulo con una variable que resultaba ser None leía
+  las filas de todos los tenants, y `--multitenant-ready` solo detectaba el
+  literal. Un módulo generado con acceso por tenant (lo que implica tenancy)
+  ahora recibe `tenant_id: str`. Un servicio de un solo tenant conserva
+  `str | None` -- sus filas se escriben sin tenant, así que None es el único
+  valor que las encuentra -- con un comentario que lo explica, y `jfast check
+  --multitenant-ready` tiene una regla nueva, `facade-tenant-optional`, que
+  lista cada firma de fachada que admite None (`str | None`, `Optional[str]`,
+  `= None`) como paso previo al cambio. `jfast upgrade --check`:
+  `facade-tenant-optional`, para servicios con tenancy.
+- **`jfast new enum` dejaba el comentario `# None yet: jfast new enum ...` del
+  módulo arriba del enum que escribía.** El marcador se quita cuando llega el
+  primer enum.
+
+- **Un handler de `@task` o `@subscribe` no podía llegar a `llm`, `storage` ni
+  al outbox.** Recibía el payload y una `TaskSession`, nada más, y los docs solo
+  mostraban `request.app.state.jfast.require(...)` -- que un worker no tiene --,
+  así que cada proyecto guardaba su propia copia global del contexto. Un
+  parámetro anotado `TaskContext` (de `jfastframework.tasks`; es `AppContext`, y
+  esa anotación también sirve) ahora recibe el contexto de la app que está
+  corriendo, igual en `jfast worker` que en la API. Verificado con un proceso
+  real de `jfast worker` que corre una task y un suscriptor que le piden
+  providers.
+- **`jfast dev` anunciaba el frontend en :5173 mientras Vite corría en 8610.**
+  El script `dev` generado fija el puerto del workspace y `jfast dev` imprimía el
+  default de Vite; `--web-port 8610` además corría `vite --port 8610 --port
+  8610`. La URL anunciada ahora se lee del frontend (su script `dev`, luego
+  `vite.config`, luego 5173), y `--port` solo se pasa cuando cambia algo.
+- **Solo `jfast dev` podía usar el `.env` de un workspace en el host.** Nombra
+  la base por su nombre de compose y deja la contraseña para que compose la
+  rellene, así que `alembic revision --autogenerate` -- el paso que imprime
+  `jfast new module` --, `jfast serve`, `jfast worker` y `pytest` fallaban con
+  un error de DNS. `jfast serve` y `jfast worker` ahora lo traducen como `jfast
+  dev` cuando encuentran el archivo de compose, `jfast exec -- <comando>` corre
+  cualquier otra cosa con él, y cada paso de `alembic` impreso pasa por `jfast
+  exec --`. Una variable puesta en el shell gana; dentro de un contenedor, y en
+  la imagen de producción (que no tiene un compose que encontrar), no cambia
+  nada.
+
+Lo que encontró una mesa de ayuda construida desde cero sobre esta versión, en
+contenedores de producción, corregido antes de publicarla:
+
+- **Un disco local que no fuera `public` ni `private` no se podía escribir en
+  la imagen.** El Dockerfile creaba solo las dos raíces por defecto, así que el
+  volumen de compose en `/app/storage/adjuntos` era de root: `/ready` 503 y
+  cada subida un 500 `PermissionError`, con `/health` en 200. `jfast deploy
+  dockerfile` ahora lee `[plugin.storage.disks]` y crea y le entrega a
+  `appuser` cada raíz local (y sus padres); `jfast add storage` reescribe solo
+  esa línea en un Dockerfile existente, así que uno editado conserva sus
+  cambios. Los volúmenes de compose y el Dockerfile salen de un mismo
+  resolvedor, que además dejó de saltarse un disco que usa el `driver` o el
+  `root` por defecto. `image-cannot-write-local-storage` ahora nombra cada
+  raíz que el Dockerfile no crea, y docs/es/storage.md explica el `chown` para
+  un volumen que Docker ya creó como root. Verificado construyendo la imagen:
+  el smoke de compose declara su propio disco y escribe una subida en él; a
+  mano, la línea vieja reprodujo el 503 y el `chown` documentado reparó el
+  volumen existente.
+- **`jfast workspace caddy --wildcard-tenants` escribía un Caddyfile que Caddy
+  rechaza.** `header_up` quedaba a nivel de sitio (`unrecognized directive`) y
+  el contenedor se reiniciaba en bucle. Ya no se escribe -- `reverse_proxy` ya
+  pasa el header Host y pone `X-Forwarded-Host`, verificado detrás de
+  `caddy:2-alpine` --, ni tampoco `interval` y `burst` de on-demand TLS, que
+  Caddy 2.11 ya no acepta, ni la línea en blanco que hacía que cada arranque
+  avisara que el archivo no estaba formateado. Una prueba corre `caddy
+  validate` sobre cada variante y forma (se salta sin Docker) y exige cero
+  advertencias.
+- **Caddy servía un sitio vacío.** El compose del workspace montaba `./dist`;
+  el frontend construye en `<frontend>/dist`. Ahora monta ese, y el panel de
+  `jfast start` construye el SPA antes de `docker compose up --build` en vez de
+  prometer "nada más que instalar". El smoke de compose le pide al Caddy
+  corriendo `/`, una ruta del cliente y `/api/health`.
+- **`jfast migration check` en el host reportaba `database: unavailable`.**
+  Leía el `.env` del workspace tal cual; ahora lo traduce como `serve`,
+  `worker` y `exec`. En un PostgreSQL real eso destapó una segunda causa: en
+  una base sin migrar, la lectura fallida de `alembic_version` abortaba la
+  transacción donde corrían los conteos.
+- **`from jfastframework.auth import require_auth` no pasaba `mypy --strict`.**
+  El `__getattr__` perezoso estaba tipado `-> object`, así que
+  `Depends(require_auth)` era un error en todo proyecto que siguiera los docs.
+  Los nombres se declaran para el type checker; el import sigue siendo
+  perezoso. El `ruff.toml` generado además deja pasar
+  `Depends(require_scopes(...))` por B008, que lo marcaba. El smoke de calidad
+  generada revisa los imports documentados.
+
+### Agregado
+
+- **`[app] cors_origin_regex`**, para orígenes que una lista no puede escribir
+  -- uno por subdominio de tenant, cuando el SPA inicia sesión en
+  `<tenant>.example.com`. Se pasa a `allow_origin_regex` de Starlette, se
+  compara contra el origen completo, y se suma a `cors_origins`; un patrón que
+  no compila detiene el arranque. Probado contra un parecido
+  (`evil-example.com`) y un sufijo (`example.com.evil.com`). Documentado en
+  docs/es/deploy.md, CORS.
+
+- **`--fields` conoce los enums: `tipo:enum(personal,empresa,otra)`** (con `?`
+  y `=personal` como cualquier otro tipo, y permitido en una llave `--unique`).
+  Escribe `class CarteraTipo(StrEnum)` en el archivo de enums del módulo -- la
+  forma que escribe `jfast new enum` -- y lo usa en la columna, en los modelos
+  Create/Update/Read (cualquier otro valor es un 422, y las pruebas generadas
+  lo comprueban), en la entidad de dominio y en el DTO de `public.py`, en los
+  cuatro layouts. La columna es `Enum(native_enum=False)` guardando el valor
+  del miembro, más un CHECK con nombre construido desde el enum: autogenerate
+  lo escribe como una columna y un `CheckConstraint` (con
+  `create_constraint=True` escribía el CHECK dos veces), se lee de vuelta como
+  el enum, y SQLite crea la misma tabla. Verificado en PostgreSQL y SQLite: la
+  migración generada se aplica, un segundo autogenerate no encuentra nada, y
+  un INSERT crudo con otro valor se rechaza. Autogenerate no compara
+  restricciones CHECK, así que un miembro nuevo necesita una migración escrita
+  a mano (docs/modules.md dice cuál).
+
 ## [0.1.0a11] - 2026-09-30
 
 Sale de construir dos servicios reales sobre 0.1.0a10, Cuadra y Dictamen, y de

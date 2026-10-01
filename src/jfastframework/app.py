@@ -138,6 +138,14 @@ def create_app(
     for router in routers or []:
         app.include_router(router)
 
+    # After the plugins registered, so observability's handlers carry it. One
+    # line per setting the environment owns and set to something other than
+    # the file says (deployment_keys.DEPLOYMENT_KEYS), secrets masked: a file
+    # that says local and an environment that says prod decides /docs, /info
+    # and HSTS, and a console mail backend under JFAST_MAIL_BACKEND=smtp
+    # decides whether customers get their mail. Neither may be silent.
+    for sentence in cfg.overridden:
+        logger.warning(sentence)
     logger.info(
         "%s built with plugins: %s",
         settings.app_name,
@@ -170,10 +178,11 @@ def _install_edge_middleware(app: FastAPI, settings: JFastSettings) -> None:
     if max_body is not None:
         app.add_middleware(BodySizeLimitMiddleware, max_bytes=max_body)
 
-    if settings.cors_origins:
+    if settings.cors_origins or settings.cors_origin_regex:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origins,
+            allow_origin_regex=settings.cors_origin_regex,
             allow_credentials=settings.cors_allow_credentials,
             allow_methods=settings.cors_allow_methods,
             allow_headers=settings.cors_allow_headers,

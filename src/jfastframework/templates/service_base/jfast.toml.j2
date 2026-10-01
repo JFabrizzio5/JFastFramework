@@ -2,11 +2,19 @@
 # Committed to git -- never put secrets here. Secrets come from the
 # environment and are typed SecretStr, which keeps them out of
 # `jfast describe` and the /info endpoint.
+#
+# This file wins over the environment for the shape of the service. For the
+# settings that depend on where it runs -- env, debug, the log format, mail,
+# LLM budgets, addresses, the tenant domain -- the environment wins, and a
+# value written here is only the default. Those lines say so. The full table
+# is in docs/deploy.md, "Which wins"; a disagreement is a WARNING at boot.
 
 [app]
 name = "{{ service_slug }}"
 version = "0.1.0"
-env = "local"
+# No `env` here on purpose: it is a property of the deployment, not of the
+# code. It defaults to "local"; a deployment sets JFAST_ENV=prod, which also
+# wins over an `env` written in this file. See docs/deploy.md.
 port = {{ port }}
 # The *business* zone: what "today" means for a report, an invoice period or a
 # daily quota. Not the server's zone and not the container's -- rows are stored
@@ -32,8 +40,10 @@ enabled = [{% for name in enabled_plugins %}"{{ name }}"{{ ", " if not loop.last
 disabled = []
 
 [plugin.observability]
+# Development defaults: JFAST_LOG_LEVEL and JFAST_LOG_JSON_LOGS win over both.
+# A deployment sets JFAST_LOG_JSON_LOGS=true.
 level = "INFO"
-json_logs = false   # readable in a dev terminal; set true in deployed envs
+json_logs = false   # readable in a dev terminal
 
 {% if has_database %}
 [plugin.database]
@@ -88,12 +98,14 @@ tenant_scoped = false
 
 [plugin.llm]
 # The key comes from JFAST_LLM_API_KEY. Spending stops at the cap for the
-# period instead of at the end of the month's invoice.
+# period instead of at the end of the month's invoice. A default:
+# JFAST_LLM_BUDGET_USD wins over it.
 budget_usd = 10.0
 budget_period = "month"
 {% if multitenant %}
 # Per tenant, within the same period, so one customer cannot spend the
-# others' share. 0 turns the per-tenant cap off.
+# others' share. 0 turns the per-tenant cap off. A default:
+# JFAST_LLM_TENANT_BUDGET_USD wins over it.
 tenant_budget_usd = 2.0
 {% endif %}
 {% endif %}
@@ -122,10 +134,11 @@ issue_tokens = true
 # secret     : HMAC. Simple, and every holder can also MINT tokens.
 mode = "jwks"
 algorithms = ["RS256"]
-# jwks_url comes from JFAST_AUTH_JWKS_URL.
-issuer = ""
+# jwks_url and issuer come from JFAST_AUTH_JWKS_URL and JFAST_AUTH_ISSUER.
 {% endif %}
-audience = "{{ service_slug }}"   # without this, a token for any sibling service is accepted
+# Without an audience, a token for any sibling service is accepted. A default:
+# JFAST_AUTH_AUDIENCE wins over it.
+audience = "{{ service_slug }}"
 # With the cache plugin, revoked tokens are looked up in Redis. When Redis does
 # not answer: true accepts the token and logs it, so a cache outage does not
 # sign everyone out; false answers 503 -- for when a logout that lags an outage
@@ -168,7 +181,9 @@ auto_reload = true      # development only: stats the filesystem per render
 
 [plugin.storage]
 default = "public"
-serve_local = true      # development only: Caddy or a CDN serves these in prod
+# Default for development; JFAST_STORAGE_SERVE_LOCAL wins over it. In
+# production Caddy or a CDN serves the files: set it to false there.
+serve_local = true
 # signing_key comes from JFAST_STORAGE_SIGNING_KEY. Without it, private disks
 # cannot produce a temporary URL and every download link fails.
 
@@ -195,7 +210,8 @@ visibility = "private"  # signed URLs that expire
 sources = [{% for source in tenancy_sources %}"{{ source }}"{{ ", " if not loop.last }}{% endfor %}]
 {% if "subdomain" in tenancy_sources %}
 # Required, or every hostname looks like a tenant and the service refuses to
-# start. acme.<base_domain> then resolves to the tenant "acme".
+# start. acme.<base_domain> then resolves to the tenant "acme". Default for
+# development; JFAST_TENANCY_BASE_DOMAIN wins over it.
 base_domain = "localhost"
 {% endif %}
 # Routes generated here take the tenant from `current_tenant`, which answers
@@ -211,8 +227,9 @@ require_tenant = false
 
 [plugin.notifications]
 # console logs instead of sending: no Firebase project needed in development.
+# Default for development; JFAST_NOTIFICATIONS_BACKEND=fcm wins over it, with
+# JFAST_NOTIFICATIONS_PROJECT_ID and the credentials from the environment too.
 backend = "console"     # console | fcm
-project_id = ""
 {% endif %}
 
 # Not enabled. Add the name to [plugins].enabled, and install its extra if

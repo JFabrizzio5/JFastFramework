@@ -113,6 +113,47 @@ for init in Path("modules").glob("*/__init__.py"):
     print(f"    deferred CreatePayload in {init}")
 PYEOF
       ;;
+    facade-tenant-optional)
+      # tenant_id: str on every facade of a multitenant service, as the note
+      # says; the project's own mypy and tests then run on the result.
+      "${vpy}" - <<'PYEOF'
+import re
+from pathlib import Path
+
+for facade in Path("modules").glob("*/public.py"):
+    source = facade.read_text(encoding="utf-8")
+    fixed = re.sub(r"tenant_id: str \| None(?: = None)?", "tenant_id: str", source)
+    if fixed != source:
+        facade.write_text(fixed, encoding="utf-8")
+        print(f"    tenant_id: str in {facade}")
+PYEOF
+      ;;
+    jfast-env-wins-over-the-file)
+      # The note's remedy for the two lines 0.1.0a11 wrote: [app] env = "local"
+      # and [plugin.auth] issuer = "" are development defaults that 0.1.0a12
+      # leaves to the environment (JFAST_ENV, JFAST_AUTH_ISSUER), so both go.
+      "${vpy}" - <<'PYEOF'
+import re
+from pathlib import Path
+
+path = Path("jfast.toml")
+source = path.read_text(encoding="utf-8")
+fixed = source
+for line, where in (('env = "local"', "[app] env"), ('issuer = ""', "[plugin.auth] issuer")):
+    dropped = re.sub(rf"(?m)^{re.escape(line)}\n", "", fixed, count=1)
+    if dropped != fixed:
+        print(f"    removed {where} from jfast.toml")
+    fixed = dropped
+if fixed != source:
+    path.write_text(fixed, encoding="utf-8")
+PYEOF
+      ;;
+    unsigned-tenant-needs-a-session)
+      # The generated routes use current_tenant and the generated tests sign
+      # in: the note needs nothing from this project. Its pytest below is the
+      # proof that nothing leaned on an anonymous subdomain tenant.
+      echo "    nothing to change: every generated route asks current_tenant"
+      ;;
     *)
       fail "no scripted remedy for ${1}: add one to smoke_upgrade.sh as docs/upgrading.md gives it"
       ;;

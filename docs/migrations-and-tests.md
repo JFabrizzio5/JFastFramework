@@ -11,11 +11,22 @@ Both are wired into every generated service. Neither is something you set up.
 plugin is enabled.
 
 ```bash
-alembic revision --autogenerate -m "add invoices"
-alembic upgrade head
-alembic downgrade -1
-alembic history
+jfast exec -- alembic revision --autogenerate -m "add invoices"
+jfast exec -- alembic upgrade head
+jfast exec -- alembic downgrade -1
+jfast exec -- alembic history
 ```
+
+**Why `jfast exec --`.** In a workspace the service's `.env` is written for
+compose: the DSN names `<workspace>-database:5432` and leaves the password as
+`${<WORKSPACE>_DATABASE_PASSWORD}`. Neither works for a process on your
+machine, so a bare `alembic` fails with a DNS error. `jfast exec --` runs the
+command with the `.env` translated the way `jfast dev` does it -- container names
+to `localhost:<published port>`, the password filled in from the workspace
+`.env` -- and changes nothing when there is no `docker-compose.yml` beside the
+service or one level up, or when it runs inside a container. A variable you set
+in the shell wins. Plain `alembic` is still right wherever the `.env` already
+points at a reachable database, and it is what the image's entrypoint runs.
 
 Two things it does that a stock `alembic init` does not:
 
@@ -221,7 +232,11 @@ is correct.
 #### Row counts need a database
 
 The `Reason` line in `plan` states a real row count when a DSN resolves —
-`--dsn`, then `JFAST_DB_DSN`, then `.env` in the project root:
+`--dsn`, then `JFAST_DB_DSN`, then `.env` in the project root. In a workspace
+that `.env` is read translated for the host, as `jfast serve` and `jfast exec`
+read it (container names become `localhost:<published port>`, `${...}` is
+filled from the workspace `.env`), so `jfast migration check` run on the host
+reaches the database the compose file publishes:
 
 ```
 Migration:  0004_add_status
@@ -272,6 +287,7 @@ bring their own tests that pass immediately:
 ```bash
 pytest                          # modules/ and tests/
 pytest modules/invoice/tests    # one module
+jfast exec -- pytest            # a workspace: tests that reach the compose database
 ```
 
 ### Fixtures

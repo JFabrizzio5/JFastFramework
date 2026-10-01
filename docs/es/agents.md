@@ -149,6 +149,12 @@ importa realmente `main.py`, el grafo de imports entre módulos, el contrato, qu
 dicen ahora mismo `analyze` y `contracts check`, qué queda sin terminar, y los
 comandos que devuelven lo que se dejó afuera.
 
+Bajo `environment` lista los ajustes de `jfast.toml` que son del entorno,
+cuáles sobrescribe el entorno actual (enmascarados), y la regla que un agente
+debe seguir: esos valores del archivo son solo defaults, y un desacuerdo se le
+reporta a una persona, nunca se "arregla" de ningún lado
+([Quién gana](deploy.md#quien-gana-jfasttoml-o-el-entorno)).
+
 Es una composición, no una reimplementación — `inspect`, `analyze`, `graph`,
 `contracts` y `next` en un solo payload, así que no puede contradecir al comando
 que te dice que ejecutes. Nunca importa el proyecto, así que sigue respondiendo
@@ -159,13 +165,13 @@ en un servicio al que le faltan dependencias o cuyo código no parsea.
 **No hay un número único, y publicar uno solo lo volvía equivocado para todo
 proyecto que no fuera aquel donde se midió.** El payload son hechos sobre *tu*
 servicio, así que escala con tu servicio. Medido sobre servicios generados —
-`jfast new service shop --with database` y después `jfast new module` N veces:
+`jfast new service shop --with database` y después `jfast new module` N veces (0.1.0a12):
 
 | módulos | `--json` | `--json --brief` |
 | --- | --- | --- |
-| 1 | 9,525 | 3,016 |
-| 3 | 11,555 | 4,578 |
-| 5 | 13,603 | 6,154 |
+| 1 | 10,295 | 3,750 |
+| 3 | 12,353 | 5,340 |
+| 5 | 14,429 | 6,944 |
 
 Un servicio recién generado es el piso, porque todavía no hay nada mal en él. El
 mismo servicio de cinco módulos después de trabajarlo un rato — dos módulos que
@@ -181,6 +187,9 @@ Dónde se va el payload completo en ese servicio de cinco módulos, en bytes:
 next      3,052   contract  2,300   commands 1,576   checks  1,562
 modules   1,499   omitted     921   project    135   plugins   130
 ```
+
+0.1.0a12 agregó la sección `environment`: unos 600 bytes en un servicio
+generado, más por cada ajuste del entorno que escribe `jfast.toml`.
 
 Las cifras de tokens son bytes ÷ 4 — la estimación gruesa habitual, no un
 tokenizer.

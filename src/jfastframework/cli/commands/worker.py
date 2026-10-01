@@ -37,7 +37,8 @@ jobs_app = typer.Typer(
 
 
 def _enter_service(path: Path) -> Path:
-    """Change into the service and make ``main`` importable, as `jfast serve` does.
+    """Change into the service, make ``main`` importable and translate the
+    ``.env`` for the host, as `jfast serve` does.
 
     ``create_app()`` resolves ``jfast.toml`` against the working directory, so a
     worker started anywhere else would boot on framework defaults -- no
@@ -54,6 +55,11 @@ def _enter_service(path: Path) -> Path:
     os.chdir(service_dir)
     if str(service_dir) not in sys.path:
         sys.path.insert(0, str(service_dir))
+    # On the host, the compose-oriented .env translated as `jfast dev` does it;
+    # in a container (the generated image has no compose file) nothing.
+    from jfastframework.cli import dev as devtools
+
+    devtools.apply_host_environment(service_dir)
     return service_dir
 
 

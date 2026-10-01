@@ -12,6 +12,10 @@ from __future__ import annotations
 {% for line in import_lines(spec.pydantic(versioned=versioned)) %}
 {{ line }}
 {% endfor %}
+{% if spec.enum_fields %}
+
+{{ spec.enum_import(enum_module) }}
+{% endif %}
 
 
 {% include "_module_shared/pydantic_classes.j2" %}

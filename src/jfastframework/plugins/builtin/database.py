@@ -1527,6 +1527,12 @@ async def tenant_session_dependency(request: Request) -> AsyncIterator[Any]:
     plugin resolves. A request with no tenant is a configuration error here,
     not a database to guess at.
     """
+    # A tenant the request named but was not granted -- a subdomain with no
+    # session, another tenant's host -- is the caller's 401 or 403, not a
+    # configuration error, and never a database to open.
+    from jfastframework.plugins.builtin.tenancy import raise_if_denied
+
+    raise_if_denied(request)
     databases = _registry_of(request)
     tenants = databases.tenants
     if tenants is None:

@@ -208,10 +208,13 @@ Todas las llaves de `[plugin.http.upstreams.<name>]`:
 
 Una llave mal escrita se rechaza al arrancar en vez de ignorarse. La URL base
 puede venir del entorno en vez del archivo --
-`JFAST_HTTP_UPSTREAMS__BILLING__BASE_URL=http://billing.internal:8010` -- y,
-como en todos los plugins, un valor en `jfast.toml` gana sobre el entorno, así
-que deja `base_url` fuera del archivo para un upstream cuya dirección cambia
-según el entorno.
+`JFAST_HTTP_UPSTREAMS__BILLING__BASE_URL=http://billing.internal:8010` -- y le
+gana al archivo: la dirección de un upstream depende de dónde corre el
+servicio, así que un `base_url` en `jfast.toml` es solo el default para donde
+esa variable no está puesta, y un desacuerdo es un WARNING al arrancar. El
+resto de los ajustes de un upstream son la forma del servicio y ahí gana el
+archivo; la tabla completa está en
+[deploy](deploy.md#quien-gana-jfasttoml-o-el-entorno).
 
 ## Salud
 
