@@ -531,6 +531,9 @@ async def test_repeated_connect_failures_open_the_database_breaker() -> None:
             assert (await http.get("/count")).status_code == 503
         started = time.monotonic()
         response = await http.get("/count")
+        # Measured here, inside the block: after it, the time would include the
+        # app's shutdown, which took half a second on a GitHub runner.
+        elapsed = time.monotonic() - started
     assert response.status_code == 503
     assert "last connection attempts" in response.json()["detail"]
-    assert time.monotonic() - started < 0.5
+    assert elapsed < 0.5
