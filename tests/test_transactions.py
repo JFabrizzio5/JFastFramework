@@ -498,12 +498,16 @@ async def test_a_real_serialisation_failure_is_retried_to_success(pg_maker) -> N
 
         return run
 
+    # Room to retry: on a slow CI runner a loser that retried within 10 ms ran
+    # again before the winner had committed, collided again, and spent all
+    # three attempts. The rule under test is unchanged -- the loser is retried
+    # until it lands, and then reads the winner's row.
     await asyncio.gather(
-        run_in_transaction(serializable, work("a"), base_delay=0.01),
-        run_in_transaction(serializable, work("b"), base_delay=0.01),
+        run_in_transaction(serializable, work("a"), attempts=6, base_delay=0.2),
+        run_in_transaction(serializable, work("b"), attempts=6, base_delay=0.2),
     )
-    # One of them saw the other's commit only on its second attempt.
-    assert sorted(attempts.values()) == [1, 2]
+    assert min(attempts.values()) == 1, attempts
+    assert max(attempts.values()) >= 2, attempts
     async with pg_maker() as session:
         names = sorted((await session.execute(select(Customer.name))).scalars().all())
     assert names in (["a-0", "b-1"], ["a-1", "b-0"])
